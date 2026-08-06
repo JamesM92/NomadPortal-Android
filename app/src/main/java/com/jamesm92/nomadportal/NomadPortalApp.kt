@@ -6,6 +6,8 @@ import com.chaquo.python.android.AndroidPlatform
 import com.jamesm92.nomadportal.connectivity.InterfaceController
 import com.jamesm92.nomadportal.connectivity.NoopInterfaceController
 import com.jamesm92.nomadportal.data.SettingsRepository
+import com.jamesm92.nomadportal.data.browsing.BrowserRepository
+import com.jamesm92.nomadportal.data.browsing.StubBrowserRepository
 import com.jamesm92.nomadportal.data.messaging.MessagingRepository
 import com.jamesm92.nomadportal.data.messaging.StubMessagingRepository
 import kotlinx.coroutines.CoroutineScope
@@ -33,6 +35,8 @@ class NomadPortalApp : Application() {
         private set
     lateinit var messagingRepository: MessagingRepository
         private set
+    lateinit var browserRepository: BrowserRepository
+        private set
 
     override fun onCreate() {
         super.onCreate()
@@ -49,5 +53,8 @@ class NomadPortalApp : Application() {
         // fake/in-memory until real LXMF delivery exists — see its own doc
         // comment. Swapping this line is the entire integration point.
         messagingRepository = StubMessagingRepository(appScope)
+        // Same pattern again: StubBrowserRepository is fake nodes/pages
+        // until a real RNS Link/path layer exists.
+        browserRepository = StubBrowserRepository()
     }
 }

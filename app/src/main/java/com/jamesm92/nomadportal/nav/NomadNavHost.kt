@@ -6,7 +6,11 @@ import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
 import com.jamesm92.nomadportal.connectivity.InterfaceController
+import com.jamesm92.nomadportal.data.browsing.BrowserRepository
+import com.jamesm92.nomadportal.data.browsing.PageAddress
 import com.jamesm92.nomadportal.data.messaging.MessagingRepository
+import com.jamesm92.nomadportal.ui.browser.BrowserScreen
+import com.jamesm92.nomadportal.ui.browser.NodeListScreen
 import com.jamesm92.nomadportal.ui.home.HomeScreen
 import com.jamesm92.nomadportal.ui.messages.ConversationListScreen
 import com.jamesm92.nomadportal.ui.messages.ConversationScreen
@@ -18,12 +22,16 @@ private object Routes {
     const val MESSAGES = "messages"
     const val CONVERSATION = "messages/{contactHash}"
     fun conversation(contactHash: String) = "messages/$contactHash"
+    const val NODES = "nodes"
+    const val BROWSER = "browser/{nodeHash}"
+    fun browser(nodeHash: String) = "browser/$nodeHash"
 }
 
 @Composable
 fun NomadNavHost(
     interfaceController: InterfaceController,
     messagingRepository: MessagingRepository,
+    browserRepository: BrowserRepository,
     navController: NavHostController = rememberNavController(),
 ) {
     NavHost(navController = navController, startDestination = Routes.HOME) {
@@ -31,6 +39,7 @@ fun NomadNavHost(
             HomeScreen(
                 onOpenSettings = { navController.navigate(Routes.SETTINGS) },
                 onOpenMessages = { navController.navigate(Routes.MESSAGES) },
+                onOpenNodes = { navController.navigate(Routes.NODES) },
             )
         }
         composable(Routes.SETTINGS) {
@@ -58,6 +67,25 @@ fun NomadNavHost(
                 ConversationScreen(
                     repository = messagingRepository,
                     contact = contact,
+                    onBack = { navController.popBackStack() },
+                )
+            }
+        }
+        composable(Routes.NODES) {
+            NodeListScreen(
+                repository = browserRepository,
+                onOpenNode = { hash -> navController.navigate(Routes.browser(hash)) },
+                onBack = { navController.popBackStack() },
+            )
+        }
+        composable(Routes.BROWSER) { backStackEntry ->
+            val nodeHash = backStackEntry.arguments?.getString("nodeHash")
+            if (nodeHash == null) {
+                navController.popBackStack()
+            } else {
+                BrowserScreen(
+                    repository = browserRepository,
+                    startAddress = PageAddress(nodeHash),
                     onBack = { navController.popBackStack() },
                 )
             }

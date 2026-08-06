@@ -26,6 +26,7 @@ class MainActivity : ComponentActivity() {
                     NomadNavHost(
                         interfaceController = app.interfaceController,
                         messagingRepository = app.messagingRepository,
+                        browserRepository = app.browserRepository,
                     )
                 }
             }

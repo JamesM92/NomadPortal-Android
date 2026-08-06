@@ -6,6 +6,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Message
+import androidx.compose.material.icons.filled.Explore
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.Button
 import androidx.compose.material3.IconButton
@@ -33,15 +34,13 @@ import com.jamesm92.nomadportal.ui.theme.NomadPortalTheme
 import kotlinx.coroutines.launch
 
 /**
- * Placeholder browsing/home shell (nomadportal_android_handoff.md
- * "Suggested sequencing" step 2 — no real browsing UI yet, that's step 4,
- * blocked on `micron2compose`). Owns the app's top bar, including the
- * panic-wipe triple-tap target ([AppLogo]) — kept here rather than
- * duplicated per-screen since Home is this app's "always reachable" root.
+ * Home shell. Owns the app's top bar, including the panic-wipe triple-tap
+ * target ([AppLogo]) — kept here rather than duplicated per-screen since
+ * Home is this app's "always reachable" root.
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun HomeScreen(onOpenSettings: () -> Unit, onOpenMessages: () -> Unit) {
+fun HomeScreen(onOpenSettings: () -> Unit, onOpenMessages: () -> Unit, onOpenNodes: () -> Unit) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     var pythonStatus by remember { mutableStateOf("Not tested yet") }
@@ -58,6 +57,9 @@ fun HomeScreen(onOpenSettings: () -> Unit, onOpenMessages: () -> Unit) {
                     })
                 },
                 actions = {
+                    IconButton(onClick = onOpenNodes) {
+                        Icon(Icons.Filled.Explore, contentDescription = "Browse nodes")
+                    }
                     IconButton(onClick = onOpenMessages) {
                         Icon(Icons.AutoMirrored.Filled.Message, contentDescription = "Messages")
                     }
@@ -102,6 +104,6 @@ fun HomeScreen(onOpenSettings: () -> Unit, onOpenMessages: () -> Unit) {
 @Composable
 fun HomeScreenPreview() {
     NomadPortalTheme {
-        HomeScreen(onOpenSettings = {}, onOpenMessages = {})
+        HomeScreen(onOpenSettings = {}, onOpenMessages = {}, onOpenNodes = {})
     }
 }

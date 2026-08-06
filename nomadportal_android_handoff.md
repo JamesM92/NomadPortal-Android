@@ -41,15 +41,28 @@ together, `micron2compose`'s own tests/lint run as part of our build).
 **Two issues found on integration, reported upstream** (see
 `FEEDBACK-from-nomadportal-android.md` in the `micron2compose` repo): (1)
 its default URL resolver collapses `/file/` download links to a bare `"#"`,
-indistinguishable from a legitimate "jump to next heading" link — this
-blocks implementing the "Link activation safety" requirement below, since
-the app can't tell a file link happened at all, let alone show the
-required confirmation before it activates. (2) no way to override the
-rendered font family, so this app's Roboto Mono Nerd Font requirement (see
-`porting-notes.md` §5, needed for correct Braille/box-drawing glyph
-alignment) can't actually be applied through the library yet. Real
-browsing-screen work should wait on at least the first of these landing
-upstream, since it changes `LinkTarget`'s shape.
+indistinguishable from a legitimate "jump to next heading" link. (2) no way
+to override the rendered font family, so this app's Roboto Mono Nerd Font
+requirement (see `porting-notes.md` §5, needed for correct Braille/box-
+drawing glyph alignment) can't actually be applied through the library
+yet.
+
+**Update: browsing screens built anyway, working around what's actually
+blocked.** Only file-download link detection genuinely needs issue (1) —
+internal page navigation, anchor jumps, and external-web-link detection
+(via simple `http(s)://` prefix checking on `LinkTarget.url`, since there's
+no explicit `kind` field yet either) all work today against the shipped
+library. `ui/browser/{NodeListScreen,BrowserScreen}.kt` +
+`data/browsing/` implement the node list, address bar, back/forward
+history, and real `MicronPage` rendering — with a bare `"#"` target
+currently treated as an inert no-op (not guessed at) since it's
+ambiguous between "next heading" and "was actually a blocked file link"
+until issue (1) lands. `ui/browser/LinkWarningDialog.kt`'s
+`PendingLinkWarning` sealed interface has only an `ExternalWeb` case for
+the same reason — add `FileDownload` once `LinkTarget` exposes that.
+Font-family override (issue 2) has no workaround yet; Micron content
+currently renders in the library's default font, not the Nerd Font this
+app wants.
 
 Two other Micron converters already exist for other targets in this project
 family: `Micron2HTML` (mine, for NomadPortal's web UI) and `micron2kivy`
@@ -218,19 +231,23 @@ three — only the emission layer changes:
 
 ## Suggested sequencing
 
-1. Extract NomadPortal's UI-agnostic core logic into its own module first,
-   with no Chaquopy/Android dependency yet — validate it still runs and
-   passes any existing tests as plain Python.
-2. Get that core running under Chaquopy in a bare-bones Android shell (even
-   a placeholder single-screen UI is fine for this step) — this de-risks
-   the "does RNS/LXMF actually run correctly on Android via Chaquopy"
-   question before investing in UI work, and is shared risk with the
-   WebView-based alternative we considered, so it's worth nailing down
-   regardless of which UI path had been chosen.
-3. Build `micron2compose` as its own well-tested module, against real `.mu`
-   fixtures pulled from live nodes — independent of any screen work.
-4. Build the browsing screens (address bar, rendered page, back/forward)
-   using `micron2compose`'s output.
+1. **Not started.** Extract NomadPortal's UI-agnostic core logic into its
+   own module first, with no Chaquopy/Android dependency yet — validate it
+   still runs and passes any existing tests as plain Python.
+2. **Done.** `rns`/`lxmf` verified installing and importing under Chaquopy
+   on-device (see `nomadportal-android-rns-lxmf-chaquopy-verified` memory)
+   — the "does RNS/LXMF actually run correctly on Android via Chaquopy"
+   question is de-risked. Full `Reticulum()`/`Identity`/`Transport`
+   initialization still isn't exercised — that's step 1's job.
+3. **Done.** `micron2compose` shipped its initial release and is
+   integrated (composite build, see this doc's `micron2compose` section
+   above) — two issues found and reported upstream, one still open.
+4. **In progress.** Browsing screens (`ui/browser/`) built against what's
+   already shippable — node list, address bar, back/forward, real
+   `MicronPage` rendering, link handling for everything except file
+   downloads (blocked on the reported issue). All against fake/stub node
+   data (`StubBrowserRepository`) — real RNS Link/path fetching is step 1's
+   job.
 5. Build the hosting request-handler (static-only, with the security
    constraints above) and validate it against an external client.
 6. Build the editor last, once both rendering and hosting are solid, since
