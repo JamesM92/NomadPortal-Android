@@ -1,0 +1,31 @@
+version: 2
+updates:
+  # AGP, Kotlin, Chaquopy, Compose BOM, androidx.* — gradle/libs.versions.toml
+  - package-ecosystem: "gradle"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 10
+    labels:
+      - "dependencies"
+      - "gradle"
+
+  # Pins the actions used in .github/workflows/*.yml themselves — an
+  # unpinned/compromised Action is a supply-chain hole same as any library
+  # dependency, not just a CI convenience.
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 10
+    labels:
+      - "dependencies"
+      - "github-actions"
+
+  # TODO: add a `pip` ecosystem entry once RNS/LXMF are actually pinned in
+  # app/build.gradle.kts's `chaquopy { defaultConfig { pip { ... } } }`
+  # block (see nomadportal_android_handoff.md sequencing step 1) — Dependabot's
+  # pip ecosystem needs a requirements.txt/pyproject.toml to scan, which
+  # doesn't exist yet at this scaffold stage. Chaquopy also supports pinning
+  # pip deps by requirements file rather than inline `install(...)` calls;
+  # switching to that form is what would make this scannable.

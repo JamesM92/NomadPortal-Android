@@ -1,0 +1,7 @@
+<resources>
+    <!-- Design tokens carried over from NomadPortal's dark terminal aesthetic
+         (porting-notes.md, section 5) for visual parity. Compose's own
+         ColorScheme (ui/theme/Color.kt) is the source of truth for in-app
+         theming; this file only covers the pre-Compose window chrome. -->
+    <color name="nomad_bg">#131313</color>
+</resources>

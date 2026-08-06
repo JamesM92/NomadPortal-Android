@@ -1,0 +1,37 @@
+## Gradle
+.gradle/
+build/
+app/build/
+out/
+
+## Local configuration
+local.properties
+
+## Android Studio / IntelliJ
+.idea/
+*.iml
+
+## Claude Code local session/tool-permission state (machine-specific)
+.claude/
+.navigation/
+captures/
+.externalNativeBuild/
+.cxx/
+
+## Chaquopy
+app/.python-version
+*.whl
+app/src/main/python/**/__pycache__/
+**/__pycache__/
+*.pyc
+
+## Keystores — never commit signing material
+*.jks
+*.keystore
+
+## OS cruft
+.DS_Store
+Thumbs.db
+
+## Logs
+*.log

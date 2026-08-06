@@ -1,0 +1,22 @@
+package com.jamesm92.nomadportal.ui.theme
+
+import androidx.compose.ui.graphics.Color
+
+// Design tokens carried over from NomadPortal's web UI (porting-notes.md,
+// section 5: "Design tokens") for visual parity with the original service.
+// Dark, terminal-flavored aesthetic — this is a dark-only palette by design,
+// not a placeholder waiting for a light variant.
+val NomadBg = Color(0xFF131313)
+val NomadBg2 = Color(0xFF1C1C1C)
+val NomadBg3 = Color(0xFF252525)
+val NomadBorder = Color(0xFF333333)
+val NomadText = Color(0xFFC8C8C8)
+val NomadTextDim = Color(0xFF666666)
+val NomadAccent = Color(0xFF5BA3C9)
+val NomadAccent2 = Color(0xFF7EC8A0)
+val NomadWarn = Color(0xFFC8905B)
+val NomadError = Color(0xFFC85B5B)
+
+// Chat bubble tokens (porting-notes.md: sent/received message bubbles).
+val NomadSentBubble = Color(0xFF173040)
+val NomadSentBubbleBorder = Color(0xFF2A5570)

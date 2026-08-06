@@ -1,0 +1,54 @@
+name: CodeQL
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  schedule:
+    # Weekly sweep catches newly-published query patterns against unchanged
+    # code, not just what a diff touches.
+    - cron: "17 3 * * 1"
+
+permissions:
+  contents: read
+  security-events: write
+
+jobs:
+  analyze:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v6
+
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@v4
+        with:
+          languages: java-kotlin
+          # RNS/LXMF and this app's link handling are the security-critical
+          # surface (untrusted peer input over the mesh, per
+          # porting-notes.md §3) — worth the slower, more thorough queries
+          # over the default "quality" pack once real network-parsing code
+          # lands here.
+          queries: security-extended
+
+      # Chaquopy's Python side isn't covered by java-kotlin CodeQL; once the
+      # core extraction (nomadportal_android_handoff.md, sequencing step 1)
+      # adds real app/src/main/python code, add a second `languages: python`
+      # matrix leg here rather than assuming this job covers it.
+      - name: Build (for CodeQL's Java/Kotlin autobuild)
+        run: ./gradlew assembleDebug --no-daemon
+
+      - name: Perform CodeQL analysis
+        uses: github/codeql-action/analyze@v4
+        with:
+          category: "/language:java-kotlin"

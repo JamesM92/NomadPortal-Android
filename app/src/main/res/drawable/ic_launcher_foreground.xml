@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Simple terminal-prompt glyph ("> _"), matching NomadPortal's terminal-
+     flavored dark aesthetic (porting-notes.md, section 5). Placeholder until
+     a real app icon is designed. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <path
+        android:pathData="M34,32 L58,54 L34,76"
+        android:strokeColor="#5ba3c9"
+        android:strokeWidth="9"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round"
+        android:fillColor="#00000000" />
+    <path
+        android:pathData="M66,76 L82,76"
+        android:strokeColor="#5ba3c9"
+        android:strokeWidth="9"
+        android:strokeLineCap="round"
+        android:fillColor="#00000000" />
+</vector>
