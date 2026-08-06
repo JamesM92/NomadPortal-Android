@@ -21,6 +21,28 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v7
 
+      # settings.gradle.kts composite-builds micron2compose from a sibling
+      # checkout (includeBuild("../micron2compose") — it isn't published,
+      # so there's no Maven coordinate to just resolve). That sibling only
+      # exists on a dev machine that happens to have both repos cloned
+      # side-by-side; the runner has nothing there by default, which is
+      # exactly why every job here failed with "Included build
+      # '.../micron2compose' does not exist" once Actions came back up.
+      # Pinned to `dev`, not `main`: `dev` is what's actually being built/
+      # tested against locally right now (micron2compose's own `main` only
+      # gets updates once it's agreed "ready" — see that repo's own
+      # workflow convention). This does couple this build's CI health to
+      # micron2compose's `dev` branch being buildable — acceptable while
+      # both repos are developed in lockstep pre-release, but revisit once
+      # micron2compose is actually published (delete this step entirely
+      # alongside the includeBuild block per settings.gradle.kts's comment).
+      - name: Checkout micron2compose (composite-build dependency)
+        uses: actions/checkout@v7
+        with:
+          repository: JamesM92/micron2compose
+          ref: dev
+          path: ../micron2compose
+
       # Fails the build if gradlew/gradlew.bat/gradle-wrapper.jar don't match
       # a known-good Gradle wrapper checksum — catches a tampered wrapper
       # before it can run arbitrary code in this or any later job.
@@ -72,6 +94,15 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v7
+
+      # See build-and-test's identical step for why this is needed and why
+      # `dev` is pinned.
+      - name: Checkout micron2compose (composite-build dependency)
+        uses: actions/checkout@v7
+        with:
+          repository: JamesM92/micron2compose
+          ref: dev
+          path: ../micron2compose
 
       - name: Set up JDK 17
         uses: actions/setup-java@v5

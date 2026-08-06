@@ -21,6 +21,16 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v7
 
+      # See ci.yml's identical step for why this is needed (composite-build
+      # sibling for the unpublished micron2compose dependency) and why
+      # `dev` is pinned rather than `main`.
+      - name: Checkout micron2compose (composite-build dependency)
+        uses: actions/checkout@v7
+        with:
+          repository: JamesM92/micron2compose
+          ref: dev
+          path: ../micron2compose
+
       - name: Set up JDK 17
         uses: actions/setup-java@v5
         with:

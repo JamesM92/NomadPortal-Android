@@ -93,6 +93,16 @@ chaquopy {
             // validation pass — not something to drift into.
             install("rns==1.3.9")
             install("lxmf==1.0.1")
+            // identity_store.py (nomadnet_web) imports yaml directly — this
+            // was missing here even though python-core/requirements.txt
+            // pins it, because the Android pip block predates the core
+            // extraction and was never reconciled against the extracted
+            // package's actual import list. Confirmed missing via a real
+            // on-device crash (ModuleNotFoundError: No module named
+            // 'yaml'), not caught until first real orchestrator.start()
+            // run on the emulator — pip installing cleanly at build time
+            // doesn't catch a package that was simply never listed.
+            install("pyyaml==6.0.3")
         }
     }
 
