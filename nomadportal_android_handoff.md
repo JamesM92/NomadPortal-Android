@@ -319,6 +319,29 @@ yet, this is a spec for that later work.
     practice, revisit — but don't default to a confirmation dialog just
     because it feels safer on paper.
 
+## Link activation safety (added Aug 2026)
+
+Requirement gathered before the browsing screens exist (blocked on
+`micron2compose`) — captured here so it's not lost before that work
+starts.
+
+**A link tap must not immediately activate the link when the target is a
+file download or a destination outside the mesh (an external web
+URL/`http(s)://` link embedded in a `.mu` page).** Show an explicit warning
+first — filename + MIME type for downloads (this is also already required
+by `porting-notes.md` §4's "always confirm before pulling an arbitrary
+binary" — that section and this requirement are the same rule, just
+stated from two angles), and a "this leaves the mesh and opens an external
+browser" warning for outbound web links, since that's a materially
+different trust boundary than navigating to another NomadNet node.
+Ordinary in-mesh page-to-page navigation (`` `[label`hash:/page/foo.mu] ``)
+doesn't need this — the warning is specifically for the two riskier link
+shapes, not a blanket confirm-every-link interstitial that would make
+normal browsing tedious. `micron2compose`'s link metadata (see its own
+handoff doc) needs to expose enough about a link's target shape — file
+vs. page vs. external URL — for the browsing screen to tell these apart
+before activation, not just after.
+
 ## Out of scope for this repo
 
 - The Bluetooth-mesh interface implementation itself (separate repo/doc)

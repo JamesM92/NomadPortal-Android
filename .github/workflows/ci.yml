@@ -33,6 +33,17 @@ jobs:
           distribution: temurin
           java-version: "17"
 
+      # Chaquopy resolves/installs pip dependencies (rns, lxmf) at build
+      # time via a build-machine Python interpreter, not just on-device —
+      # its version must match app/build.gradle.kts's chaquopy.version
+      # ("3.12"). Explicit rather than relying on the runner image's
+      # preinstalled default, which can change without this workflow
+      # noticing.
+      - name: Set up build-time Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v6
 
@@ -67,6 +78,17 @@ jobs:
         with:
           distribution: temurin
           java-version: "17"
+
+      # Chaquopy resolves/installs pip dependencies (rns, lxmf) at build
+      # time via a build-machine Python interpreter, not just on-device —
+      # its version must match app/build.gradle.kts's chaquopy.version
+      # ("3.12"). Explicit rather than relying on the runner image's
+      # preinstalled default, which can change without this workflow
+      # noticing.
+      - name: Set up build-time Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
 
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v6

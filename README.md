@@ -9,9 +9,13 @@ set. A from-scratch rewrite inspired by
 author's existing Flask-based web portal for the same protocol stack), not a
 port of its Flask/Jinja layer.
 
-**Status: early scaffold.** This is a bare-bones Android shell with a
-working Chaquopy-embedded Python interpreter and a placeholder screen — no
-browsing, hosting, or editor functionality yet. See
+**Status: early scaffold.** Working Chaquopy-embedded Python interpreter
+(with `rns`/`lxmf` installed and verified importing on-device — see
+"Toolchain versions" below), a Settings screen with real connectivity/
+hosting toggles and a panic-wipe gesture, but no browsing, hosting, or
+editor functionality yet — those are blocked on `micron2compose` (a
+separate sibling project) and the RNS/LXMF core extraction from
+`nomadportal`. See
 [`nomadportal_android_handoff.md`](nomadportal_android_handoff.md) for the
 full architecture and build sequencing, and
 [`porting-notes.md`](porting-notes.md) for the protocol-level lessons this
@@ -27,7 +31,17 @@ involved. Full rationale in the handoff doc.
 
 ## Build
 
-Requires JDK 17 and the Android SDK (API 36; `minSdk` 24).
+Requires:
+- JDK 17
+- Android SDK, compileSdk 37 (`minSdk` 31 — see "Toolchain versions" for why
+  it's higher than Chaquopy's own floor)
+- **Python 3.12 on the build machine** — Chaquopy resolves/installs `pip`
+  dependencies (`rns`, `lxmf`) at build time, not just on-device. Chaquopy
+  auto-detects it via `py -3.12` (Windows) / `python3.12` (Linux/Mac); if
+  your Python 3.12 isn't registered under that standard command (e.g. a
+  tool-managed install under a nonstandard `py` launcher tag), set
+  `buildPython("C:/path/to/python.exe")` in `app/build.gradle.kts`
+  locally — don't commit a machine-specific path there.
 
 ```sh
 ./gradlew assembleDebug
@@ -47,9 +61,18 @@ Pinned in [`gradle/libs.versions.toml`](gradle/libs.versions.toml):
 | Chaquopy | 17.0.0 | Python 3.10–3.14, min API 24 |
 | Compose BOM | 2026.06.01 | |
 
+`minSdk` is 31, higher than Chaquopy's own floor of 24 — Android's
+`BLUETOOTH_SCAN` `neverForLocation` flag (required for this app's
+"never request location, under any circumstances" policy) only exists on
+API 31+.
+
 These were cross-checked against Chaquopy's own live demo project
 (`chaquo/chaquopy@master`, `demo/`) at scaffold time, since Chaquopy's
-published compatibility table lags its actual latest-tested combo.
+published compatibility table lags its actual latest-tested combo. `rns`
+and `lxmf` (pinned in `app/build.gradle.kts`'s `chaquopy { pip { ... } }`
+block) install cleanly for both target ABIs with prebuilt Android wheels
+for `cryptography` (their one native dependency) — no source build
+required, verified against a real build rather than assumed.
 
 ## License
 

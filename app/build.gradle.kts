@@ -70,9 +70,29 @@ android {
 chaquopy {
     defaultConfig {
         version = "3.12"
-        // RNS + LXMF placeholder — real dependency pinning happens once the
-        // NomadPortal core extraction (separate task) lands in
-        // app/src/main/python/. Left empty for now so the scaffold builds.
+        // Building this module requires Python 3.12 on the build machine
+        // (Chaquopy resolves/installs pip dependencies at build time, not
+        // just on-device). Chaquopy auto-detects it via `py -3.12` (Windows)
+        // / `python3.12` (Linux/Mac) — if that doesn't find your install,
+        // set `buildPython("C:/path/to/python.exe")` locally (don't commit
+        // a machine-specific path here). See
+        // https://chaquo.com/chaquopy/doc/current/android.html#buildpython.
+        pip {
+            // rns/lxmf: verified installing cleanly for both target ABIs
+            // (arm64-v8a, x86_64) as of this comment — Chaquopy's own PyPI
+            // mirror has prebuilt Android wheels for cryptography 42.0.8
+            // (rns's only native dependency), no source build needed. This
+            // was nomadportal_android_handoff.md sequencing step 2's open
+            // question ("does RNS/LXMF actually run correctly on Android
+            // via Chaquopy") — installation is now verified; on-device
+            // import/runtime behavior is checked by the "Test Python
+            // bridge" button (nomadportal_core.ping()), but full RNS
+            // initialization (Reticulum(), Identity, Transport) isn't
+            // exercised until the real core extraction (still step 1,
+            // still not started).
+            install("rns")
+            install("lxmf")
+        }
     }
 }
 

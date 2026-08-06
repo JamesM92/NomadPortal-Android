@@ -27,6 +27,13 @@ jobs:
           distribution: temurin
           java-version: "17"
 
+      # Chaquopy resolves/installs pip dependencies (rns, lxmf) at build
+      # time, not just on-device — see ci.yml's identical step for why.
+      - name: Set up build-time Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v6
 
