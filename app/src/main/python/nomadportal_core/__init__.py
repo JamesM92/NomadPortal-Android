@@ -1,17 +1,24 @@
 """
-nomadportal_core — placeholder package for the UI-agnostic RNS/LXMF core
-logic extracted from the original NomadPortal Flask app.
+nomadportal_core — Android-side orchestration/glue layer.
 
-This module intentionally does nothing real yet. Its only job right now is
-to prove the Chaquopy embedding works end-to-end, including that RNS/LXMF
-actually import at runtime on-device (see nomadportal_android_handoff.md,
-"Suggested sequencing", step 2) before any actual RNS/LXMF extraction
-(step 1) lands here.
+This module intentionally does nothing real yet beyond the Chaquopy
+smoke test below. The actual RNS/LXMF core logic (link handling,
+page/file requests, node discovery, messaging) is NOT a subpackage here —
+it landed as its own top-level package, `nomadnet_web`, extracted
+separately into `python-core/src/nomadnet_web/` at the repo root and
+wired into Chaquopy as an additional source set (see
+`app/build.gradle.kts`'s `chaquopy.sourceSets` block) rather than copied
+in here. That's sequencing step 1, done — see the
+`nomadportal-android-core-extraction` memory for the full story.
 
-Do not add real link-handling/page-request logic to this file directly —
-that extraction is its own task, deliberately scoped separately, and should
-probably land as its own subpackage (e.g. nomadportal_core.browser,
-mirroring nomadnet_web/browser.py) rather than growing this __init__.py.
+What belongs in *this* package: the Android-specific wiring that connects
+`nomadnet_web`'s classes together for this app specifically — the
+equivalent of what the original Flask app's `create_app()` did (instantiate
+`IdentityStore`, `NodeBrowser`, `MessagingService`, etc. and connect them),
+adapted for Chaquopy/scoped storage instead of a Flask app factory. That
+orchestration layer doesn't exist yet either — it's what
+`NoopInterfaceController`, `StubMessagingRepository`, and
+`StubBrowserRepository` (Kotlin side) are waiting on to become real.
 """
 
 

@@ -1,2 +1,7 @@
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+# src/ layout: nomadnet_web lives under src/, not at the project root —
+# this is also exactly what makes it safe for Chaquopy to point srcDir at
+# "src" alone (app/build.gradle.kts), bundling only the package into the
+# app and not tests/README/requirements.txt alongside it.
+pythonpath = ["src"]

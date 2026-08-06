@@ -78,20 +78,37 @@ chaquopy {
         // a machine-specific path here). See
         // https://chaquo.com/chaquopy/doc/current/android.html#buildpython.
         pip {
-            // rns/lxmf: verified installing cleanly for both target ABIs
-            // (arm64-v8a, x86_64) as of this comment — Chaquopy's own PyPI
-            // mirror has prebuilt Android wheels for cryptography 42.0.8
-            // (rns's only native dependency), no source build needed. This
-            // was nomadportal_android_handoff.md sequencing step 2's open
-            // question ("does RNS/LXMF actually run correctly on Android
-            // via Chaquopy") — installation is now verified; on-device
-            // import/runtime behavior is checked by the "Test Python
-            // bridge" button (nomadportal_core.ping()), but full RNS
-            // initialization (Reticulum(), Identity, Transport) isn't
-            // exercised until the real core extraction (still step 1,
-            // still not started).
-            install("rns")
-            install("lxmf")
+            // Pinned to exactly what python-core/requirements.txt (the
+            // extracted nomadnet_web core) was validated against — NOT
+            // latest. nomadportal's own requirements.txt documents a real
+            // regression history behind this specific combo (an earlier
+            // rns/lxmf bump broke inbound link establishment to hosted
+            // sites). This app briefly ran unpinned-latest (1.4.2/1.1.1,
+            // verified installing cleanly — same cryptography 42.0.8
+            // Android wheel covers both, since rns's own dependency spec
+            // is a broad `cryptography>=3.4.7` either way) before the core
+            // extraction landed; reconciled down to match once python-core
+            // existed to have an actual opinion to match. Bumping past
+            // this pin is a decision to make deliberately, with its own
+            // validation pass — not something to drift into.
+            install("rns==1.3.9")
+            install("lxmf==1.0.1")
+        }
+    }
+
+    // Points Chaquopy at python-core/src/ (the nomadnet_web package only —
+    // python-core's src/ layout keeps tests/README/requirements.txt
+    // outside this dir specifically so they don't get bundled into the
+    // app too) rather than copying nomadnet_web into app/src/main/python/.
+    // One source of truth, no drift between what python-core's own test
+    // suite validates and what actually ships. python-core stays
+    // independently testable as plain Python
+    // (nomadportal_android_handoff.md sequencing step 1's own
+    // requirement) precisely because this is an additive source root, not
+    // a copy.
+    sourceSets {
+        getByName("main") {
+            srcDir("../python-core/src")
         }
     }
 }
