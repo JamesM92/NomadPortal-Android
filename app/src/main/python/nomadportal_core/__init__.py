@@ -1,24 +1,24 @@
 """
 nomadportal_core — Android-side orchestration/glue layer.
 
-This module intentionally does nothing real yet beyond the Chaquopy
-smoke test below. The actual RNS/LXMF core logic (link handling,
-page/file requests, node discovery, messaging) is NOT a subpackage here —
-it landed as its own top-level package, `nomadnet_web`, extracted
-separately into `python-core/src/nomadnet_web/` at the repo root and
-wired into Chaquopy as an additional source set (see
-`app/build.gradle.kts`'s `chaquopy.sourceSets` block) rather than copied
-in here. That's sequencing step 1, done — see the
-`nomadportal-android-core-extraction` memory for the full story.
+The actual RNS/LXMF core logic (link handling, page/file requests, node
+discovery, messaging) is NOT a subpackage here — it landed as its own
+top-level package, `nomadnet_web`, extracted separately into
+`python-core/src/nomadnet_web/` at the repo root and wired into Chaquopy
+as an additional source set (see `app/build.gradle.kts`'s
+`chaquopy.sourceSets` block) rather than copied in here. That's
+sequencing step 1, done — see the `nomadportal-android-core-extraction`
+memory for the full story.
 
-What belongs in *this* package: the Android-specific wiring that connects
-`nomadnet_web`'s classes together for this app specifically — the
-equivalent of what the original Flask app's `create_app()` did (instantiate
-`IdentityStore`, `NodeBrowser`, `MessagingService`, etc. and connect them),
-adapted for Chaquopy/scoped storage instead of a Flask app factory. That
-orchestration layer doesn't exist yet either — it's what
-`NoopInterfaceController`, `StubMessagingRepository`, and
-`StubBrowserRepository` (Kotlin side) are waiting on to become real.
+`orchestrator.py` (this package) is the Android-specific wiring that
+connects `nomadnet_web`'s classes together — the equivalent of what the
+original Flask app's `create_app()` did — see that module's own
+docstring for the design (interfaces added/removed on a running
+`Transport`, `Reticulum()` constructed exactly once). Kotlin's
+`RealInterfaceController` calls into it; only TCP and Wi-Fi discovery are
+wired to real behavior so far. `StubMessagingRepository` and
+`StubBrowserRepository` (Kotlin side) still wait on further wiring into
+`orchestrator`'s `_messaging`/`_browser` objects.
 """
 
 

@@ -39,9 +39,11 @@ import kotlinx.coroutines.launch
  * Connectivity + hosting + permissions section, per
  * nomadportal_android_handoff.md's "Main menu / connectivity & privacy
  * controls". Every toggle here is wired to the real [InterfaceController]
- * interface — flipping one actually calls through to it (currently a
- * no-op stub, see [com.jamesm92.nomadportal.connectivity.NoopInterfaceController]),
- * not just a locally-held UI state.
+ * interface — flipping one actually calls through to it. As of
+ * [com.jamesm92.nomadportal.connectivity.RealInterfaceController], TCP
+ * and Wi-Fi discovery actually control live RNS interfaces; RNode/
+ * Bluetooth-mesh/hosting are still persisted-intent-only pending their
+ * own separate prerequisites (see that class's doc comment for why).
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable

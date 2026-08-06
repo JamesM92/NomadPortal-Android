@@ -8,18 +8,17 @@ import kotlinx.coroutines.flow.StateFlow
  *
  * "Authoritative" per nomadportal_android_handoff.md's "Main menu /
  * connectivity & privacy controls" section: these calls must actually
- * tear down/bring up the corresponding RNS `Interface` once the real
- * RNS/LXMF core (sequencing step 1, not yet extracted) exists — a
- * Settings toggle that only flips a persisted preference without this
- * actually happening would misrepresent what's live, which is exactly the
- * "fail closed on what you don't know" trust-model bug porting-notes.md §3
+ * tear down/bring up the corresponding RNS `Interface` — a Settings
+ * toggle that only flips a persisted preference without this actually
+ * happening would misrepresent what's live, which is exactly the "fail
+ * closed on what you don't know" trust-model bug porting-notes.md §3
  * calls out from the original NomadPortal.
  *
- * [NoopInterfaceController] is the only implementation right now, and does
- * nothing beyond tracking the requested state — there is no RNS core to
- * control yet. Swap it for a real implementation (presumably backed by the
- * Chaquopy-embedded core) once that exists; nothing above this interface
- * (the Settings screen/ViewModel) should need to change when that happens.
+ * [RealInterfaceController] is the current implementation, backed by
+ * `nomadportal_core.orchestrator` (only TCP/Wi-Fi discovery are actually
+ * wired to live RNS behavior yet — see that class's doc comment).
+ * [NoopInterfaceController] (persisted-intent-only, no real RNS calls)
+ * predates it and is kept as a minimal reference/test implementation.
  *
  * The connectivity toggles are independent and orthogonal by design — see
  * the handoff doc for why Bluetooth mesh and RNode-over-Bluetooth are NOT
