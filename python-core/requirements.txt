@@ -1,0 +1,16 @@
+# Pinned to exactly what nomadportal's own requirements.txt validated this
+# code against — NOT "latest". That file documents a real regression
+# history (an earlier rns/lxmf bump broke inbound link establishment to
+# hosted sites; see its comments) behind these specific versions. Bumping
+# beyond this pin is a decision to make deliberately, with its own
+# validation pass, not something to drift into by installing "latest".
+#
+# NOTE: app/build.gradle.kts's chaquopy.pip block (nomadportal-android)
+# currently installs unpinned latest rns/lxmf (1.4.2/1.1.1 as of this
+# writing) — that predates this extraction and should be reconciled to
+# match these pins once this package is actually wired into the Android
+# app, not left on two different versions across the same codebase.
+rns==1.3.9
+lxmf==1.0.1
+pyyaml==6.0.3
+pytest==9.1.1
