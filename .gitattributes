@@ -1,0 +1,13 @@
+# Explicit binary handling — don't rely on git's own binary-detection
+# heuristic (which happened to guess right for these so far, but that's
+# luck, not a guarantee) for line-ending normalization on assets where
+# CRLF conversion would silently corrupt the file.
+*.ttf   binary
+*.otf   binary
+*.png   binary
+*.jpg   binary
+*.jpeg  binary
+*.webp  binary
+*.jar   binary
+*.keystore binary
+*.jks   binary

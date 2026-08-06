@@ -38,24 +38,26 @@ import com.jamesm92.micron2compose.parser.LinkTarget
 import com.jamesm92.micron2compose.parser.MicronConverter
 import com.jamesm92.nomadportal.data.browsing.BrowserRepository
 import com.jamesm92.nomadportal.data.browsing.PageAddress
+import com.jamesm92.nomadportal.ui.theme.NomadMono
 
 /**
  * The actual page-content browser: address bar, back/forward (an in-screen
  * history stack, separate from Compose Navigation's own back stack — the
  * nav-level back button in the top bar returns to the node list, these
  * arrows move within this node's browsing history), and [MicronPage]
- * rendering.
+ * rendering (in [NomadMono], per porting-notes.md §5's Braille/box-drawing
+ * glyph requirement — micron2compose exposes `fontFamily`/
+ * `monospaceFontFamily` for exactly this since v0.1.0).
  *
- * **Link handling is real for two of the three cases** the handoff doc's
- * "Link activation safety" section requires:
+ * **Link handling covers all three "Link activation safety" cases** from
+ * the handoff doc:
  * - Internal (`hash://...`) links navigate within this screen's history.
- * - External (`http(s)://...`) links show [LinkWarningDialog] before
- *   opening an external browser — never silent immediate activation.
- * - **File-download links can't be handled yet** — see [LinkWarningDialog]'s
- *   doc comment for why (micron2compose's `defaultUrlResolver` currently
- *   makes them indistinguishable from a bare next-heading-jump `"#"`).
- *   Bare-`"#"` targets are currently treated as inert no-ops rather than
- *   guessed at.
+ * - External (`http(s)://...`) and file-download (`LinkTarget.isFileDownload`)
+ *   links both show [LinkWarningDialog] before activating — never silent.
+ *
+ * File-download confirmation shows the filename but doesn't actually fetch
+ * anything yet on "Download" — real file transfer needs the RNS Link layer
+ * from the core extraction (sequencing step 1, not started).
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -84,6 +86,15 @@ fun BrowserScreen(
 
     fun handleLink(target: LinkTarget) {
         when {
+            // Checked first: a file-download link is still a real hash://
+            // (or http(s)://) URL under the hood — isFileDownload is what
+            // distinguishes it, not the URL's own prefix.
+            target.isFileDownload ->
+                pendingWarning = PendingLinkWarning.FileDownload(
+                    url = target.url,
+                    fileName = target.url.substringAfterLast('/'),
+                )
+
             target.url.startsWith("http://") || target.url.startsWith("https://") ->
                 pendingWarning = PendingLinkWarning.ExternalWeb(target.url)
 
@@ -95,9 +106,10 @@ fun BrowserScreen(
             target.url.startsWith("#") && target.url.length > 1 ->
                 scrollToAnchor = target.url.removePrefix("#")
 
-            // Bare "#" (next-heading-jump) and anything else (including a
-            // /file/ link masquerading as bare "#" — see this file's doc
-            // comment) — no-op rather than guessing.
+            // Bare "#" (jump to the next heading after this link) — no
+            // block-index-lookup for "next heading from here" is exposed
+            // by ConvertResult, so this is a no-op rather than a partial
+            // implementation. Low priority: cosmetic, not a safety gap.
             else -> Unit
         }
     }
@@ -117,7 +129,14 @@ fun BrowserScreen(
         LinkWarningDialog(
             warning = warning,
             onConfirm = {
-                if (warning is PendingLinkWarning.ExternalWeb) uriHandler.openUri(warning.url)
+                when (warning) {
+                    is PendingLinkWarning.ExternalWeb -> uriHandler.openUri(warning.url)
+                    // TODO(core extraction, sequencing step 1): actually
+                    // fetch the file over an RNS Link once that layer
+                    // exists. No-op for now — there's nothing to fetch
+                    // from yet.
+                    is PendingLinkWarning.FileDownload -> Unit
+                }
                 pendingWarning = null
             },
             onDismiss = { pendingWarning = null },
@@ -177,6 +196,8 @@ fun BrowserScreen(
                     readOnly = false,
                     scrollToAnchor = scrollToAnchor,
                     onLinkClick = ::handleLink,
+                    fontFamily = NomadMono,
+                    monospaceFontFamily = NomadMono,
                     modifier = Modifier.fillMaxSize(),
                 )
                 else -> CircularProgressIndicator(modifier = Modifier.align(Alignment.Center))

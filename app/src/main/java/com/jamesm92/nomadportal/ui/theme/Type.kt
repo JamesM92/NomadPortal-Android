@@ -2,16 +2,22 @@ package com.jamesm92.nomadportal.ui.theme
 
 import androidx.compose.material3.Typography
 import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.font.Font
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.sp
+import com.jamesm92.nomadportal.R
 
-// TODO(porting-notes.md §5): bundle Roboto Mono Nerd Font as this app's
-// monospace family once Micron rendering (micron2compose) needs its
-// box-drawing/Braille glyph coverage for flush-aligned ASCII art. Using the
-// platform monospace font for now — fine for this placeholder screen, but
-// swap before any real Micron content is rendered.
-val NomadMono = FontFamily.Monospace
+// porting-notes.md §5: Roboto Mono Nerd Font — its Nerd Font glyph set
+// makes box-drawing and Braille characters (common in Micron-rendered
+// ASCII art) render flush with no sub-pixel gaps, unlike a generic
+// monospace font. Used for this app's whole typography, not just Micron
+// content — matches the original NomadPortal web app's terminal aesthetic
+// throughout, not a Micron-only special case. Same font file passed as
+// both `fontFamily`/`monospaceFontFamily` to micron2compose's `MicronPage`
+// (see ui/browser/BrowserScreen.kt) — this app has no separate "regular
+// sans" family to distinguish it from.
+val NomadMono = FontFamily(Font(R.font.roboto_mono_nerd_font))
 
 val NomadTypography = Typography(
     bodyLarge = TextStyle(
