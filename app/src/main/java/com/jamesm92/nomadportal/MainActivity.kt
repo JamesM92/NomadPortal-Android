@@ -23,7 +23,10 @@ class MainActivity : ComponentActivity() {
                     modifier = Modifier.fillMaxSize(),
                     color = MaterialTheme.colorScheme.background,
                 ) {
-                    NomadNavHost(interfaceController = app.interfaceController)
+                    NomadNavHost(
+                        interfaceController = app.interfaceController,
+                        messagingRepository = app.messagingRepository,
+                    )
                 }
             }
         }

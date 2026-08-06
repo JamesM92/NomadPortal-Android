@@ -4,6 +4,14 @@
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
 
+    <!-- Local Wi-Fi discovery (RNS's AutoInterface — IPv6 link-local
+         multicast, see connectivity/InterfaceController.kt). A normal
+         install-time permission, not a runtime-prompted one — Android
+         drops multicast packets by default without it, but it doesn't
+         touch Wi-Fi scanning, location, or anything dangerous-protection-
+         level. -->
+    <uses-permission android:name="android.permission.CHANGE_WIFI_MULTICAST_STATE" />
+
     <!-- Bluetooth-mesh / RNode-over-Bluetooth support. Both are optional at
          runtime (see permissions/BluetoothPermissions.kt) — the app must
          function fully with either denied, per

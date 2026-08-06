@@ -216,15 +216,19 @@ three — only the emission layer changes:
 
 ## Main menu / connectivity & privacy controls (added Aug 2026)
 
-Requirements gathered during initial project scaffolding, before any of
-these screens exist yet. Captured here so they're not lost before the
-"build the browsing/settings screens" phase — none of this is implemented
-yet, this is a spec for that later work.
+Requirements gathered during initial project scaffolding. **Now
+implemented** as of the connectivity/privacy work session (see
+`connectivity/InterfaceController.kt` + `ui/settings/SettingsScreen.kt`) —
+the actual RNS interface control is still a `NoopInterfaceController` stub
+pending the core extraction, but the toggle UI, permission flow, and
+persisted-intent plumbing are real and built against the interface a real
+controller will implement later.
 
 - **Explicit, authoritative interface toggles in the main menu**: separate
-  on/off switches for **Bluetooth mesh**, **TCP**, and **RNode**. "Authoritative"
-  means each toggle actually tears down/brings up the corresponding RNS
-  `Interface` — not just a UI preference the backend might not honor.
+  on/off switches for **Bluetooth mesh**, **TCP**, **RNode**, and **local
+  Wi-Fi discovery**. "Authoritative" means each toggle actually tears
+  down/brings up the corresponding RNS `Interface` — not just a UI
+  preference the backend might not honor.
   - Toggling **TCP** off shuts down all of this app's internet-based RNS
     activity (TCP client/server interfaces). No mesh traffic over the
     internet while off.
@@ -237,7 +241,17 @@ yet, this is a spec for that later work.
     their shared radio might tempt you to.
   - Toggling **RNode** off shuts down the RNode interface specifically,
     regardless of whether that RNode is connected via USB or Bluetooth.
-  - These three toggles are independent and orthogonal — any combination of
+  - **Toggling local Wi-Fi discovery** off shuts down RNS's `AutoInterface`
+    (IPv6 link-local multicast peer discovery on the current LAN) —
+    distinct from TCP, which is for reaching specific configured remote
+    addresses, not auto-discovering nearby nodes on the same network. Off
+    by default (unlike TCP): it announces this device's presence to every
+    network it joins via multicast, which is more like Bluetooth
+    mesh/RNode's exposure profile than TCP's. Uses a normal
+    (`CHANGE_WIFI_MULTICAST_STATE`) manifest permission, not a runtime one
+    — doesn't touch Wi-Fi scanning or location at all, added Aug 2026 per
+    explicit user request for this toggle.
+  - These four toggles are independent and orthogonal — any combination of
     on/off states must be valid and immediately reflected in which RNS
     interfaces are actually live.
 - **Explicit toggle for hosting a NomadNet node on this device at all**,

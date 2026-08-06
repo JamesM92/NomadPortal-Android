@@ -5,6 +5,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.Message
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.Button
 import androidx.compose.material3.IconButton
@@ -40,7 +41,7 @@ import kotlinx.coroutines.launch
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun HomeScreen(onOpenSettings: () -> Unit) {
+fun HomeScreen(onOpenSettings: () -> Unit, onOpenMessages: () -> Unit) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     var pythonStatus by remember { mutableStateOf("Not tested yet") }
@@ -57,6 +58,9 @@ fun HomeScreen(onOpenSettings: () -> Unit) {
                     })
                 },
                 actions = {
+                    IconButton(onClick = onOpenMessages) {
+                        Icon(Icons.AutoMirrored.Filled.Message, contentDescription = "Messages")
+                    }
                     IconButton(onClick = onOpenSettings) {
                         Icon(Icons.Filled.Settings, contentDescription = "Settings")
                     }
@@ -98,6 +102,6 @@ fun HomeScreen(onOpenSettings: () -> Unit) {
 @Composable
 fun HomeScreenPreview() {
     NomadPortalTheme {
-        HomeScreen(onOpenSettings = {})
+        HomeScreen(onOpenSettings = {}, onOpenMessages = {})
     }
 }

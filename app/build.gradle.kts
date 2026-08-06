@@ -107,7 +107,9 @@ dependencies {
     implementation(libs.androidx.ui.graphics)
     implementation(libs.androidx.ui.tooling.preview)
     implementation(libs.androidx.material3)
-    implementation(libs.androidx.material.icons.core)
+    // -extended supersedes -core (superset of its icons) — used instead of
+    // -core once Message/Wifi/etc. icons were needed beyond core's set.
+    implementation(libs.androidx.material.icons.extended)
 
     testImplementation(libs.junit)
 

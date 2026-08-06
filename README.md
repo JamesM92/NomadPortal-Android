@@ -1,5 +1,14 @@
 # NomadPortal-Android
 
+> ⚠️ **This project is "vibe coded"** — built in collaboration with an AI
+> assistant. The author is not a security expert, and this code (including
+> the parts that handle cryptographic identity, permissions, and untrusted
+> network input) has not had a professional security audit. Treat it
+> accordingly, especially before relying on it for anything sensitive.
+> **Security-minded review, auditing, and improvements are genuinely
+> welcome** — please open an issue or PR, or see
+> [`SECURITY.md`](SECURITY.md) to report a vulnerability privately.
+
 A native Android app for browsing, hosting, and editing
 [NomadNet](https://github.com/markqvist/NomadNet) (Reticulum) pages — an
 independent, open-source alternative to

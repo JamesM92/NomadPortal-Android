@@ -21,14 +21,16 @@ import kotlinx.coroutines.flow.StateFlow
  * Chaquopy-embedded core) once that exists; nothing above this interface
  * (the Settings screen/ViewModel) should need to change when that happens.
  *
- * The three connectivity toggles are independent and orthogonal by design
- * — see the handoff doc for why Bluetooth mesh and RNode-over-Bluetooth
- * are NOT the same toggle despite sharing a radio.
+ * The connectivity toggles are independent and orthogonal by design — see
+ * the handoff doc for why Bluetooth mesh and RNode-over-Bluetooth are NOT
+ * the same toggle despite sharing a radio, and why local Wi-Fi discovery
+ * is its own toggle rather than folded into TCP.
  */
 interface InterfaceController {
     val tcpEnabled: StateFlow<Boolean>
     val bluetoothMeshEnabled: StateFlow<Boolean>
     val rNodeEnabled: StateFlow<Boolean>
+    val wifiDiscoveryEnabled: StateFlow<Boolean>
     val nodeHostingEnabled: StateFlow<Boolean>
 
     /** Enables/disables all internet-based (TCP client/server) RNS interfaces. */
@@ -42,6 +44,17 @@ interface InterfaceController {
 
     /** Enables/disables the RNode interface, regardless of whether that RNode is USB- or Bluetooth-connected. */
     suspend fun setRNodeEnabled(enabled: Boolean)
+
+    /**
+     * Enables/disables local-network peer discovery (RNS's `AutoInterface`
+     * — IPv6 link-local multicast on the current LAN/Wi-Fi segment, not a
+     * connection to any specific configured address). Distinct from
+     * [setTcpEnabled]: TCP is for reaching specific remote/internet hosts;
+     * this is for auto-discovering other RNS nodes already on the same
+     * local network. Uses multicast on an existing Wi-Fi connection, not
+     * Wi-Fi scanning — doesn't touch `BLUETOOTH_SCAN`/location at all.
+     */
+    suspend fun setWifiDiscoveryEnabled(enabled: Boolean)
 
     /**
      * Enables/disables whether this device answers page/file requests over

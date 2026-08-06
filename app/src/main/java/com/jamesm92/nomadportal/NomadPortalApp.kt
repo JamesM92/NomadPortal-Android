@@ -6,6 +6,8 @@ import com.chaquo.python.android.AndroidPlatform
 import com.jamesm92.nomadportal.connectivity.InterfaceController
 import com.jamesm92.nomadportal.connectivity.NoopInterfaceController
 import com.jamesm92.nomadportal.data.SettingsRepository
+import com.jamesm92.nomadportal.data.messaging.MessagingRepository
+import com.jamesm92.nomadportal.data.messaging.StubMessagingRepository
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.SupervisorJob
 
@@ -29,6 +31,8 @@ class NomadPortalApp : Application() {
         private set
     lateinit var interfaceController: InterfaceController
         private set
+    lateinit var messagingRepository: MessagingRepository
+        private set
 
     override fun onCreate() {
         super.onCreate()
@@ -41,5 +45,9 @@ class NomadPortalApp : Application() {
         // own doc comment. Swapping this line is the entire integration
         // point for a real controller later.
         interfaceController = NoopInterfaceController(settingsRepository, appScope)
+        // Same pattern as interfaceController: StubMessagingRepository is
+        // fake/in-memory until real LXMF delivery exists — see its own doc
+        // comment. Swapping this line is the entire integration point.
+        messagingRepository = StubMessagingRepository(appScope)
     }
 }

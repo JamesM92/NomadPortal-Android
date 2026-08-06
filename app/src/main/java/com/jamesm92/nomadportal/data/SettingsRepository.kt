@@ -19,12 +19,14 @@ private val Context.settingsDataStore by preferencesDataStore(name = "nomadporta
  * only the controller layer changes.
  *
  * Defaults are deliberately opt-in for anything that either needs a
- * permission grant or changes what this device exposes to the mesh: TCP
- * defaults on (the common case, no extra permission needed), everything
- * else defaults off until the user explicitly turns it on. This matches
- * the "permissions are optional and nothing is requested until the
- * feature that needs it is actually turned on" policy in
- * nomadportal_android_handoff.md.
+ * permission grant or changes what this device exposes: TCP defaults on
+ * (the common case, no extra permission needed, and doesn't announce this
+ * device to anyone who isn't already being connected to). Everything else
+ * — including Wi-Fi discovery, which auto-announces this device's presence
+ * to every local network it joins via multicast — defaults off until the
+ * user explicitly turns it on. This matches the "permissions are optional
+ * and nothing is requested/broadcast until the feature that needs it is
+ * actually turned on" policy in nomadportal_android_handoff.md.
  */
 class SettingsRepository(context: Context) {
     private val dataStore = context.applicationContext.settingsDataStore
@@ -32,11 +34,13 @@ class SettingsRepository(context: Context) {
     val tcpEnabled: Flow<Boolean> = boolFlow(KEY_TCP, default = true)
     val bluetoothMeshEnabled: Flow<Boolean> = boolFlow(KEY_BLUETOOTH_MESH, default = false)
     val rNodeEnabled: Flow<Boolean> = boolFlow(KEY_RNODE, default = false)
+    val wifiDiscoveryEnabled: Flow<Boolean> = boolFlow(KEY_WIFI_DISCOVERY, default = false)
     val nodeHostingEnabled: Flow<Boolean> = boolFlow(KEY_NODE_HOSTING, default = false)
 
     suspend fun setTcpEnabled(enabled: Boolean) = setBool(KEY_TCP, enabled)
     suspend fun setBluetoothMeshEnabled(enabled: Boolean) = setBool(KEY_BLUETOOTH_MESH, enabled)
     suspend fun setRNodeEnabled(enabled: Boolean) = setBool(KEY_RNODE, enabled)
+    suspend fun setWifiDiscoveryEnabled(enabled: Boolean) = setBool(KEY_WIFI_DISCOVERY, enabled)
     suspend fun setNodeHostingEnabled(enabled: Boolean) = setBool(KEY_NODE_HOSTING, enabled)
 
     private fun boolFlow(key: androidx.datastore.preferences.core.Preferences.Key<Boolean>, default: Boolean): Flow<Boolean> =
@@ -50,6 +54,7 @@ class SettingsRepository(context: Context) {
         val KEY_TCP = booleanPreferencesKey("tcp_enabled")
         val KEY_BLUETOOTH_MESH = booleanPreferencesKey("bluetooth_mesh_enabled")
         val KEY_RNODE = booleanPreferencesKey("rnode_enabled")
+        val KEY_WIFI_DISCOVERY = booleanPreferencesKey("wifi_discovery_enabled")
         val KEY_NODE_HOSTING = booleanPreferencesKey("node_hosting_enabled")
     }
 }

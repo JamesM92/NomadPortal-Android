@@ -34,6 +34,9 @@ class NoopInterfaceController(
     override val rNodeEnabled: StateFlow<Boolean> =
         settings.rNodeEnabled.stateIn(scope, SharingStarted.Eagerly, false)
 
+    override val wifiDiscoveryEnabled: StateFlow<Boolean> =
+        settings.wifiDiscoveryEnabled.stateIn(scope, SharingStarted.Eagerly, false)
+
     override val nodeHostingEnabled: StateFlow<Boolean> =
         settings.nodeHostingEnabled.stateIn(scope, SharingStarted.Eagerly, false)
 
@@ -50,6 +53,11 @@ class NoopInterfaceController(
     override suspend fun setRNodeEnabled(enabled: Boolean) {
         // TODO(core extraction): start/stop the RNode Interface here (USB or Bluetooth transport).
         settings.setRNodeEnabled(enabled)
+    }
+
+    override suspend fun setWifiDiscoveryEnabled(enabled: Boolean) {
+        // TODO(core extraction): start/stop RNS's AutoInterface here.
+        settings.setWifiDiscoveryEnabled(enabled)
     }
 
     override suspend fun setNodeHostingEnabled(enabled: Boolean) {

@@ -52,6 +52,7 @@ fun SettingsScreen(interfaceController: InterfaceController, onBack: () -> Unit)
     val tcpEnabled by interfaceController.tcpEnabled.collectAsState()
     val bluetoothMeshEnabled by interfaceController.bluetoothMeshEnabled.collectAsState()
     val rNodeEnabled by interfaceController.rNodeEnabled.collectAsState()
+    val wifiDiscoveryEnabled by interfaceController.wifiDiscoveryEnabled.collectAsState()
     val nodeHostingEnabled by interfaceController.nodeHostingEnabled.collectAsState()
 
     var bluetoothGranted by remember { mutableStateOf(hasBluetoothPermissions(context)) }
@@ -113,6 +114,14 @@ fun SettingsScreen(interfaceController: InterfaceController, onBack: () -> Unit)
                     description = "RNode interface, over USB or Bluetooth. Independent of the Bluetooth mesh toggle above — this does not affect it, and vice versa.",
                     checked = rNodeEnabled,
                     onCheckedChange = { scope.launch { interfaceController.setRNodeEnabled(it) } },
+                )
+            }
+            item {
+                ToggleRow(
+                    label = "Local network discovery",
+                    description = "Auto-discover other RNS nodes on the same Wi-Fi/LAN via multicast. Off by default — this announces this device's presence to whichever network you're on.",
+                    checked = wifiDiscoveryEnabled,
+                    onCheckedChange = { scope.launch { interfaceController.setWifiDiscoveryEnabled(it) } },
                 )
             }
 
