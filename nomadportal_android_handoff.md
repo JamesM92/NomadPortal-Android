@@ -28,6 +28,29 @@ Flask-specific.
 
 ## micron2compose — the third Micron rendering target
 
+**Status (Aug 2026): initial release done, integrated.** `micron2compose`
+is not published (no GitHub remote/tag yet), so it's wired in via a Gradle
+composite build — `settings.gradle.kts`'s `includeBuild("../micron2compose")`
+with a dependency substitution matching the exact Maven coordinate
+(`com.github.JamesM92:micron2compose`) its own README documents for the
+eventual real JitPack consumption, so nothing in `app/build.gradle.kts`
+needs to change when it's actually published — just delete the
+`includeBuild` block. Verified building end-to-end (both projects compile
+together, `micron2compose`'s own tests/lint run as part of our build).
+
+**Two issues found on integration, reported upstream** (see
+`FEEDBACK-from-nomadportal-android.md` in the `micron2compose` repo): (1)
+its default URL resolver collapses `/file/` download links to a bare `"#"`,
+indistinguishable from a legitimate "jump to next heading" link — this
+blocks implementing the "Link activation safety" requirement below, since
+the app can't tell a file link happened at all, let alone show the
+required confirmation before it activates. (2) no way to override the
+rendered font family, so this app's Roboto Mono Nerd Font requirement (see
+`porting-notes.md` §5, needed for correct Braille/box-drawing glyph
+alignment) can't actually be applied through the library yet. Real
+browsing-screen work should wait on at least the first of these landing
+upstream, since it changes `LinkTarget`'s shape.
+
 Two other Micron converters already exist for other targets in this project
 family: `Micron2HTML` (mine, for NomadPortal's web UI) and `micron2kivy`
 (built for a possible Sideband PR — a different, lower-priority track, see

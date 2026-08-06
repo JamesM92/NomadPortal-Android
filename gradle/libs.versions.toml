@@ -19,6 +19,11 @@ materialIconsExtended = "1.7.8"
 junit = "4.13.2"
 androidxJunit = "1.3.0"
 espressoCore = "3.7.0"
+# Version string is ignored while settings.gradle.kts's includeBuild
+# dependency substitution is active (builds from the local sibling
+# checkout instead) — becomes the real published tag once micron2compose
+# is actually released and that substitution is removed.
+micron2compose = "0.0.1"
 
 [libraries]
 androidx-core-ktx = { group = "androidx.core", name = "core-ktx", version.ref = "coreKtx" }
@@ -35,6 +40,7 @@ androidx-material3 = { group = "androidx.compose.material3", name = "material3" 
 androidx-material-icons-extended = { group = "androidx.compose.material", name = "material-icons-extended", version.ref = "materialIconsExtended" }
 androidx-navigation-compose = { group = "androidx.navigation", name = "navigation-compose", version.ref = "navigationCompose" }
 androidx-datastore-preferences = { group = "androidx.datastore", name = "datastore-preferences", version.ref = "datastorePreferences" }
+micron2compose = { group = "com.github.JamesM92", name = "micron2compose", version.ref = "micron2compose" }
 junit = { group = "junit", name = "junit", version.ref = "junit" }
 androidx-junit = { group = "androidx.test.ext", name = "junit", version.ref = "androidxJunit" }
 androidx-espresso-core = { group = "androidx.test.espresso", name = "espresso-core", version.ref = "espressoCore" }

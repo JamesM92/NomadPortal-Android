@@ -110,6 +110,7 @@ dependencies {
     // -extended supersedes -core (superset of its icons) — used instead of
     // -core once Message/Wifi/etc. icons were needed beyond core's set.
     implementation(libs.androidx.material.icons.extended)
+    implementation(libs.micron2compose)
 
     testImplementation(libs.junit)
 
