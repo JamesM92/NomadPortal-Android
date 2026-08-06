@@ -259,6 +259,16 @@ yet, this is a spec for that later work.
   library or API forces a location-permission requirement with no opt-out,
   that's a blocker worth resolving (find another way to do the BLE
   operation, or drop the feature) rather than adding the permission.
+  - **Resolved (Aug 2026)**: `neverForLocation` on `BLUETOOTH_SCAN` only
+    exists on API 31+; below that, Android ties BLE scan results to
+    location permission at the OS level with no bypass. Rather than gate
+    the Bluetooth-mesh feature behind a runtime SDK check on an app that
+    otherwise supports older devices, **`minSdk` was raised to 31**
+    (`app/build.gradle.kts`) so the no-location requirement holds
+    everywhere the app runs, full stop. This does mean Android 7-11
+    devices can't install the app at all — a deliberate tradeoff, not an
+    oversight, made explicitly to keep the "never request location" rule
+    absolute rather than conditional.
 - **Panic wipe**: triple-tapping the app's main logo wipes all local app
   data, mirroring Bitchat's panic-wipe UX convention. Specific requirements
   on the wipe itself:
@@ -272,6 +282,26 @@ yet, this is a spec for that later work.
     about that limit rather than overpromising "unrecoverable," but the
     implementation should still do real overwrite passes, not skip that
     step because it isn't a 100% guarantee.)
+  - **Resolved (Aug 2026): layer in cryptographic erasure ahead of
+    multi-pass overwrite, not instead of it.** Multi-pass overwrite is
+    slow and its physical-layer guarantee is unreliable on flash (above).
+    Android Keystore-backed key destruction doesn't have either problem —
+    delete a hardware-backed key and any data encrypted with it becomes
+    permanently unrecoverable ciphertext instantly, independent of data
+    volume (same technique Android itself uses for fast FBE factory
+    resets). Implemented in `security/SecureKeystore.kt` +
+    `panicwipe/PanicWipe.kt`: key wipe runs first (fast, real, functional
+    today even with no real keys yet), multi-pass file overwrite runs
+    after as defense-in-depth for whatever isn't Keystore-encrypted. **This
+    has a real implication for the core extraction (sequencing step 1):
+    RNS identity storage and any LXMF message persistence should be
+    written encrypted-at-rest via a Keystore-backed key
+    (`SecureKeystore.getOrCreateKey`, or `androidx.security.crypto`'s
+    `EncryptedFile`/`MasterKey` built on the same mechanism) from the
+    start**, not added later — that's what makes the panic wipe on that
+    data actually instant and reliable rather than falling back to
+    "overwrite however many megabytes of message history this device has
+    accumulated."
   - **Every app-related cache**, not just the "obviously important" state
     (identity keys, contacts/favorites) — this includes any RNS/LXMF
     on-disk caches, link/path caches, rendered-page caches, etc. "All local
@@ -280,10 +310,14 @@ yet, this is a spec for that later work.
     the old one** — not derived from it, not recoverable from anything left
     on the device. A fresh keypair with no cryptographic or stored linkage
     back to the wiped identity.
-  - Still needs a real interaction-design pass before building (confirmation-
-    or-not tradeoff — Bitchat leans on the gesture being obscure/hard-to-
-    hit-by-accident rather than a confirmation dialog; decide explicitly
-    which this app wants).
+  - **Resolved (Aug 2026): no confirmation dialog** — the third tap wipes
+    immediately, matching Bitchat's actual behavior. A confirmation dialog
+    defeats the point of a panic button (speed matters in the scenario this
+    exists for); the friction that prevents accidental triggering is the
+    gesture itself (3 taps on one small element within a short window),
+    not a modal. If this turns out to be too easy to trigger by accident in
+    practice, revisit — but don't default to a confirmation dialog just
+    because it feels safer on paper.
 
 ## Out of scope for this repo
 

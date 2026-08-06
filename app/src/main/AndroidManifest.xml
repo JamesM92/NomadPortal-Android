@@ -1,12 +1,23 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
-    <!-- RNS interfaces this app will support: TCP client/server for now.
-         Bluetooth/USB permissions belong to the separate BLE-mesh interface
-         module (see nomadportal_android_handoff.md) and are not added here
-         until that module is actually integrated. -->
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+
+    <!-- Bluetooth-mesh / RNode-over-Bluetooth support. Both are optional at
+         runtime (see permissions/BluetoothPermissions.kt) — the app must
+         function fully with either denied, per
+         nomadportal_android_handoff.md's connectivity/privacy section.
+         usesPermissionFlags="neverForLocation" on BLUETOOTH_SCAN is why
+         minSdk is 31 (app/build.gradle.kts): that flag is what lets this
+         app scan for BLE devices without ever requesting location, which
+         is only possible on API 31+. Never add
+         ACCESS_FINE_LOCATION/ACCESS_COARSE_LOCATION to this manifest. -->
+    <uses-permission
+        android:name="android.permission.BLUETOOTH_SCAN"
+        android:usesPermissionFlags="neverForLocation" />
+    <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
+    <uses-permission android:name="android.permission.BLUETOOTH_ADVERTISE" />
 
     <application
         android:name=".NomadPortalApp"

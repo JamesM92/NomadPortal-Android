@@ -80,6 +80,6 @@ jobs:
       - name: Run instrumented tests
         uses: reactivecircus/android-emulator-runner@v2
         with:
-          api-level: 29
+          api-level: 31 # matches app/build.gradle.kts minSdk
           arch: x86_64
           script: ./gradlew connectedDebugAndroidTest --no-daemon

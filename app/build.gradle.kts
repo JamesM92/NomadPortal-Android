@@ -10,13 +10,23 @@ android {
     // failed a real build here — androidx.core 1.19.0 / lifecycle-runtime-
     // compose-android 2.11.0 (pulled in transitively) both require
     // compiling against API 37+. Bumped past the demo's pin to match what
-    // the actual dependency graph needs. minSdk 24 is Chaquopy 17.0's
-    // documented floor.
+    // the actual dependency graph needs.
     compileSdk = 37
 
     defaultConfig {
         applicationId = "com.jamesm92.nomadportal"
-        minSdk = 24
+        // minSdk 31 (not Chaquopy 17.0's documented floor of 24): the
+        // Bluetooth-mesh interface needs BLE scanning, and Android only
+        // supports scanning without location permission via
+        // BLUETOOTH_SCAN's `neverForLocation` flag on API 31+ — on API
+        // 24-30 the OS itself ties BLE scan results to location permission
+        // with no bypass. This app's product requirement is "never request
+        // location, full stop" (see nomadportal_android_handoff.md's "Main
+        // menu / connectivity & privacy controls" section), so minSdk was
+        // raised to make that requirement satisfiable everywhere the app
+        // runs, rather than gating BLE mesh behind a runtime SDK check on
+        // an app that otherwise supports API 24+.
+        minSdk = 31
         targetSdk = 37
         versionCode = 1
         versionName = "0.1.0"
@@ -70,11 +80,14 @@ dependencies {
     implementation(libs.androidx.core.ktx)
     implementation(libs.androidx.lifecycle.runtime.ktx)
     implementation(libs.androidx.activity.compose)
+    implementation(libs.androidx.navigation.compose)
+    implementation(libs.androidx.datastore.preferences)
     implementation(platform(libs.androidx.compose.bom))
     implementation(libs.androidx.ui)
     implementation(libs.androidx.ui.graphics)
     implementation(libs.androidx.ui.tooling.preview)
     implementation(libs.androidx.material3)
+    implementation(libs.androidx.material.icons.core)
 
     testImplementation(libs.junit)
 
