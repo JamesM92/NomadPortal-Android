@@ -2,9 +2,9 @@ name: CodeQL
 
 on:
   push:
-    branches: [main]
+    branches: [main, dev]
   pull_request:
-    branches: [main]
+    branches: [main, dev]
   schedule:
     # Weekly sweep catches newly-published query patterns against unchanged
     # code, not just what a diff touches.
