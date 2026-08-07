@@ -47,7 +47,6 @@ import com.jamesm92.nomadportal.ui.components.AdaptiveTopAppBar
 import com.jamesm92.nomadportal.ui.components.ContactAvatar
 import com.jamesm92.nomadportal.ui.components.PanicWipeLogo
 import com.jamesm92.nomadportal.ui.components.dismissKeyboardOnTap
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
 /**
@@ -87,17 +86,20 @@ fun ConversationScreen(
     var draft by remember { mutableStateOf("") }
     var sendError by remember { mutableStateOf<String?>(null) }
 
-    // The Contact passed in is a one-shot snapshot from nav time — polled
-    // here (same 4s convention as every other repository poll in this
-    // app) so a rename or an icon that arrives while this screen is
-    // already open actually shows up without needing to back out and
-    // reopen the conversation.
+    // The Contact passed in is a one-shot snapshot from nav time — kept
+    // fresh by re-fetching whenever `messages` changes, rather than an
+    // independent poll timer: per explicit direction, an icon only ever
+    // arrives attached to a new message (there's nothing else to poll
+    // for there), and `messages` is already its own live Flow, so this
+    // piggybacks on an update signal that already exists instead of
+    // adding a second, redundant one. (A peer's own display-name update
+    // only comes from a fresh announce, which this doesn't directly
+    // watch — but repository.contact() reflects whatever the latest
+    // live announce name is on every call regardless of what triggered
+    // the call, so it still comes through here for free.)
     var liveContact by remember(contact.lxmfHash) { mutableStateOf(contact) }
-    LaunchedEffect(contact.lxmfHash) {
-        while (true) {
-            repository.contact(contact.lxmfHash)?.let { liveContact = it }
-            delay(4000)
-        }
+    LaunchedEffect(contact.lxmfHash, messages) {
+        repository.contact(contact.lxmfHash)?.let { liveContact = it }
     }
     var editingName by remember { mutableStateOf(false) }
     var nameDraft by remember(liveContact.displayName) { mutableStateOf(liveContact.displayName) }
