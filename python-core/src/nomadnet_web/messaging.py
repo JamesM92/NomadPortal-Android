@@ -300,7 +300,7 @@ class MessagingService:
         rename persisted correctly but never actually changed what any
         live announce carried, so peers kept seeing the identity's
         original auto-generated name (identity_store.py's
-        `_default_identity_name()`, itself hash-derived) forever — which
+        `_default_display_name()`, itself hash-derived) forever — which
         is exactly what looked like "sending the hash." The real fix is
         the plain attribute assignment below; `display_name` has no
         dedicated setter, confirmed directly against

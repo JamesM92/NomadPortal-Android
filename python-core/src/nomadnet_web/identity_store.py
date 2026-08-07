@@ -33,18 +33,129 @@ def _normalise_hex(value: str, fallback: str) -> str:
     return ("#" + m.group(1).lower()) if m else fallback
 
 
-def _default_identity_name(identity) -> str:
-    """Return 'NomadPortal-XYZ' where XYZ is the last 3 hex chars of the
-    identity's LXMF delivery address. Computed without registering a
-    Destination, so there are no Transport-table side effects."""
+def _dest_hash_hex(identity) -> str:
+    """The identity's LXMF delivery *address*, as hex — computed without
+    registering a Destination, so there are no Transport-table side
+    effects. Shared by _default_display_name/_default_icon_appearance,
+    both of which derive their result from "the hash of the address"
+    per explicit design direction — a genuinely different value from
+    the identity's own raw hash (identity.hexhash) — see
+    AnnounceStatus.identityHash's own doc comment on the Kotlin side for
+    why those two are kept distinct elsewhere in this app too."""
     try:
         import RNS
         full_name = RNS.Destination.app_and_aspects_to_name("lxmf", "delivery")
         dest_hash = RNS.Destination.hash_from_name_and_identity(full_name, identity)
-        suffix    = RNS.hexrep(dest_hash, delimit=False)[-3:]
+        return RNS.hexrep(dest_hash, delimit=False)
     except Exception:
-        suffix = identity.hexhash[-3:]
-    return f"NomadPortal-{suffix}"
+        return identity.hexhash
+
+
+# Fun, deterministic identity flavor — every new identity gets a name and
+# icon derived from its own LXMF address hash, not randomly assigned:
+# reinstalling against the same keypair reproduces the exact same name/
+# icon every time, rather than a fresh roll. Each of these three lists is
+# exactly 16 entries so a single hex nibble (0-15) indexes it directly,
+# no modulo needed.
+_NAME_ADVERBS = [
+    "wandering", "roaming", "drifting", "jumping", "chasing", "seeking",
+    "hunting", "climbing", "diving", "soaring", "prowling", "running",
+    "dashing", "creeping", "gliding", "vanishing",
+]
+_NAME_ADJECTIVES = [
+    "silent", "curious", "restless", "hidden", "wild", "gentle", "fierce",
+    "lucky", "ancient", "swift", "clever", "incredible", "quiet", "bold",
+    "lone", "skittish",
+]
+_NAME_ANIMALS = [
+    "fox", "wolf", "owl", "hawk", "bear", "raven", "lynx", "otter",
+    "falcon", "badger", "dinosaur", "cobra", "panther", "ibex", "coyote",
+    "stag",
+]
+
+
+def _default_display_name(identity) -> str:
+    """"<adverb>-<adjective>-<animal>", lowercase, each word chosen by
+    one hex nibble (hex[0]/[1]/[2]) of this identity's own LXMF address
+    hash — see _dest_hash_hex's own doc comment. Falls back to the old
+    plain 'nomadportal-<xyz>' hash-suffix scheme if anything goes
+    wrong."""
+    h = _dest_hash_hex(identity)
+    try:
+        adverb = _NAME_ADVERBS[int(h[0], 16)]
+        adjective = _NAME_ADJECTIVES[int(h[1], 16)]
+        animal = _NAME_ANIMALS[int(h[2], 16)]
+        return f"{adverb}-{adjective}-{animal}"
+    except Exception:
+        return f"nomadportal-{h[-3:]}"
+
+
+# Same curated icon-name pool ContactAvatar.kt's glyph editor originally
+# offered before it grew a search bar and widened to every name
+# IconAppearance.kt can resolve (see that file's own doc comment) — kept
+# here specifically because every one of these is guaranteed to resolve
+# to a real glyph client-side, not just fall back to a letter, which
+# matters more for an auto-generated default than for a user's own
+# deliberate pick.
+_ICON_NAMES = [
+    "account", "account_circle", "person", "face", "hiking", "directions_walk",
+    "directions_run", "directions_bike", "directions_car", "directions_boat", "home",
+    "cabin", "terrain", "forest", "park", "pets", "star", "favorite", "wifi", "signal",
+    "router", "radio", "bolt", "lock", "shield", "key", "mail", "coffee", "local_cafe",
+    "restaurant", "campaign", "explore", "map", "place", "public", "language", "science",
+    "build", "code", "computer", "smartphone", "camera", "music_note", "sports_esports",
+    "anchor", "flight", "train", "eco", "flag", "school", "work", "medical_services",
+    "security", "visibility", "sunny", "cloud", "nightlight", "ac_unit", "whatshot",
+]
+
+
+def _hex_shorthand_to_rgb(three_hex_digits: str) -> tuple:
+    """Micron's own compact 3-digit color shorthand (`` `Bxyz``/`` `Fxyz``
+    in .mu source — porting-notes.md §5): each digit is doubled to form
+    a full byte, e.g. 'a3f' -> (0xaa, 0x33, 0xff), the same convention
+    CSS's 3-digit hex shorthand uses."""
+    r = int(three_hex_digits[0] * 2, 16)
+    g = int(three_hex_digits[1] * 2, 16)
+    b = int(three_hex_digits[2] * 2, 16)
+    return r, g, b
+
+
+def _complementary_rgb(r: int, g: int, b: int) -> tuple:
+    """The background's true complementary color — HSL hue+180°, same
+    saturation/lightness — not a plain per-channel invert (which tends
+    to land on muddy, low-contrast results for mid-tone inputs)."""
+    import colorsys
+    h, l, s = colorsys.rgb_to_hls(r / 255, g / 255, b / 255)
+    h = (h + 0.5) % 1.0
+    r2, g2, b2 = colorsys.hls_to_rgb(h, l, s)
+    return round(r2 * 255), round(g2 * 255), round(b2 * 255)
+
+
+def _default_icon_appearance(identity) -> dict:
+    """A fun, deterministic default icon derived from the hash of this
+    identity's own LXMF address, per explicit design direction: hex[4:7]
+    (3 digits, 0-4095) selects an icon — modulo _ICON_NAMES' length,
+    since 4096 doesn't divide evenly into it — hex[7:10] is the
+    background color in Micron's own compact-hex format (see
+    _hex_shorthand_to_rgb), and the foreground is that background's true
+    complementary color (see _complementary_rgb), computed rather than
+    hash-derived. Shape matches entry["icon"] elsewhere in this file
+    ({"glyph", "fg", "bg"}) — this is only ever the *initial* value; the
+    user's own later edit via Home's glyph editor (set_icon_appearance)
+    overwrites it same as any other rename would.
+    """
+    h = _dest_hash_hex(identity)
+    try:
+        glyph = _ICON_NAMES[int(h[4:7], 16) % len(_ICON_NAMES)]
+        bg_r, bg_g, bg_b = _hex_shorthand_to_rgb(h[7:10])
+        fg_r, fg_g, fg_b = _complementary_rgb(bg_r, bg_g, bg_b)
+        return {
+            "glyph": glyph,
+            "bg": "#%02x%02x%02x" % (bg_r, bg_g, bg_b),
+            "fg": "#%02x%02x%02x" % (fg_r, fg_g, fg_b),
+        }
+    except Exception:
+        return {"glyph": "?", "fg": "#ffffff", "bg": "#5ba3c9"}
 
 
 class IdentityStore:
@@ -68,18 +179,24 @@ class IdentityStore:
     def create(self, name: str = "", user_sub: str = "") -> dict:
         """Generate a new RNS keypair, store it, return the metadata entry.
 
-        If `name` is empty, defaults to 'NomadPortal-<XYZ>' where XYZ is
-        the last three hex chars of the new identity's LXMF address.
+        If `name` is empty, defaults to a fun "<Verb>-<Adjective>-
+        <Animal>" name deterministically derived from the new identity's
+        own LXMF address hash (see _default_display_name) — likewise the
+        icon appearance is seeded the same way (_default_icon_appearance)
+        rather than left unset. Both are just *initial* values — renaming
+        or picking a different icon later overwrites them exactly like
+        any other edit would.
         """
         import RNS
         identity = RNS.Identity()
         key_file = os.path.join(self._dir, f"{identity.hexhash}.id")
         identity.to_file(key_file)
         if not name:
-            name = _default_identity_name(identity)
+            name = _default_display_name(identity)
         entry = {
             "id":        identity.hexhash,
             "name":      name,
+            "icon":      _default_icon_appearance(identity),
             "key_file":  key_file,
             "nodes":     [],
             "created":   time.time(),
