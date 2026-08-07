@@ -124,6 +124,10 @@ class RealMessagingRepository : MessagingRepository {
             isFavorite = obj.optBoolean("favorited", false),
             lastAnnounceMillis = if (obj.isNull("last_seen")) 0L else (obj.optDouble("last_seen", 0.0) * 1000).toLong(),
             hopCount = if (obj.isNull("hops")) -1 else obj.optInt("hops", -1),
+            // Absent entirely from get_contact_json's smaller dict (only
+            // get_conversations_json's summary carries it) — optInt's
+            // default covers that the same way it already covers a null.
+            announceCount = if (obj.isNull("announce_count")) 0 else obj.optInt("announce_count", 0),
         )
     }
 

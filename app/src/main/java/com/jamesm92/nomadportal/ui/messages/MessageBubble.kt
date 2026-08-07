@@ -5,6 +5,7 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.widthIn
@@ -23,6 +24,10 @@ import com.jamesm92.nomadportal.ui.theme.NomadBorder
 import com.jamesm92.nomadportal.ui.theme.NomadSentBubble
 import com.jamesm92.nomadportal.ui.theme.NomadSentBubbleBorder
 import com.jamesm92.nomadportal.ui.theme.NomadTextDim
+import java.time.Instant
+import java.time.ZoneId
+import java.time.format.DateTimeFormatter
+import java.util.Locale
 
 /**
  * Sent/received bubble styling matches porting-notes.md §5 exactly: sent
@@ -57,18 +62,43 @@ fun MessageBubble(message: Message, modifier: Modifier = Modifier) {
         ) {
             Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
                 Text(text = message.content, style = MaterialTheme.typography.bodyLarge)
-                message.deliveryState?.let { state ->
+                // Timestamp + delivery status share one small metadata
+                // row below the message text, both at half the message
+                // text's size — they're secondary information, not
+                // something that should compete with the content itself
+                // for visual weight.
+                Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
                     Text(
-                        text = when (state) {
-                            DeliveryState.QUEUED -> "Queued"
-                            DeliveryState.DELIVERED -> "Delivered"
-                            DeliveryState.FAILED -> "Failed"
-                        },
-                        style = MaterialTheme.typography.bodyLarge,
+                        text = formatMessageTimestamp(message.timestampMillis),
+                        style = MaterialTheme.typography.bodyLarge.copy(
+                            fontSize = MaterialTheme.typography.bodyLarge.fontSize * 0.5f,
+                        ),
                         color = NomadTextDim,
                     )
+                    message.deliveryState?.let { state ->
+                        Text(
+                            text = when (state) {
+                                DeliveryState.QUEUED -> "Queued"
+                                DeliveryState.DELIVERED -> "Delivered"
+                                DeliveryState.FAILED -> "Failed"
+                            },
+                            style = MaterialTheme.typography.bodyLarge.copy(
+                                fontSize = MaterialTheme.typography.bodyLarge.fontSize * 0.5f,
+                            ),
+                            color = NomadTextDim,
+                        )
+                    }
                 }
             }
         }
     }
 }
+
+/** Absolute time-of-day, not relative — the standard chat-app convention
+ * for an individual message, unlike the "3m ago"/"just now" relative
+ * phrasing used elsewhere in this app for last-announce/last-seen times
+ * (which suits a constantly-refreshing list, not a fixed sent time). */
+private val messageTimeFormatter = DateTimeFormatter.ofPattern("h:mm a", Locale.getDefault())
+
+private fun formatMessageTimestamp(timestampMillis: Long): String =
+    Instant.ofEpochMilli(timestampMillis).atZone(ZoneId.systemDefault()).format(messageTimeFormatter)

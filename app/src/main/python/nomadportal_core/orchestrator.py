@@ -472,6 +472,12 @@ def _conversation_entries() -> list:
             "favorited": bool(contact.get("favorited")) if contact else False,
             "last_seen": peer.get("last_seen") if peer else None,
             "hops": peer.get("hops") if peer else None,
+            # How many times this peer's LXMF delivery identity has
+            # announced, total — lxmf_tracker.py already counts this per
+            # peer (same convention as browser.py's node announce_count);
+            # only exposed here for the Messages screen's "Announces"
+            # sort option, wasn't needed by anything before that.
+            "announce_count": peer.get("announce_count") if peer else None,
             "messages": all_msgs,
             "unread_count": sum(1 for m in my_received if not m["read"]),
         })
@@ -482,6 +488,7 @@ def get_conversations_json() -> str:
     """[ConversationSummary] shape: hash, name, icon (base64, nullable),
     icon_mime (nullable), favorited, last_seen (unix seconds, nullable —
     last LXMF peer announce, not last message), hops (nullable),
+    announce_count (nullable — total announces heard from this peer),
     last_message (last entry of messages, or None), unread_count. Full
     per-message list is included too (Kotlin ignores it here) purely
     because computing it separately per-conversation would mean
@@ -499,6 +506,7 @@ def get_conversations_json() -> str:
             "favorited": e["favorited"],
             "last_seen": e["last_seen"],
             "hops": e["hops"],
+            "announce_count": e["announce_count"],
             "last_message": e["messages"][-1] if e["messages"] else None,
             "unread_count": e["unread_count"],
         }

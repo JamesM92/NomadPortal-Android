@@ -3,14 +3,18 @@ package com.jamesm92.nomadportal.ui.settings
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.PowerSettingsNew
@@ -42,6 +46,7 @@ import com.jamesm92.nomadportal.permissions.BLUETOOTH_PERMISSIONS
 import com.jamesm92.nomadportal.permissions.hasBluetoothPermissions
 import com.jamesm92.nomadportal.ui.components.AdaptiveTopAppBar
 import com.jamesm92.nomadportal.ui.components.PanicWipeLogo
+import com.jamesm92.nomadportal.ui.components.VerticalScrollIndicator
 import kotlin.math.roundToInt
 import kotlinx.coroutines.launch
 
@@ -109,7 +114,9 @@ fun SettingsScreen(
             )
         },
     ) { innerPadding ->
-        LazyColumn(modifier = Modifier.padding(innerPadding)) {
+        val listState = rememberLazyListState()
+        Box(modifier = Modifier.fillMaxSize().padding(innerPadding)) {
+            LazyColumn(modifier = Modifier.fillMaxSize(), state = listState) {
             item {
                 SectionHeaderWithKillSwitch(
                     title = "Connectivity",
@@ -198,6 +205,15 @@ fun SettingsScreen(
                     modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
                 )
             }
+            }
+            // Custom-drawn, same as BrowserScreen's page viewer —
+            // Settings' list is long enough (four sections plus
+            // permissions text) to benefit from the same "how much more
+            // is there" cue.
+            VerticalScrollIndicator(
+                listState,
+                modifier = Modifier.align(Alignment.CenterEnd).fillMaxHeight(),
+            )
         }
     }
 }

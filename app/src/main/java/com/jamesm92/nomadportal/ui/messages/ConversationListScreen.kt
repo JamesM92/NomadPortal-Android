@@ -59,6 +59,8 @@ import com.jamesm92.nomadportal.ui.components.AdaptiveTopAppBar
 import com.jamesm92.nomadportal.ui.components.ContactAvatar
 import com.jamesm92.nomadportal.ui.components.PanicWipeLogo
 import com.jamesm92.nomadportal.ui.components.SearchField
+import com.jamesm92.nomadportal.ui.components.SortDropdown
+import com.jamesm92.nomadportal.ui.components.SortOption
 import com.jamesm92.nomadportal.ui.components.dismissKeyboardOnTap
 import com.jamesm92.nomadportal.ui.theme.NomadTextDim
 import kotlinx.coroutines.launch
@@ -97,6 +99,7 @@ fun ConversationListScreen(
     val context = LocalContext.current
     var searchQuery by remember { mutableStateOf("") }
     var selectedTab by remember { mutableIntStateOf(0) }
+    var sortOption by remember { mutableStateOf(SortOption.RECENT) }
 
     val filtered = if (searchQuery.isBlank()) {
         conversations
@@ -106,18 +109,33 @@ fun ConversationListScreen(
                 it.contact.lxmfHash.contains(searchQuery, ignoreCase = true)
         }
     }
+    // orchestrator.py's _conversation_entries() doesn't sort at all
+    // (arbitrary set-iteration order) — sorted here per the user's own
+    // chosen SortOption, same as NodeListScreen. "Recent" is the one
+    // option whose meaning depends on which tab is showing (per explicit
+    // request): Chats is a message list, so "recent" means recent
+    // *messages*; Users is a pure discovery list (some entries never
+    // messaged at all), so "recent" means recent *announces* there,
+    // same as NodeListScreen's single meaning of "Recent" throughout.
+    // The other three options (A>Z/Hops/Announces) aren't message-vs-
+    // announce concepts at all, so they stay identical across both tabs.
+    val sortedConversations = when (sortOption) {
+        SortOption.RECENT -> if (selectedTab == 0) {
+            filtered.sortedByDescending { it.lastMessage?.timestampMillis ?: it.contact.lastAnnounceMillis }
+        } else {
+            filtered.sortedByDescending { it.contact.lastAnnounceMillis }
+        }
+        SortOption.ALPHABETICAL -> filtered.sortedBy { it.contact.displayName.lowercase() }
+        SortOption.HOPS -> filtered.sortedBy { if (it.contact.hopCount < 0) Int.MAX_VALUE else it.contact.hopCount }
+        SortOption.ANNOUNCES -> filtered.sortedByDescending { it.contact.announceCount }
+    }
 
     // Favoriting adds a copy to Favorites, it doesn't move the contact
     // out of General messages/Users — these aren't mutually-exclusive
     // partitions (matches NodeListScreen's identical convention).
-    // orchestrator.py's _conversation_entries() doesn't sort at all
-    // (arbitrary set-iteration order) — sorted here by recency so both
-    // tabs read newest-first, same principle as NodeListScreen's
-    // Announces-heard fix (favorite status shouldn't reorder either).
-    val favorites = filtered.filter { it.contact.isFavorite }
-    val generalMessages = filtered.filter { it.lastMessage != null }
-        .sortedByDescending { it.lastMessage?.timestampMillis ?: 0L }
-    val allUsers = filtered.sortedByDescending { it.contact.lastAnnounceMillis }
+    val favorites = sortedConversations.filter { it.contact.isFavorite }
+    val generalMessages = sortedConversations.filter { it.lastMessage != null }
+    val allUsers = sortedConversations
 
     var favoritesExpanded by remember { mutableStateOf(true) }
     var generalExpanded by remember { mutableStateOf(true) }
@@ -218,6 +236,7 @@ fun ConversationListScreen(
                 onQueryChange = { searchQuery = it },
                 placeholder = if (selectedTab == 0) "Search chats" else "Search users",
             )
+            SortDropdown(selected = sortOption, onSelect = { sortOption = it })
 
             if (selectedTab == 0) {
                 // Headers always outside any LazyColumn — always visible,

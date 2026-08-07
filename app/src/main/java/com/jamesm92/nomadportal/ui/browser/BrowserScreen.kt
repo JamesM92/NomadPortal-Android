@@ -1,14 +1,12 @@
 package com.jamesm92.nomadportal.ui.browser
 
 import android.content.res.Configuration
-import androidx.compose.foundation.ScrollState
 import androidx.compose.foundation.background
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
@@ -17,14 +15,11 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
@@ -86,7 +81,9 @@ import com.jamesm92.nomadportal.data.browsing.BrowserRepository
 import com.jamesm92.nomadportal.data.browsing.PageAddress
 import com.jamesm92.nomadportal.panicwipe.PanicWipe
 import com.jamesm92.nomadportal.ui.components.AdaptiveTopAppBar
+import com.jamesm92.nomadportal.ui.components.HorizontalScrollIndicator
 import com.jamesm92.nomadportal.ui.components.PanicWipeLogo
+import com.jamesm92.nomadportal.ui.components.VerticalScrollIndicator
 import com.jamesm92.nomadportal.ui.components.dismissKeyboardOnTap
 import com.jamesm92.nomadportal.ui.theme.NomadMono
 import com.jamesm92.nomadportal.ui.theme.NomadTextDim
@@ -597,57 +594,3 @@ private fun CompactAddressField(
     )
 }
 
-/** Thin thumb along the right edge, sized/positioned from
- * [LazyListState.layoutInfo] — invisible (no track drawn at all) once
- * everything fits on-screen, since there's nothing to indicate then. */
-@Composable
-private fun VerticalScrollIndicator(listState: LazyListState, modifier: Modifier = Modifier) {
-    val layoutInfo = listState.layoutInfo
-    val totalItems = layoutInfo.totalItemsCount
-    val visibleCount = layoutInfo.visibleItemsInfo.size
-    if (totalItems == 0 || visibleCount == 0) return
-    val fractionVisible = (visibleCount.toFloat() / totalItems).coerceIn(0.04f, 1f)
-    if (fractionVisible >= 0.999f) return
-
-    BoxWithConstraints(modifier = modifier.padding(vertical = 2.dp)) {
-        val trackHeight = maxHeight
-        val thumbHeight = trackHeight * fractionVisible
-        val maxFirstIndex = (totalItems - visibleCount).coerceAtLeast(1)
-        val scrollFraction = (listState.firstVisibleItemIndex.toFloat() / maxFirstIndex).coerceIn(0f, 1f)
-        Box(
-            modifier = Modifier
-                .align(Alignment.TopEnd)
-                .offset(y = (trackHeight - thumbHeight) * scrollFraction)
-                .width(4.dp)
-                .height(thumbHeight)
-                .background(NomadTextDim.copy(alpha = 0.6f), RoundedCornerShape(2.dp)),
-        )
-    }
-}
-
-/** Same idea as [VerticalScrollIndicator], along the bottom edge — the
- * one that actually matters for the "did I just break box-drawing art"
- * class of bug this session found, since that's exactly what horizontal
- * scroll is for on this screen. */
-@Composable
-private fun HorizontalScrollIndicator(scrollState: ScrollState, modifier: Modifier = Modifier) {
-    val viewportSize = scrollState.viewportSize
-    val totalSize = viewportSize + scrollState.maxValue
-    if (totalSize <= 0) return
-    val fractionVisible = (viewportSize.toFloat() / totalSize).coerceIn(0.04f, 1f)
-    if (fractionVisible >= 0.999f) return
-
-    BoxWithConstraints(modifier = modifier.padding(horizontal = 2.dp)) {
-        val trackWidth = maxWidth
-        val thumbWidth = trackWidth * fractionVisible
-        val scrollFraction = if (scrollState.maxValue > 0) scrollState.value.toFloat() / scrollState.maxValue else 0f
-        Box(
-            modifier = Modifier
-                .align(Alignment.BottomStart)
-                .offset(x = (trackWidth - thumbWidth) * scrollFraction)
-                .height(4.dp)
-                .width(thumbWidth)
-                .background(NomadTextDim.copy(alpha = 0.6f), RoundedCornerShape(2.dp)),
-        )
-    }
-}

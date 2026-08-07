@@ -29,6 +29,10 @@ data class Contact(
     val lastAnnounceMillis: Long = 0L,
     /** -1 = unknown, matching NodeInfo's sentinel — no live path yet. */
     val hopCount: Int = -1,
+    /** Total announces heard from this peer — powers
+     * ConversationListScreen's "Announces" sort option, same convention
+     * as [com.jamesm92.nomadportal.data.browsing.NodeInfo.announceCount]. */
+    val announceCount: Int = 0,
 )
 
 sealed interface ContactIcon {

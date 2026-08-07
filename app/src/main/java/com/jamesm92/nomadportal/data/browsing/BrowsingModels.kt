@@ -16,6 +16,10 @@ data class NodeInfo(
     val lastFetchOk: Boolean?,
     val isFavorite: Boolean,
     val lastAnnounceMillis: Long,
+    /** Total announces heard from this node — powers NodeListScreen's
+     * "Announces" sort option, per this doc comment's original
+     * "sortable by ... announce-frequency" design note. */
+    val announceCount: Int = 0,
 )
 
 /** A node hash + page path — what an address bar entry and a back/forward history slot both are. */

@@ -45,6 +45,8 @@ import com.jamesm92.nomadportal.panicwipe.PanicWipe
 import com.jamesm92.nomadportal.ui.components.AdaptiveTopAppBar
 import com.jamesm92.nomadportal.ui.components.PanicWipeLogo
 import com.jamesm92.nomadportal.ui.components.SearchField
+import com.jamesm92.nomadportal.ui.components.SortDropdown
+import com.jamesm92.nomadportal.ui.components.SortOption
 import com.jamesm92.nomadportal.ui.components.dismissKeyboardOnTap
 import com.jamesm92.nomadportal.ui.theme.NomadAccent2
 import com.jamesm92.nomadportal.ui.theme.NomadError
@@ -84,6 +86,7 @@ fun NodeListScreen(
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
     var searchQuery by remember { mutableStateOf("") }
+    var sortOption by remember { mutableStateOf(SortOption.RECENT) }
 
     // Filters name and hash (a user may search by either) — applied
     // before the Favorites/Announces-heard split so a search still
@@ -96,19 +99,26 @@ fun NodeListScreen(
                 it.hash.contains(searchQuery, ignoreCase = true)
         }
     }
+    // browser.py's get_nodes() sorts favorited nodes to the front (a
+    // deliberate tie-break ahead of recency, for the original app's one
+    // combined sidebar) — re-sorted here per the user's own chosen
+    // SortOption instead, so favoriting a node doesn't also reorder it
+    // within Announces heard (favorite status is already shown via its
+    // own section + the heart icon, not by bubbling it to the top of
+    // this one too), and both sections share one consistent order.
+    val sortedNodes = when (sortOption) {
+        SortOption.RECENT -> filteredNodes.sortedByDescending { it.lastAnnounceMillis }
+        SortOption.ALPHABETICAL -> filteredNodes.sortedBy { it.displayName.lowercase() }
+        SortOption.HOPS -> filteredNodes.sortedBy { if (it.hopCount < 0) Int.MAX_VALUE else it.hopCount }
+        SortOption.ANNOUNCES -> filteredNodes.sortedByDescending { it.announceCount }
+    }
 
     // Favoriting adds a copy to Favorites, it doesn't move the node out
     // of Announces heard — a favorited node is still a node you've
     // heard announce, so it stays listed there too (per explicit
     // request; the two sections are not a mutually-exclusive partition).
-    val favorites = filteredNodes.filter { it.isFavorite }
-    // browser.py's get_nodes() sorts favorited nodes to the front (a
-    // deliberate tie-break ahead of recency, for the original app's one
-    // combined sidebar) — re-sorted here by pure recency so favoriting a
-    // node doesn't also reorder it within Announces heard, since
-    // favorite status is already shown via its own section + the heart
-    // icon, not by bubbling it to the top of this one too.
-    val announcesHeard = filteredNodes.sortedByDescending { it.lastAnnounceMillis }
+    val favorites = sortedNodes.filter { it.isFavorite }
+    val announcesHeard = sortedNodes
 
     var favoritesExpanded by remember { mutableStateOf(true) }
     var announcesExpanded by remember { mutableStateOf(true) }
@@ -161,6 +171,7 @@ fun NodeListScreen(
                 onQueryChange = { searchQuery = it },
                 placeholder = "Search nodes",
             )
+            SortDropdown(selected = sortOption, onSelect = { sortOption = it })
 
             // Header always outside any LazyColumn — always visible,
             // always tappable, regardless of dominance state. While
