@@ -391,6 +391,11 @@ private val ICON_APPEARANCE_MAP: Map<String, ImageVector> = mapOf(
     "earth" to Icons.Filled.Public,
     "web" to Icons.Filled.Language,
     "flask" to Icons.Filled.Science,
+    // Confirmed via a real inbound MeshChat icon (this app's own
+    // "A/B testing icon update" test message correlated directly
+    // against the exact icon_glyph value stored for that contact) — a
+    // real, concrete gap, not a guess.
+    "ab_testing" to Icons.Filled.Science,
     "diamond_stone" to Icons.Filled.Diamond,
     "robot" to Icons.Filled.SmartToy,
     "palette" to Icons.Filled.Palette,
