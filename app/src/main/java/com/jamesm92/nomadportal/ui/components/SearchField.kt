@@ -1,9 +1,11 @@
 package com.jamesm92.nomadportal.ui.components
 
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
@@ -13,14 +15,17 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LocalMinimumInteractiveComponentSize
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
 
 /**
@@ -33,21 +38,20 @@ import androidx.compose.ui.unit.dp
  * both lists are small enough in memory that this is cheap, and it keeps
  * this in sync with the same poll cadence the rest of the row data uses.
  *
- * Deliberately compact — Material3's default `OutlinedTextField` height
- * (~56dp) read as too tall for what's just a list filter, not a primary
- * input. Smaller text style + explicit height + smaller icons + tighter
- * outer padding bring it down to ~44dp.
+ * Built on `BasicTextField` + `OutlinedTextFieldDefaults.DecorationBox`
+ * rather than the convenience `OutlinedTextField` composable — that
+ * convenience overload has no `contentPadding` parameter at all, so no
+ * amount of outer `.height()`/`.padding()` tuning on it can ever remove
+ * its own internal padding (same real root cause diagnosed for
+ * `BrowserScreen`'s address bar; see that file's `CompactAddressField`
+ * for the fuller writeup). Here `contentPadding` is set directly, and
+ * there's no outer height constraint — the field sizes itself to the
+ * text's real line height instead of guessing a fixed dp value.
  *
- * `LocalMinimumInteractiveComponentSize provides 0.dp` around the whole
- * field matters, not just cosmetic: Material3's trailing-icon `IconButton`
- * (Clear) always reserves its own 48dp touch target internally, and that
- * reservation doesn't shrink just because the field around it is
- * constrained to 44dp — the field's own internal layout math ends up
- * trying to fit a 48dp-tall slot into a 44dp box, which is what was
- * actually clipping the bottom of the placeholder/value text (not padding
- * added by this composable itself — there wasn't any to remove). Zeroing
- * the minimum touch target here lets every internal slot size to its
- * real content instead.
+ * `LocalMinimumInteractiveComponentSize provides 0.dp` still matters:
+ * without it, the trailing Clear `IconButton`'s reserved 48dp touch
+ * target would make this field taller than its text actually needs,
+ * even with `contentPadding` otherwise minimal.
  */
 @Composable
 fun SearchField(
@@ -58,33 +62,23 @@ fun SearchField(
 ) {
     val focusManager = LocalFocusManager.current
     val keyboardController = LocalSoftwareKeyboardController.current
+    val interactionSource = remember { MutableInteractionSource() }
+    val textStyle = MaterialTheme.typography.bodyLarge.copy(
+        fontSize = MaterialTheme.typography.bodyLarge.fontSize * 0.8f,
+        color = MaterialTheme.colorScheme.onSurface,
+    )
+
     CompositionLocalProvider(LocalMinimumInteractiveComponentSize provides 0.dp) {
-        OutlinedTextField(
+        BasicTextField(
             value = query,
             onValueChange = onQueryChange,
             modifier = modifier
                 .fillMaxWidth()
-                .padding(horizontal = 16.dp, vertical = 4.dp)
-                .height(44.dp),
-            textStyle = MaterialTheme.typography.bodyLarge.copy(
-                fontSize = MaterialTheme.typography.bodyLarge.fontSize * 0.8f,
-            ),
-            placeholder = {
-                Text(placeholder, style = MaterialTheme.typography.bodyLarge.copy(
-                    fontSize = MaterialTheme.typography.bodyLarge.fontSize * 0.8f,
-                ))
-            },
+                .padding(horizontal = 16.dp, vertical = 4.dp),
+            textStyle = textStyle,
             singleLine = true,
-            leadingIcon = {
-                Icon(Icons.Filled.Search, contentDescription = null, modifier = Modifier.size(18.dp))
-            },
-            trailingIcon = {
-                if (query.isNotEmpty()) {
-                    IconButton(onClick = { onQueryChange("") }, modifier = Modifier.size(24.dp)) {
-                        Icon(Icons.Filled.Clear, contentDescription = "Clear search", modifier = Modifier.size(18.dp))
-                    }
-                }
-            },
+            cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
+            interactionSource = interactionSource,
             keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
             // Without this, the keyboard's "search" action button did
             // nothing at all — there was no handler for ImeAction.Search,
@@ -96,6 +90,49 @@ fun SearchField(
                 focusManager.clearFocus(force = true)
                 keyboardController?.hide()
             }),
+            decorationBox = { innerTextField ->
+                OutlinedTextFieldDefaults.DecorationBox(
+                    value = query,
+                    innerTextField = innerTextField,
+                    enabled = true,
+                    singleLine = true,
+                    visualTransformation = VisualTransformation.None,
+                    interactionSource = interactionSource,
+                    placeholder = {
+                        Text(
+                            placeholder,
+                            style = MaterialTheme.typography.bodyLarge.copy(
+                                fontSize = MaterialTheme.typography.bodyLarge.fontSize * 0.8f,
+                            ),
+                        )
+                    },
+                    leadingIcon = {
+                        Icon(Icons.Filled.Search, contentDescription = null, modifier = Modifier.size(18.dp))
+                    },
+                    trailingIcon = {
+                        if (query.isNotEmpty()) {
+                            IconButton(onClick = { onQueryChange("") }, modifier = Modifier.size(24.dp)) {
+                                Icon(
+                                    Icons.Filled.Clear,
+                                    contentDescription = "Clear search",
+                                    modifier = Modifier.size(18.dp),
+                                )
+                            }
+                        }
+                    },
+                    // Almost nothing left, same as the address bar — a
+                    // couple dp just so the cursor/descenders never touch
+                    // the outline.
+                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp),
+                    container = {
+                        OutlinedTextFieldDefaults.Container(
+                            enabled = true,
+                            isError = false,
+                            interactionSource = interactionSource,
+                        )
+                    },
+                )
+            },
         )
     }
 }
