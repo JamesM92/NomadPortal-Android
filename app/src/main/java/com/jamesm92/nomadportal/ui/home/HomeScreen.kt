@@ -9,9 +9,10 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.lazy.LazyRow
+import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
@@ -57,6 +58,7 @@ import com.jamesm92.nomadportal.panicwipe.PanicWipe
 import com.jamesm92.nomadportal.ui.components.AdaptiveTopAppBar
 import com.jamesm92.nomadportal.ui.components.AppLogo
 import com.jamesm92.nomadportal.ui.components.MessagesIconWithBadge
+import com.jamesm92.nomadportal.ui.components.SearchField
 import com.jamesm92.nomadportal.ui.theme.NomadAccent
 import com.jamesm92.nomadportal.ui.theme.NomadAccent2
 import com.jamesm92.nomadportal.ui.theme.NomadBg3
@@ -173,19 +175,13 @@ private fun IdentitySection(
             color = MaterialTheme.colorScheme.secondary,
         )
 
-        // Icon and name on separate lines, per explicit request — was a
-        // single Row before; both centered now, profile-header style.
+        // Name first, then icon below — per explicit follow-up direction
+        // (was icon-then-name); both stay centered, profile-header style.
         Column(
             modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
         ) {
-            IdentityIconPreview(
-                appearance = status.iconAppearance,
-                onClick = { editingIcon = !editingIcon },
-            )
-
             Row(
-                modifier = Modifier.padding(top = 6.dp),
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(4.dp),
             ) {
@@ -219,6 +215,12 @@ private fun IdentitySection(
                     }
                 }
             }
+
+            IdentityIconPreview(
+                appearance = status.iconAppearance,
+                onClick = { editingIcon = !editingIcon },
+                modifier = Modifier.padding(top = 6.dp),
+            )
         }
 
         if (editingIcon) {
@@ -279,9 +281,13 @@ private fun IdentitySection(
  * [com.jamesm92.nomadportal.data.messaging.Contact], which this device's
  * own identity isn't one of. */
 @Composable
-private fun IdentityIconPreview(appearance: ContactIcon.Appearance?, onClick: () -> Unit) {
+private fun IdentityIconPreview(
+    appearance: ContactIcon.Appearance?,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
     val vector = remember(appearance?.glyphName) { appearance?.glyphName?.let(::materialIconFor) }
-    Box(modifier = Modifier.size(52.dp).clickable(onClick = onClick)) {
+    Box(modifier = modifier.size(52.dp).clickable(onClick = onClick)) {
         Box(
             modifier = Modifier
                 .size(48.dp)
@@ -328,13 +334,14 @@ private val ICON_COLOR_SWATCHES = listOf(
 )
 
 /**
- * Inline editor for this device's own [ContactIcon.Appearance]: a
- * horizontally-scrollable row of every icon name this app can actually
- * resolve to a real glyph ([ICON_APPEARANCE_NAMES] — picking only from
- * these means the preview the user sees while editing is exactly what
- * every peer capable of resolving the same name will also see, never a
- * name that silently falls back to a letter for everyone), plus
- * background/foreground swatch pickers.
+ * Inline editor for this device's own [ContactIcon.Appearance]. Order
+ * is deliberate, per explicit direction: background color, then
+ * foreground color, *then* a searchable vertical list of every icon
+ * name this app can resolve ([ICON_APPEARANCE_NAMES] — now the full
+ * [com.jamesm92.nomadportal.data.messaging.materialIconFor] catalog,
+ * search is what makes browsing that practical) — colors first so each
+ * icon row can preview itself live in the colors already chosen, rather
+ * than picking an icon before knowing what it'll actually look like.
  */
 @Composable
 private fun IconAppearanceEditor(
@@ -347,11 +354,18 @@ private fun IconAppearanceEditor(
     }
     var selectedBg by remember(current) { mutableStateOf(current?.backgroundColor ?: NomadAccent) }
     var selectedFg by remember(current) { mutableStateOf(current?.foregroundColor ?: Color.White) }
+    var searchQuery by remember { mutableStateOf("") }
+
+    val filteredNames = remember(searchQuery) {
+        val q = searchQuery.trim().lowercase().replace(' ', '_')
+        if (q.isBlank()) ICON_APPEARANCE_NAMES else ICON_APPEARANCE_NAMES.filter { it.contains(q) }
+    }
 
     // Scrolls to whatever's already selected every time this editor is
     // (re)opened — per explicit request — rather than always starting
     // back at the front of the list, which previously meant re-finding
-    // your own icon by scrolling every single time.
+    // your own icon by scrolling every single time. Only meaningful
+    // against the unfiltered list (search starts blank each open).
     val listState = rememberLazyListState()
     LaunchedEffect(Unit) {
         val index = ICON_APPEARANCE_NAMES.indexOf(selectedGlyph)
@@ -368,35 +382,80 @@ private fun IconAppearanceEditor(
             .padding(12.dp),
         verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
-        Text(text = "Choose an icon", style = MaterialTheme.typography.bodyLarge)
-        LazyRow(state = listState, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            items(ICON_APPEARANCE_NAMES) { name ->
-                val vector = materialIconFor(name)
-                if (vector != null) {
-                    Box(
-                        modifier = Modifier
-                            .size(40.dp)
-                            .clip(CircleShape)
-                            .background(if (name == selectedGlyph) selectedBg else NomadBg3)
-                            .clickable { selectedGlyph = name },
-                        contentAlignment = Alignment.Center,
-                    ) {
-                        Icon(
-                            imageVector = vector,
-                            contentDescription = name,
-                            tint = if (name == selectedGlyph) selectedFg else NomadTextDim,
-                            modifier = Modifier.size(22.dp),
-                        )
-                    }
-                }
-            }
-        }
-
         Text(text = "Background color", style = MaterialTheme.typography.bodyLarge)
         ColorSwatchRow(selected = selectedBg, onSelect = { selectedBg = it })
 
         Text(text = "Icon color", style = MaterialTheme.typography.bodyLarge)
         ColorSwatchRow(selected = selectedFg, onSelect = { selectedFg = it })
+
+        Text(text = "Choose an icon", style = MaterialTheme.typography.bodyLarge)
+        SearchField(
+            query = searchQuery,
+            onQueryChange = { searchQuery = it },
+            placeholder = "Search icons",
+            modifier = Modifier.fillMaxWidth(),
+        )
+        // Bounded height — this list nests inside HomeScreen's own
+        // verticalScroll Column, so an unbounded LazyColumn here would
+        // conflict with that outer scroll's own height constraints
+        // (same reasoning as NodeListScreen's bounded Favorites pane).
+        LazyColumn(state = listState, modifier = Modifier.fillMaxWidth().heightIn(max = 320.dp)) {
+            items(filteredNames, key = { it }) { name ->
+                val vector = materialIconFor(name)
+                if (vector != null) {
+                    val isSelected = name == selectedGlyph
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable { selectedGlyph = name }
+                            .background(
+                                if (isSelected) {
+                                    MaterialTheme.colorScheme.secondary.copy(alpha = 0.15f)
+                                } else {
+                                    Color.Transparent
+                                },
+                            )
+                            .padding(vertical = 6.dp, horizontal = 4.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(12.dp),
+                    ) {
+                        // Live-updates with the colors selected above —
+                        // per explicit request ("icons in list shoukd
+                        // update based on the colors selected") — free
+                        // from Compose's own recomposition since this
+                        // reads the same selectedBg/selectedFg state.
+                        Box(
+                            modifier = Modifier
+                                .size(36.dp)
+                                .clip(CircleShape)
+                                .background(selectedBg),
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            Icon(
+                                imageVector = vector,
+                                contentDescription = null,
+                                tint = selectedFg,
+                                modifier = Modifier.size(20.dp),
+                            )
+                        }
+                        Text(
+                            text = name.replace('_', ' '),
+                            style = MaterialTheme.typography.bodyLarge.copy(
+                                fontSize = MaterialTheme.typography.bodyLarge.fontSize * 0.85f,
+                            ),
+                            modifier = Modifier.weight(1f),
+                        )
+                        if (isSelected) {
+                            Icon(
+                                imageVector = Icons.Filled.Check,
+                                contentDescription = "Selected",
+                                tint = MaterialTheme.colorScheme.secondary,
+                            )
+                        }
+                    }
+                }
+            }
+        }
 
         Row(horizontalArrangement = Arrangement.End, modifier = Modifier.fillMaxWidth()) {
             TextButton(onClick = onCancel) { Text("Cancel") }
