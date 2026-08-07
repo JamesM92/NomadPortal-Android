@@ -1,5 +1,6 @@
 package com.jamesm92.nomadportal.ui.browser
 
+import android.content.res.Configuration
 import androidx.compose.foundation.ScrollState
 import androidx.compose.foundation.background
 import androidx.compose.foundation.horizontalScroll
@@ -8,8 +9,8 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -28,8 +29,11 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.ArrowForward
 import androidx.compose.material.icons.filled.Code
+import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.filled.FavoriteBorder
+import androidx.compose.material.icons.filled.Fingerprint
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
@@ -41,7 +45,6 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
-import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -53,6 +56,10 @@ import androidx.compose.runtime.setValue
 import androidx.compose.runtime.collectAsState
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import android.content.ClipData
+import androidx.compose.ui.platform.ClipEntry
+import androidx.compose.ui.platform.LocalClipboard
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalFocusManager
@@ -73,6 +80,7 @@ import com.jamesm92.micron2compose.parser.TextRun
 import com.jamesm92.nomadportal.data.browsing.BrowserRepository
 import com.jamesm92.nomadportal.data.browsing.PageAddress
 import com.jamesm92.nomadportal.panicwipe.PanicWipe
+import com.jamesm92.nomadportal.ui.components.AdaptiveTopAppBar
 import com.jamesm92.nomadportal.ui.components.PanicWipeLogo
 import com.jamesm92.nomadportal.ui.components.dismissKeyboardOnTap
 import com.jamesm92.nomadportal.ui.theme.NomadMono
@@ -115,6 +123,7 @@ fun BrowserScreen(
     val context = LocalContext.current
     val focusManager = LocalFocusManager.current
     val keyboardController = LocalSoftwareKeyboardController.current
+    val clipboard = LocalClipboard.current
     // Node list's displayName (announce-derived, same source NodeListScreen
     // shows) — used for the top bar title instead of the raw hash. Falls
     // back to a truncated hash if this node hasn't been discovered via an
@@ -137,6 +146,7 @@ fun BrowserScreen(
     // unrendered .mu text, already fetched into `rawSource` below either
     // way, so this is purely a view toggle, no extra fetch.
     var showRawView by remember { mutableStateOf(false) }
+    var showFingerprintDialog by remember { mutableStateOf(false) }
     val currentNodeFavorited = nodes.find { it.hash == currentAddress.nodeHash }?.isFavorite ?: false
 
     fun navigateTo(address: PageAddress) {
@@ -144,11 +154,11 @@ fun BrowserScreen(
         historyIndex = history.lastIndex
     }
 
-    // Shared by both the keyboard's "Go" IME action and the address bar's
-    // own explicit Go button — per the reference NomadPortal web app, an
-    // IME action alone isn't discoverable as "how do I commit this URL",
-    // so there needs to be a visible button too, not just the keyboard's
-    // action key.
+    // Committing the address bar's typed URL — the keyboard's own "Go"
+    // IME action is the only trigger for this (a separate visible Go
+    // button was tried and then explicitly removed again: the IME action
+    // is enough, and the button's horizontal space was worth reclaiming
+    // for the field itself).
     fun goToAddressBarUrl() {
         PageAddress.fromUrl(addressBarText)?.let(::navigateTo)
         focusManager.clearFocus(force = true)
@@ -216,10 +226,43 @@ fun BrowserScreen(
         )
     }
 
+    if (showFingerprintDialog) {
+        AlertDialog(
+            onDismissRequest = { showFingerprintDialog = false },
+            title = { Text("Node fingerprint") },
+            text = {
+                Text(
+                    text = currentAddress.nodeHash,
+                    fontFamily = NomadMono,
+                    style = MaterialTheme.typography.bodyLarge,
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    scope.launch {
+                        clipboard.setClipEntry(
+                            ClipEntry(ClipData.newPlainText("Node fingerprint", currentAddress.nodeHash)),
+                        )
+                    }
+                    showFingerprintDialog = false
+                }) {
+                    Icon(Icons.Filled.ContentCopy, contentDescription = null, modifier = Modifier.size(16.dp))
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text("Copy")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showFingerprintDialog = false }) { Text("Close") }
+            },
+        )
+    }
+
+    val isLandscape = LocalConfiguration.current.orientation == Configuration.ORIENTATION_LANDSCAPE
+
     Scaffold(
         topBar = {
             Column {
-                TopAppBar(
+                AdaptiveTopAppBar(
                     title = {
                         val nodeName = nodes.find { it.hash == currentAddress.nodeHash }?.displayName
                             ?: (currentAddress.nodeHash.take(12) + "…")
@@ -254,9 +297,15 @@ fun BrowserScreen(
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .padding(horizontal = 8.dp, vertical = 4.dp),
+                            // Vertical padding only — trimmed further in
+                            // landscape per "header rows need to be as
+                            // small as possible" when rotated. Not
+                            // touching the text field's own height here:
+                            // that's independently tuned to avoid
+                            // clipping (see its own comment below).
+                            .padding(horizontal = 4.dp, vertical = if (isLandscape) 1.dp else 4.dp),
                         verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(2.dp),
+                        horizontalArrangement = Arrangement.spacedBy(0.dp),
                     ) {
                         IconButton(
                             onClick = { if (historyIndex > 0) historyIndex-- },
@@ -280,28 +329,33 @@ fun BrowserScreen(
                                 modifier = Modifier.size(16.dp),
                             )
                         }
+                        // weight(1f) claims whatever every fixed-size
+                        // sibling in this row doesn't — no separate Go
+                        // button anymore (removed per explicit request:
+                        // the IME's own Go action is enough, and dropping
+                        // the button reclaims that space for the field).
+                        //
+                        // height(44.dp) matches SearchField's own compact
+                        // height, which needed that exact value (44dp, not
+                        // 40dp) to stop clipping descenders on this same
+                        // textStyle/fontSize combination — no leading/
+                        // trailing icon fighting it for space here, but
+                        // the field still wants a touch more vertical
+                        // room than 40dp gives it for a single line.
                         OutlinedTextField(
                             value = addressBarText,
                             onValueChange = { addressBarText = it },
                             modifier = Modifier
                                 .weight(1f)
-                                .padding(horizontal = 4.dp)
-                                .height(40.dp),
-                            textStyle = MaterialTheme.typography.bodyLarge.copy(fontSize = 13.sp),
+                                .padding(horizontal = 2.dp)
+                                .height(44.dp),
+                            textStyle = MaterialTheme.typography.bodyLarge.copy(
+                                fontSize = MaterialTheme.typography.bodyLarge.fontSize * 0.8f,
+                            ),
                             singleLine = true,
                             keyboardOptions = KeyboardOptions(imeAction = ImeAction.Go),
                             keyboardActions = KeyboardActions(onGo = { goToAddressBarUrl() }),
                         )
-                        // Explicit Go button — per the reference app's
-                        // own address bar, not relying on the IME action
-                        // alone being discoverable.
-                        TextButton(
-                            onClick = ::goToAddressBarUrl,
-                            contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp),
-                            modifier = Modifier.height(24.dp),
-                        ) {
-                            Text("Go", style = MaterialTheme.typography.bodyLarge.copy(fontSize = 12.sp))
-                        }
                         IconButton(
                             onClick = {
                                 scope.launch {
@@ -329,6 +383,24 @@ fun BrowserScreen(
                                 imageVector = Icons.Filled.Code,
                                 contentDescription = if (showRawView) "Show rendered page" else "Show raw source",
                                 tint = if (showRawView) MaterialTheme.colorScheme.primary else NomadTextDim,
+                                modifier = Modifier.size(16.dp),
+                            )
+                        }
+                        // Fingerprint — the rightmost icon in the
+                        // reference app's own address bar. Shows the
+                        // currently-viewed node's full destination hash
+                        // for manual verification (the actual security-
+                        // relevant use of "fingerprint" here — a short
+                        // display name can collide/be spoofed, the full
+                        // hash can't), with a one-tap copy.
+                        IconButton(
+                            onClick = { showFingerprintDialog = true },
+                            modifier = Modifier.size(24.dp),
+                        ) {
+                            Icon(
+                                imageVector = Icons.Filled.Fingerprint,
+                                contentDescription = "Show node fingerprint",
+                                tint = NomadTextDim,
                                 modifier = Modifier.size(16.dp),
                             )
                         }

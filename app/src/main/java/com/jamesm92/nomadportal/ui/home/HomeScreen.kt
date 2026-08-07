@@ -15,7 +15,6 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
-import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -29,6 +28,7 @@ import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import com.chaquo.python.Python
 import com.jamesm92.nomadportal.panicwipe.PanicWipe
+import com.jamesm92.nomadportal.ui.components.AdaptiveTopAppBar
 import com.jamesm92.nomadportal.ui.components.AppLogo
 import com.jamesm92.nomadportal.ui.theme.NomadPortalTheme
 import kotlinx.coroutines.launch
@@ -47,7 +47,7 @@ fun HomeScreen(onOpenSettings: () -> Unit, onOpenMessages: () -> Unit, onOpenNod
 
     Scaffold(
         topBar = {
-            TopAppBar(
+            AdaptiveTopAppBar(
                 title = {
                     AppLogo(onTripleTap = {
                         scope.launch {

@@ -1,5 +1,6 @@
 package com.jamesm92.nomadportal.ui.messages
 
+import android.content.res.Configuration
 import androidx.compose.animation.animateContentSize
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -31,7 +32,6 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SecondaryTabRow
 import androidx.compose.material3.Tab
 import androidx.compose.material3.Text
-import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -44,6 +44,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -54,6 +55,7 @@ import com.jamesm92.nomadportal.data.messaging.ConversationSummary
 import com.jamesm92.nomadportal.data.messaging.Message
 import com.jamesm92.nomadportal.data.messaging.MessagingRepository
 import com.jamesm92.nomadportal.panicwipe.PanicWipe
+import com.jamesm92.nomadportal.ui.components.AdaptiveTopAppBar
 import com.jamesm92.nomadportal.ui.components.ContactAvatar
 import com.jamesm92.nomadportal.ui.components.PanicWipeLogo
 import com.jamesm92.nomadportal.ui.components.SearchField
@@ -133,10 +135,12 @@ fun ConversationListScreen(
         scope.launch { repository.setFavorite(summary.contact.lxmfHash, !summary.contact.isFavorite) }
     }
 
+    val isLandscape = LocalConfiguration.current.orientation == Configuration.ORIENTATION_LANDSCAPE
+
     Scaffold(
         topBar = {
             Column {
-                TopAppBar(
+                AdaptiveTopAppBar(
                     title = { Text("Messages") },
                     navigationIcon = {
                         IconButton(onClick = onBack) {
@@ -158,8 +162,10 @@ fun ConversationListScreen(
                 SecondaryTabRow(
                     selectedTabIndex = selectedTab,
                     // Material3's default tab height carries more
-                    // padding than a two-word text tab needs here.
-                    modifier = Modifier.height(36.dp),
+                    // padding than a two-word text tab needs here —
+                    // shrunk further still in landscape, per "header rows
+                    // need to be as small as possible" when rotated.
+                    modifier = Modifier.height(if (isLandscape) 28.dp else 36.dp),
                 ) {
                     Tab(
                         selected = selectedTab == 0,
