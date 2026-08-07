@@ -400,6 +400,12 @@ private val ICON_COLOR_SWATCHES = listOf(
  * search is what makes browsing that practical) — colors first so each
  * icon row can preview itself live in the colors already chosen, rather
  * than picking an icon before knowing what it'll actually look like.
+ *
+ * Tapping an icon saves and closes immediately — there's no separate
+ * bottom Save button. A dedicated Cancel only, up in a header row: a
+ * real on-device report found a Save/Cancel row below a tall searchable
+ * list landed off-screen, needing a scroll past the whole list to reach
+ * it.
  */
 @Composable
 private fun IconAppearanceEditor(
@@ -447,6 +453,20 @@ private fun IconAppearanceEditor(
             .padding(12.dp),
         verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
+        // Cancel lives up here, not a bottom row — per a real on-device
+        // report, a Save/Cancel row below a tall searchable icon list
+        // ended up off-screen (had to scroll past the whole list to
+        // reach it). Picking an icon below now saves immediately (see
+        // that row's own onClick), so Cancel is the only action left
+        // that needs a dedicated control, and it's reachable without
+        // scrolling either way.
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.End,
+        ) {
+            TextButton(onClick = onCancel) { Text("Cancel") }
+        }
+
         CompactColorRow(
             label = "Background color",
             selected = selectedBg,
@@ -500,7 +520,10 @@ private fun IconAppearanceEditor(
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .clickable { selectedGlyph = name }
+                            // Saves immediately on tap — see this
+                            // function's own doc comment for why there's
+                            // no separate bottom Save button anymore.
+                            .clickable { onSave(name, selectedFg, selectedBg) }
                             .background(
                                 if (isSelected) {
                                     MaterialTheme.colorScheme.secondary.copy(alpha = 0.15f)
@@ -548,11 +571,6 @@ private fun IconAppearanceEditor(
                     }
                 }
             }
-        }
-
-        Row(horizontalArrangement = Arrangement.End, modifier = Modifier.fillMaxWidth()) {
-            TextButton(onClick = onCancel) { Text("Cancel") }
-            Button(onClick = { onSave(selectedGlyph, selectedFg, selectedBg) }) { Text("Save") }
         }
     }
 }
