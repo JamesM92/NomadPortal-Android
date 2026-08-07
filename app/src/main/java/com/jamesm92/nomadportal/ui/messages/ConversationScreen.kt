@@ -142,6 +142,9 @@ fun ConversationScreen(
                                 value = nameDraft,
                                 onValueChange = { nameDraft = it },
                                 singleLine = true,
+                                textStyle = MaterialTheme.typography.bodyLarge.copy(
+                                    fontSize = MaterialTheme.typography.bodyLarge.fontSize * 0.9f,
+                                ),
                                 modifier = Modifier.weight(1f, fill = false),
                             )
                             IconButton(onClick = {
@@ -164,7 +167,14 @@ fun ConversationScreen(
                                 Icon(Icons.Filled.Close, contentDescription = "Cancel")
                             }
                         } else {
-                            Text(liveContact.displayName, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                            Text(
+                                text = liveContact.displayName,
+                                style = MaterialTheme.typography.bodyLarge.copy(
+                                    fontSize = MaterialTheme.typography.bodyLarge.fontSize * 0.9f,
+                                ),
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                            )
                             IconButton(onClick = { editingName = true }) {
                                 Icon(Icons.Filled.Edit, contentDescription = "Rename")
                             }
