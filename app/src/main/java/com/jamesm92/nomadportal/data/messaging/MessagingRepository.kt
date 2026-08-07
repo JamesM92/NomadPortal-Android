@@ -51,6 +51,12 @@ interface MessagingRepository {
     /** 0 disables auto-announce for this interface — no separate enabled flag. */
     suspend fun setAutoAnnounceInterval(interfaceKey: String, seconds: Int)
 
+    /** The single aggregate toggle on top of every interface's own auto-announce interval. */
+    suspend fun setAutoAnnounceMaster(enabled: Boolean)
+
     /** Manual "Announce now" trigger. Returns true on success. */
     suspend fun announceNow(): Boolean
+
+    /** Renames this device's LXMF identity. Returns true on success. */
+    suspend fun setDisplayName(name: String): Boolean
 }

@@ -6,6 +6,7 @@ import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
 import com.jamesm92.nomadportal.connectivity.InterfaceController
+import com.jamesm92.nomadportal.connectivity.TcpConnectionsRepository
 import com.jamesm92.nomadportal.data.SettingsRepository
 import com.jamesm92.nomadportal.data.browsing.BrowserRepository
 import com.jamesm92.nomadportal.data.browsing.PageAddress
@@ -34,11 +35,13 @@ fun NomadNavHost(
     messagingRepository: MessagingRepository,
     browserRepository: BrowserRepository,
     settingsRepository: SettingsRepository,
+    tcpConnectionsRepository: TcpConnectionsRepository,
     navController: NavHostController = rememberNavController(),
 ) {
     NavHost(navController = navController, startDestination = Routes.HOME) {
         composable(Routes.HOME) {
             HomeScreen(
+                messagingRepository = messagingRepository,
                 onOpenSettings = { navController.navigate(Routes.SETTINGS) },
                 onOpenMessages = { navController.navigate(Routes.MESSAGES) },
                 onOpenNodes = { navController.navigate(Routes.NODES) },
@@ -49,6 +52,7 @@ fun NomadNavHost(
                 interfaceController = interfaceController,
                 settingsRepository = settingsRepository,
                 messagingRepository = messagingRepository,
+                tcpConnectionsRepository = tcpConnectionsRepository,
                 onBack = { navController.popBackStack() },
             )
         }
@@ -57,6 +61,8 @@ fun NomadNavHost(
                 repository = messagingRepository,
                 onOpenConversation = { hash -> navController.navigate(Routes.conversation(hash)) },
                 onBack = { navController.popBackStack() },
+                onOpenNodes = { navController.navigate(Routes.NODES) },
+                onOpenSettings = { navController.navigate(Routes.SETTINGS) },
             )
         }
         composable(Routes.CONVERSATION) { backStackEntry ->
@@ -80,6 +86,8 @@ fun NomadNavHost(
                 repository = browserRepository,
                 onOpenNode = { hash -> navController.navigate(Routes.browser(hash)) },
                 onBack = { navController.popBackStack() },
+                onOpenMessages = { navController.navigate(Routes.MESSAGES) },
+                onOpenSettings = { navController.navigate(Routes.SETTINGS) },
             )
         }
         composable(Routes.BROWSER) { backStackEntry ->

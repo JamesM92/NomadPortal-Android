@@ -64,27 +64,14 @@ class RealInterfaceController(
         settings.nodeHostingEnabled.stateIn(scope, SharingStarted.Eagerly, false)
 
     override suspend fun setTcpEnabled(enabled: Boolean) {
+        // No more hardcoded single hub — TCP is now a user-configurable
+        // *list* of named connections (TcpConnectionsRepository), each
+        // independently enabled/disabled. This toggle is now the master
+        // switch on top of that list (set_tcp_master_enabled): off
+        // detaches every connection regardless of its own enabled flag,
+        // without touching any connection's own persisted enabled state.
         withContext(Dispatchers.IO) {
-            // TODO(no "configure your hub" UI exists yet): hardcoded to a
-            // real, user-provided public RNS hub (RNS_Transport_US-East)
-            // so real end-to-end connectivity can actually be verified
-            // without RNode/Bluetooth hardware. michmesh (rns.michmesh.net
-            // :7822) was tried first and consistently reset/closed the
-            // connection from this dev network — root cause confirmed
-            // (user, Aug 2026): multiple devices on the same LAN reaching
-            // out to michmesh at once, a known issue with no fix yet on
-            // michmesh's side. Not a client-side bug — verified with a
-            // bare TCP socket (no RNS/Android involved) before landing on
-            // that explanation, and this exact interface construction
-            // connects to 45.77.109.86:4965 cleanly and receives real
-            // mesh traffic (announces, LXMF peer discovery) within
-            // seconds. Swap back to michmesh once/if that's resolved.
-            // Still needs to become a real user-configurable hub list
-            // before shipping either way — one hardcoded server isn't a
-            // reasonable default for every install.
-            orchestrator.callAttr(
-                "set_tcp_enabled", enabled, "45.77.109.86", 4965,
-            )
+            orchestrator.callAttr("set_tcp_master_enabled", enabled)
         }
         settings.setTcpEnabled(enabled)
     }

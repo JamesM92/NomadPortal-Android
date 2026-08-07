@@ -98,8 +98,10 @@ class StubMessagingRepository(private val scope: CoroutineScope) : MessagingRepo
                 AnnounceStatus.INTERFACE_RNODE to InterfaceAnnounceConfig(3 * 60 * 60, 6 * 60 * 60),
                 AnnounceStatus.INTERFACE_WIFI_DISCOVERY to InterfaceAnnounceConfig(3 * 60 * 60, 6 * 60 * 60),
             ),
+            autoAnnounceMasterEnabled = true,
             lastAnnounceAtMillis = System.currentTimeMillis(),
             lxmfAddress = "stub0000000000000000000000000000",
+            displayName = "Stub User",
             sendBlocked = false,
             sendBlockedReason = null,
         )
@@ -113,6 +115,15 @@ class StubMessagingRepository(private val scope: CoroutineScope) : MessagingRepo
 
     override suspend fun setAutoAnnounceInterval(interfaceKey: String, seconds: Int) {
         updateInterfaceConfig(interfaceKey) { it.copy(autoAnnounceIntervalSeconds = seconds) }
+    }
+
+    override suspend fun setAutoAnnounceMaster(enabled: Boolean) {
+        announceStatus.value = announceStatus.value.copy(autoAnnounceMasterEnabled = enabled)
+    }
+
+    override suspend fun setDisplayName(name: String): Boolean {
+        announceStatus.value = announceStatus.value.copy(displayName = name)
+        return true
     }
 
     private fun updateInterfaceConfig(

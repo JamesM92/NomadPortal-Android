@@ -251,6 +251,33 @@ class MessagingService:
         data = self._get_user_router(user_sub)
         return data["dest"].hexhash if data else None
 
+    def set_display_name(self, name: str, user_sub: str = "") -> bool:
+        """Renames this user's LXMF identity — persisted via
+        identity_store.rename() (always succeeds if the identity exists,
+        takes effect on next app start regardless), and best-effort
+        applied to the *live* router's destination immediately so an
+        announce made right after doesn't still carry the old name.
+        set_default_app_data isn't guarded by a version check anywhere
+        else in this file the way e.g. PROCESSING_INTERVAL is, but the
+        same defensive try/except shape applies here: a failure to
+        update live app_data must never block the persisted rename from
+        succeeding, since that's the part that actually matters long-term.
+        """
+        if self._identity_store is None:
+            return False
+        entry = self._identity_store.get_for_user(user_sub)
+        if entry is None:
+            return False
+        if not self._identity_store.rename(entry["id"], name):
+            return False
+        data = self._user_routers.get(user_sub)
+        if data is not None:
+            try:
+                data["dest"].set_default_app_data(name.encode("utf-8"))
+            except Exception as exc:
+                log.warning("Renamed identity but couldn't update live app_data: %s", exc)
+        return True
+
     def do_announce(self, user_sub: str = "") -> tuple[bool, str]:
         """Announce via the user's LXMRouter so app_data (display name) is included.
 

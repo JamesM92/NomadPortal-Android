@@ -100,6 +100,16 @@ class RealMessagingRepository : MessagingRepository {
         obj.optBoolean("success", false)
     }
 
+    override suspend fun setAutoAnnounceMaster(enabled: Boolean) {
+        withContext(Dispatchers.IO) {
+            orchestrator.callAttr("set_auto_announce_master", enabled)
+        }
+    }
+
+    override suspend fun setDisplayName(name: String): Boolean = withContext(Dispatchers.IO) {
+        orchestrator.callAttr("set_display_name", name).toBoolean()
+    }
+
     private fun fetchAnnounceStatus(): AnnounceStatus {
         val obj = JSONObject(orchestrator.callAttr("get_announce_status_json").toString())
         val interfacesObj = obj.getJSONObject("interfaces")
@@ -115,12 +125,14 @@ class RealMessagingRepository : MessagingRepository {
         }
         return AnnounceStatus(
             interfaces = interfaces,
+            autoAnnounceMasterEnabled = obj.optBoolean("auto_announce_master_enabled", true),
             lastAnnounceAtMillis = if (obj.isNull("last_announce_at")) {
                 null
             } else {
                 (obj.optDouble("last_announce_at", 0.0) * 1000).toLong()
             },
             lxmfAddress = if (obj.isNull("lxmf_address")) null else obj.optString("lxmf_address"),
+            displayName = if (obj.isNull("display_name")) null else obj.optString("display_name"),
             sendBlocked = obj.optBoolean("send_blocked", false),
             sendBlockedReason = if (obj.isNull("send_blocked_reason")) {
                 null

@@ -131,6 +131,26 @@ _lxmf_tracker = None
 _prop_sync = None
 _active_interfaces: dict = {}  # toggle name -> RNS.Interface currently attached
 _started = False
+_base_dir: str = ""
+
+# Multiple, independently addressable TCP connections — replaces the
+# original single hardcoded-hub design (see RealInterfaceController.kt's
+# old TODO). Each entry: {"id", "name", "host", "port", "enabled"}.
+# "id" is a stable uuid4 hex, not host:port — lets a connection be
+# edited (future work) without churning its identity, and two entries
+# can coexist with the same host:port (e.g. testing a change) without
+# colliding.
+_tcp_connections: dict = {}
+# id -> RNS.Interface, only present for a connection that's actually
+# attached right now (master enabled AND that connection's own enabled).
+_tcp_ifaces: dict = {}
+# The "duplicate toggle" every protocol tab carries, mirroring Main's
+# own switch — same InterfaceController.tcpEnabled boolean Kotlin
+# already had, just now also gating a *list* of connections instead of
+# one. When off, every connection detaches regardless of its own
+# enabled flag; individual connections' enabled flags are preserved
+# either way, not overwritten.
+_tcp_master_enabled = True
 
 
 def start(base_dir: str) -> None:
@@ -148,7 +168,7 @@ def start(base_dir: str) -> None:
     config_dir/reticulum convention.
     """
     global _browser, _identity_store, _message_store, _contact_store
-    global _messaging, _lxmf_tracker, _prop_sync, _started
+    global _messaging, _lxmf_tracker, _prop_sync, _started, _base_dir
 
     with _lock:
         if _started:
@@ -157,6 +177,7 @@ def start(base_dir: str) -> None:
         _started = True
 
     _setup_logging()
+    _base_dir = base_dir
 
     rns_dir = os.path.join(base_dir, "reticulum")
     os.makedirs(rns_dir, exist_ok=True)
@@ -198,6 +219,13 @@ def start(base_dir: str) -> None:
     _lxmf_tracker = LXMFPeerTracker(base_dir)
     _prop_sync = PropagationSyncService(rns=_browser._rns, messaging_service=_messaging)
 
+    # Pure local file I/O, no RNS dependency — safe here rather than
+    # gating on wait_ready(), same reasoning as ensure_for_user("")
+    # above. Actually attaching the loaded connections' interfaces still
+    # has to wait for RNS (see _sync_tcp_interfaces in the deferred
+    # steps below).
+    _load_tcp_connections()
+
     threading.Thread(
         target=_run_deferred_setup, daemon=True, name="nomadportal-deferred-init"
     ).start()
@@ -224,6 +252,12 @@ def _run_deferred_setup() -> None:
         ("LXMF auto-announce loop", start_announce_loop),
         ("LXMF propagation sync service", _prop_sync.start),
         ("LXMF tracker registration", _register_lxmf_tracker),
+        # Attaches whichever TCP connections were loaded from disk and
+        # are (master-enabled AND individually-enabled) — this is what
+        # actually makes a persisted "TCP: on" connection live again
+        # after an app restart, same role wait_ready()'s own doc comment
+        # describes for the old single-connection design.
+        ("TCP connections sync", _sync_tcp_interfaces),
     ]
     for name, fn in steps:
         try:
@@ -268,12 +302,6 @@ def wait_ready(timeout: float = 300.0) -> bool:
 # Transport. See this module's docstring for why this is the mechanism,
 # not restarting Reticulum() itself.
 # ---------------------------------------------------------------------------
-
-def set_tcp_enabled(enabled: bool, host: str, port: int) -> None:
-    """TCPClientInterface has a real, correct detach() — safe to
-    add/remove repeatedly."""
-    _set_interface("tcp", enabled, lambda: _make_tcp_client(host, port))
-
 
 def set_rnode_enabled(enabled: bool, serial_port: str) -> None:
     """RNodeInterface has a real, correct detach() — safe to add/remove
@@ -320,6 +348,152 @@ def _set_interface(key: str, enabled: bool, factory) -> None:
             RNS.Transport.remove_interface(existing)
             del _active_interfaces[key]
             log.info("Interface '%s' disabled", key)
+
+
+# ---------------------------------------------------------------------------
+# TCP: multiple, independently addressable connections — replaces the
+# original single-hardcoded-hub design. Persisted to a small JSON file
+# under base_dir so connections survive an app restart, same convention
+# ui_settings.py already uses in python-core for admin-configurable state.
+# ---------------------------------------------------------------------------
+
+def _tcp_config_path() -> str:
+    return os.path.join(_base_dir, "tcp_connections.json")
+
+
+def _load_tcp_connections() -> None:
+    import json
+    global _tcp_connections, _tcp_master_enabled
+    try:
+        with open(_tcp_config_path(), "r") as f:
+            data = json.load(f)
+        _tcp_connections = {c["id"]: c for c in data.get("connections", [])}
+        _tcp_master_enabled = bool(data.get("master_enabled", True))
+    except (FileNotFoundError, ValueError, OSError, KeyError) as exc:
+        log.info("No existing TCP connections config (%s) — starting empty", exc)
+        _tcp_connections = {}
+
+
+def _save_tcp_connections() -> None:
+    import json
+    try:
+        os.makedirs(_base_dir, exist_ok=True)
+        with open(_tcp_config_path(), "w") as f:
+            json.dump(
+                {"master_enabled": _tcp_master_enabled, "connections": list(_tcp_connections.values())},
+                f,
+            )
+    except OSError as exc:
+        log.warning("Failed to save TCP connections: %s", exc)
+
+
+def _sync_tcp_interfaces() -> None:
+    """Attach/detach RNS TCPClientInterface objects so the live set
+    matches (master_enabled AND each connection's own enabled flag).
+    Idempotent — safe to call after every mutation, and once at startup
+    once RNS is ready. No-ops entirely (doesn't raise) if RNS isn't
+    ready yet — this can run during deferred setup before that's
+    guaranteed, unlike _set_interface's toggle path which is only ever
+    called from a live Settings-screen tap, after startup."""
+    if not is_ready():
+        return
+    import RNS
+    with _lock:
+        for conn_id, conn in list(_tcp_connections.items()):
+            should_be_up = _tcp_master_enabled and conn.get("enabled", True)
+            currently_up = conn_id in _tcp_ifaces
+            if should_be_up and not currently_up:
+                try:
+                    iface = _make_tcp_client(conn["host"], conn["port"])
+                    _browser.reticulum._add_interface(iface)
+                    _tcp_ifaces[conn_id] = iface
+                    log.info("TCP connection '%s' (%s:%d) attached", conn.get("name"), conn["host"], conn["port"])
+                except Exception as exc:
+                    log.warning("Failed to attach TCP connection '%s': %s", conn.get("name"), exc)
+            elif not should_be_up and currently_up:
+                iface = _tcp_ifaces.pop(conn_id)
+                try:
+                    iface.detach()
+                    RNS.Transport.remove_interface(iface)
+                    log.info("TCP connection '%s' detached", conn.get("name"))
+                except Exception as exc:
+                    log.warning("Failed to detach TCP connection '%s': %s", conn.get("name"), exc)
+        # Keep _active_interfaces["tcp"] presence in sync — the announce
+        # section only checks membership (`"tcp" in _active_interfaces`),
+        # it never reads the value, so a plain marker is enough; there's
+        # no single RNS.Interface to represent "TCP" once there can be
+        # several at once.
+        if _tcp_ifaces:
+            _active_interfaces["tcp"] = True
+        else:
+            _active_interfaces.pop("tcp", None)
+
+
+def get_tcp_connections_json() -> str:
+    """[TcpConnectionsStatus] shape: master_enabled, connections (list of
+    {id, name, host, port, enabled})."""
+    import json
+    return json.dumps({
+        "master_enabled": _tcp_master_enabled,
+        "connections": list(_tcp_connections.values()),
+    })
+
+
+def set_tcp_master_enabled(enabled: bool) -> None:
+    """The "duplicate toggle" the TCP settings tab carries, mirroring
+    Main's own TCP switch. When off, every connection detaches
+    regardless of its own enabled flag; each connection's own enabled
+    flag is preserved either way, not overwritten, so turning the
+    master back on restores exactly the same live set as before."""
+    global _tcp_master_enabled
+    _tcp_master_enabled = bool(enabled)
+    _save_tcp_connections()
+    _sync_tcp_interfaces()
+
+
+def add_tcp_connection(name: str, host: str, port: int) -> str:
+    """Returns the new connection's id. New connections start enabled —
+    matches the expectation of "I just added this, it should try to
+    connect," consistent with how the old single-hub toggle defaulted
+    to on."""
+    import uuid
+    conn_id = uuid.uuid4().hex
+    _tcp_connections[conn_id] = {
+        "id": conn_id,
+        "name": (name or "").strip() or f"{host}:{port}",
+        "host": host,
+        "port": int(port),
+        "enabled": True,
+    }
+    _save_tcp_connections()
+    _sync_tcp_interfaces()
+    return conn_id
+
+
+def remove_tcp_connection(conn_id: str) -> None:
+    conn = _tcp_connections.pop(conn_id, None)
+    if conn is None:
+        return
+    iface = _tcp_ifaces.pop(conn_id, None)
+    if iface is not None:
+        import RNS
+        try:
+            iface.detach()
+            RNS.Transport.remove_interface(iface)
+        except Exception as exc:
+            log.warning("Failed to detach TCP connection '%s' during removal: %s", conn.get("name"), exc)
+    if not _tcp_ifaces:
+        _active_interfaces.pop("tcp", None)
+    _save_tcp_connections()
+
+
+def set_tcp_connection_enabled(conn_id: str, enabled: bool) -> None:
+    conn = _tcp_connections.get(conn_id)
+    if conn is None:
+        return
+    conn["enabled"] = bool(enabled)
+    _save_tcp_connections()
+    _sync_tcp_interfaces()
 
 
 def _make_tcp_client(host: str, port: int):
@@ -651,6 +825,16 @@ _interface_announce_config: dict = {
 ANNOUNCE_LOOP_TICK = 30
 _announce_loop_started = False
 
+# Master auto-announce switch shown on Settings' Main tab, on top of
+# each interface's own auto_announce_interval_seconds. Off zeroes every
+# interface's interval (disabling all of them, same 0-means-disabled
+# semantics as everywhere else in this section) while remembering each
+# one's prior nonzero value in _auto_announce_last_intervals, so turning
+# it back on restores exactly what was configured before rather than
+# resetting to defaults.
+_auto_announce_master_enabled = True
+_auto_announce_last_intervals: dict = {}
+
 
 def _active_announce_configs() -> list:
     """Configs for whichever known interfaces (bluetooth_mesh/rnode/tcp)
@@ -755,6 +939,11 @@ def get_announce_status_json() -> str:
         status = _messaging.get_announce_status(user_sub="")
         lxmf_address = status.get("lxmf_address")
         last_announce_at = status.get("last_announce_at")
+    display_name = None
+    if _identity_store is not None:
+        entry = _identity_store.get_for_user("")
+        if entry is not None:
+            display_name = entry.get("name")
 
     # Preview only — never triggers an announce itself (unlike the real
     # _check_send_allowed() call send_message() makes), so polling this
@@ -777,11 +966,43 @@ def get_announce_status_json() -> str:
 
     return json.dumps({
         "interfaces": dict(_interface_announce_config),
+        "auto_announce_master_enabled": _auto_announce_master_enabled,
         "last_announce_at": last_announce_at,
         "lxmf_address": lxmf_address,
+        "display_name": display_name,
         "send_blocked": send_blocked,
         "send_blocked_reason": send_blocked_reason,
     })
+
+
+def set_display_name(name: str) -> bool:
+    """Renames this device's LXMF identity — see
+    MessagingService.set_display_name's own doc comment for the
+    persisted-vs-live-app_data split."""
+    if _messaging is None:
+        return False
+    return _messaging.set_display_name(name, user_sub="")
+
+
+def set_auto_announce_master(enabled: bool) -> None:
+    """The single aggregate toggle Settings' Main tab carries, on top of
+    each interface's own auto_announce_interval_seconds (Settings'
+    per-interface tabs). Off zeroes every interface's interval —
+    disabling all of them via the same 0-means-disabled convention used
+    everywhere else in this section — while remembering each one's
+    prior nonzero value so turning it back on restores exactly what was
+    configured before, not a reset to defaults."""
+    global _auto_announce_master_enabled
+    _auto_announce_master_enabled = bool(enabled)
+    if enabled:
+        for key, cfg in _interface_announce_config.items():
+            if cfg["auto_announce_interval_seconds"] == 0 and key in _auto_announce_last_intervals:
+                cfg["auto_announce_interval_seconds"] = _auto_announce_last_intervals[key]
+    else:
+        for key, cfg in _interface_announce_config.items():
+            if cfg["auto_announce_interval_seconds"] > 0:
+                _auto_announce_last_intervals[key] = cfg["auto_announce_interval_seconds"]
+            cfg["auto_announce_interval_seconds"] = 0
 
 
 def set_announce_max(interface_key: str, seconds: int) -> None:

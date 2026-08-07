@@ -5,6 +5,8 @@ import com.chaquo.python.Python
 import com.chaquo.python.android.AndroidPlatform
 import com.jamesm92.nomadportal.connectivity.InterfaceController
 import com.jamesm92.nomadportal.connectivity.RealInterfaceController
+import com.jamesm92.nomadportal.connectivity.RealTcpConnectionsRepository
+import com.jamesm92.nomadportal.connectivity.TcpConnectionsRepository
 import com.jamesm92.nomadportal.data.SettingsRepository
 import com.jamesm92.nomadportal.data.browsing.BrowserRepository
 import com.jamesm92.nomadportal.data.browsing.RealBrowserRepository
@@ -30,6 +32,8 @@ class NomadPortalApp : Application() {
         private set
     lateinit var interfaceController: InterfaceController
         private set
+    lateinit var tcpConnectionsRepository: TcpConnectionsRepository
+        private set
     lateinit var messagingRepository: MessagingRepository
         private set
     lateinit var browserRepository: BrowserRepository
@@ -51,6 +55,7 @@ class NomadPortalApp : Application() {
         // RealInterfaceController's own doc comment for exactly why each
         // one isn't done yet.
         interfaceController = RealInterfaceController(settingsRepository, appScope)
+        tcpConnectionsRepository = RealTcpConnectionsRepository()
 
         // noBackupFilesDir, not filesDir: RNS identity material must never
         // leave the device via a cloud-backup/device-transfer side channel

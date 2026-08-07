@@ -125,10 +125,21 @@ data class InterfaceAnnounceConfig(
  */
 data class AnnounceStatus(
     val interfaces: Map<String, InterfaceAnnounceConfig>,
+    /** The single aggregate toggle on Settings' Main tab, on top of
+     * each interface's own [InterfaceAnnounceConfig.autoAnnounceIntervalSeconds] —
+     * off zeroes every interface's interval (remembering each one's
+     * prior value so turning it back on restores it, not a reset to
+     * defaults). */
+    val autoAnnounceMasterEnabled: Boolean,
     /** Null if this identity has never announced yet. */
     val lastAnnounceAtMillis: Long?,
     /** Null before the delivery router exists (e.g. RNS still starting up). */
     val lxmfAddress: String?,
+    /** This device's own LXMF display name — editable via
+     * [MessagingRepository.setDisplayName]. Null only if the identity
+     * itself doesn't exist yet (shouldn't normally happen — one is
+     * created at app startup). */
+    val displayName: String?,
     val sendBlocked: Boolean,
     val sendBlockedReason: String?,
 ) {

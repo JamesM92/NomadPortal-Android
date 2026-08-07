@@ -33,6 +33,7 @@ class MainActivity : ComponentActivity() {
                         messagingRepository = app.messagingRepository,
                         browserRepository = app.browserRepository,
                         settingsRepository = app.settingsRepository,
+                        tcpConnectionsRepository = app.tcpConnectionsRepository,
                     )
                 }
             }
