@@ -58,6 +58,7 @@ import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.jamesm92.nomadportal.connectivity.InterfaceController
 import com.jamesm92.nomadportal.data.SettingsRepository
@@ -117,13 +118,16 @@ fun SettingsScreen(
         }
     }
 
-    // Main = the quick on/off switches someone reaches for constantly
-    // (connectivity + hosting, kill switch included); everything else is
-    // "more in depth" and lives in its own sub-tab instead of all being
-    // stacked in one long scroll — per explicit request.
+    // Main = everything that isn't a per-interface announce policy:
+    // connectivity/hosting toggles + kill switch, Appearance, and
+    // Permissions all live together on Main (moved back per explicit
+    // follow-up — Appearance/Permissions had briefly been their own
+    // tabs, that was wrong). Each announce-tracked interface gets its
+    // own dedicated tab instead of one shared table, so its Message/
+    // Auto fields aren't competing for width with three other rows.
     var selectedTab by remember { mutableIntStateOf(0) }
     val isLandscape = LocalConfiguration.current.orientation == Configuration.ORIENTATION_LANDSCAPE
-    val tabLabels = listOf("Main", "Announce", "Appearance", "Permissions")
+    val tabLabels = listOf("Main", "TCP", "Bluetooth", "RNode", "LAN")
 
     Scaffold(
         topBar = {
@@ -156,10 +160,16 @@ fun SettingsScreen(
                             selected = selectedTab == index,
                             onClick = { selectedTab = index },
                             text = {
+                                // 5 tabs sharing one row leaves little
+                                // width each — smaller fontSize plus an
+                                // explicit maxLines=1/no-wrap keeps every
+                                // label ("Bluetooth" is the longest) on
+                                // one line instead of wrapping to two and
+                                // blowing out the tab row's height.
                                 Text(
                                     label,
                                     style = MaterialTheme.typography.bodyLarge.copy(
-                                        fontSize = MaterialTheme.typography.bodyLarge.fontSize * 0.8f,
+                                        fontSize = MaterialTheme.typography.bodyLarge.fontSize * 0.65f,
                                         fontWeight = if (selectedTab == index) FontWeight.Bold else FontWeight.Normal,
                                     ),
                                     color = if (selectedTab == index) {
@@ -167,6 +177,9 @@ fun SettingsScreen(
                                     } else {
                                         NomadTextDim
                                     },
+                                    maxLines = 1,
+                                    softWrap = false,
+                                    overflow = TextOverflow.Ellipsis,
                                 )
                             },
                         )
@@ -246,34 +259,34 @@ fun SettingsScreen(
                         onCheckedChange = { scope.launch { interfaceController.setNodeHostingEnabled(it) } },
                     )
                 }
-            } else if (selectedTab == 1) {
+
+                // Identity/announce overview stays on Main — it's not
+                // per-interface (an LXMF address, last-announce time,
+                // and a manual trigger apply to the whole device), only
+                // each interface's own Message/Auto policy moved out to
+                // its own tab below.
                 announceStatus?.let { status ->
+                    item { HorizontalDivider() }
+                    item { SectionHeader("Announce") }
                     item {
                         AnnounceOverview(
                             status = status,
                             onAnnounceNow = { scope.launch { messagingRepository.announceNow() } },
                         )
                     }
-                    item {
-                        AnnounceTable(
-                            interfaces = status.interfaces,
-                            onAnnounceMaxChange = { key, seconds ->
-                                scope.launch { messagingRepository.setAnnounceMax(key, seconds) }
-                            },
-                            onAutoAnnounceIntervalChange = { key, seconds ->
-                                scope.launch { messagingRepository.setAutoAnnounceInterval(key, seconds) }
-                            },
-                        )
-                    }
                 }
-            } else if (selectedTab == 2) {
+
+                item { HorizontalDivider() }
+                item { SectionHeader("Appearance") }
                 item {
                     TextScaleRow(
                         scale = textScale,
                         onScaleChange = { scope.launch { settingsRepository.setTextScale(it) } },
                     )
                 }
-            } else {
+
+                item { HorizontalDivider() }
+                item { SectionHeader("Permissions") }
                 item {
                     Text(
                         text = "Every permission this app requests is optional. Denying any of them " +
@@ -283,11 +296,34 @@ fun SettingsScreen(
                         modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
                     )
                 }
+            } else {
+                // Tabs 1-4: TCP/Bluetooth/RNode/LAN, each showing just
+                // that one interface's own Message/Auto fields.
+                val interfaceKey = when (selectedTab) {
+                    1 -> AnnounceStatus.INTERFACE_TCP
+                    2 -> AnnounceStatus.INTERFACE_BLUETOOTH
+                    3 -> AnnounceStatus.INTERFACE_RNODE
+                    else -> AnnounceStatus.INTERFACE_WIFI_DISCOVERY
+                }
+                val config = announceStatus?.interfaces?.get(interfaceKey)
+                if (config != null) {
+                    item {
+                        InterfaceAnnounceTab(
+                            config = config,
+                            onAnnounceMaxChange = {
+                                scope.launch { messagingRepository.setAnnounceMax(interfaceKey, it) }
+                            },
+                            onAutoAnnounceIntervalChange = {
+                                scope.launch { messagingRepository.setAutoAnnounceInterval(interfaceKey, it) }
+                            },
+                        )
+                    }
+                }
             }
             }
-            // Custom-drawn, same as BrowserScreen's page viewer — some
-            // tabs (Main, Announce) are long enough to benefit from the
-            // same "how much more is there" cue.
+            // Custom-drawn, same as BrowserScreen's page viewer — Main
+            // in particular is long enough to benefit from the same
+            // "how much more is there" cue.
             VerticalScrollIndicator(
                 listState,
                 modifier = Modifier.align(Alignment.CenterEnd).fillMaxHeight(),
@@ -453,69 +489,41 @@ private fun AnnounceOverview(status: AnnounceStatus, onAnnounceNow: () -> Unit) 
  * [InterfaceAnnounceConfig.autoAnnounceEnabled]'s own derivation.
  */
 @Composable
-private fun AnnounceTable(
-    interfaces: Map<String, InterfaceAnnounceConfig>,
-    onAnnounceMaxChange: (interfaceKey: String, seconds: Int) -> Unit,
-    onAutoAnnounceIntervalChange: (interfaceKey: String, seconds: Int) -> Unit,
+private fun InterfaceAnnounceTab(
+    config: InterfaceAnnounceConfig,
+    onAnnounceMaxChange: (seconds: Int) -> Unit,
+    onAutoAnnounceIntervalChange: (seconds: Int) -> Unit,
 ) {
-    val rows = listOf(
-        "TCP" to AnnounceStatus.INTERFACE_TCP,
-        "Bluetooth" to AnnounceStatus.INTERFACE_BLUETOOTH,
-        "RNode" to AnnounceStatus.INTERFACE_RNODE,
-        "LAN" to AnnounceStatus.INTERFACE_WIFI_DISCOVERY,
-    )
-    val headerStyle = MaterialTheme.typography.bodyLarge.copy(fontSize = MaterialTheme.typography.bodyLarge.fontSize * 0.7f)
+    val labelStyle = MaterialTheme.typography.bodyLarge.copy(fontSize = MaterialTheme.typography.bodyLarge.fontSize * 0.85f)
+    val hintStyle = MaterialTheme.typography.bodyLarge.copy(fontSize = MaterialTheme.typography.bodyLarge.fontSize * 0.7f)
 
-    Column(modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp)) {
-        Row(modifier = Modifier.fillMaxWidth().padding(bottom = 6.dp)) {
-            Text("Protocol", style = headerStyle, color = NomadTextDim, modifier = Modifier.weight(1f))
-            Text(
-                "Message (min)",
-                style = headerStyle,
-                color = NomadTextDim,
-                textAlign = TextAlign.Center,
-                modifier = Modifier.weight(1f),
-            )
-            Text(
-                "Auto (min)",
-                style = headerStyle,
-                color = NomadTextDim,
-                textAlign = TextAlign.Center,
-                modifier = Modifier.weight(1f),
-            )
-        }
-        HorizontalDivider()
-        rows.forEach { (label, key) ->
-            val config = interfaces[key] ?: return@forEach
-            Row(
-                modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Text(
-                    text = label,
-                    style = MaterialTheme.typography.bodyLarge.copy(fontSize = MaterialTheme.typography.bodyLarge.fontSize * 0.85f),
-                    modifier = Modifier.weight(1f),
-                )
-                MinutesField(
-                    seconds = config.announceMaxSeconds,
-                    allowZero = false,
-                    onCommit = { onAnnounceMaxChange(key, it) },
-                    modifier = Modifier.weight(1f).padding(horizontal = 4.dp),
-                )
-                MinutesField(
-                    seconds = config.autoAnnounceIntervalSeconds,
-                    allowZero = true,
-                    onCommit = { onAutoAnnounceIntervalChange(key, it) },
-                    modifier = Modifier.weight(1f).padding(horizontal = 4.dp),
-                )
-            }
-            HorizontalDivider()
-        }
+    Column(modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp)) {
+        Text("Message (minutes)", style = labelStyle)
         Text(
-            text = "Auto = 0 disables auto-announce for that connection.",
-            style = headerStyle,
+            "How stale the last announce can get before a send needs a fresh one first.",
+            style = hintStyle,
             color = NomadTextDim,
-            modifier = Modifier.padding(top = 6.dp),
+        )
+        MinutesField(
+            seconds = config.announceMaxSeconds,
+            allowZero = false,
+            onCommit = onAnnounceMaxChange,
+            modifier = Modifier.width(96.dp).padding(top = 4.dp),
+        )
+
+        Spacer(modifier = Modifier.height(20.dp))
+
+        Text("Auto-announce (minutes)", style = labelStyle)
+        Text(
+            "How often this device proactively re-announces on its own. 0 disables auto-announce for this connection.",
+            style = hintStyle,
+            color = NomadTextDim,
+        )
+        MinutesField(
+            seconds = config.autoAnnounceIntervalSeconds,
+            allowZero = true,
+            onCommit = onAutoAnnounceIntervalChange,
+            modifier = Modifier.width(96.dp).padding(top = 4.dp),
         )
     }
 }
