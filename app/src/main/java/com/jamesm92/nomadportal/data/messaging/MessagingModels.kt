@@ -75,3 +75,66 @@ data class ConversationSummary(
     val lastMessage: Message?,
     val unreadCount: Int,
 )
+
+/**
+ * One interface's (bluetooth_mesh/rnode/tcp) own announce policy —
+ * two independent knobs, per explicit design direction:
+ * - [announceMaxSeconds] ("messages announce time max"): how stale this
+ *   device's last announce is allowed to get before a *send* needs a
+ *   fresh one first.
+ * - [autoAnnounceEnabled]/[autoAnnounceIntervalSeconds] ("auto announce
+ *   time"): whether/how often this device proactively re-announces on
+ *   its own initiative, independent of whether a message happens to be
+ *   going out. Can be disabled per interface — but see [AnnounceStatus]'s
+ *   own doc comment for what disabling it actually means for sending.
+ */
+data class InterfaceAnnounceConfig(
+    val announceMaxSeconds: Int,
+    val autoAnnounceEnabled: Boolean,
+    val autoAnnounceIntervalSeconds: Int,
+)
+
+/**
+ * Auto-announce configuration/status for this device's own LXMF
+ * delivery identity — not to be confused with [Contact.lastAnnounceMillis]
+ * (someone else's announces, heard by us). This is about *our own*
+ * outbound announcing, which the LXMF/RNS protocol requires at least
+ * once before any other peer can discover a path to deliver a message
+ * to us at all (path discovery is fundamentally announce-based). Every
+ * identity already gets one bootstrap announce automatically the moment
+ * it's created, regardless of any setting here, so a fresh install is
+ * never unreachable out of the box.
+ *
+ * RNS's own announce() call always broadcasts to every currently-active
+ * interface at once — there's no API to target one specific interface,
+ * so [interfaces] drives *timing* decisions only (which interfaces
+ * being active determines which thresholds apply), never which
+ * interface actually carries the announce packet.
+ *
+ * [sendBlocked]/[sendBlockedReason] is a read-only preview of whether
+ * the next [MessagingRepository.sendMessage] call would currently be
+ * refused: true when every currently-active interface has
+ * [InterfaceAnnounceConfig.autoAnnounceEnabled] off *and* the last
+ * announce is older than the strictest active
+ * [InterfaceAnnounceConfig.announceMaxSeconds] — this device can't
+ * autonomously fix that (auto-announce being off means exactly "don't
+ * announce without being asked to"), so sending stops and says why
+ * instead of silently going out over a possibly-unreachable identity.
+ */
+data class AnnounceStatus(
+    val interfaces: Map<String, InterfaceAnnounceConfig>,
+    /** Null if this identity has never announced yet. */
+    val lastAnnounceAtMillis: Long?,
+    /** Null before the delivery router exists (e.g. RNS still starting up). */
+    val lxmfAddress: String?,
+    val sendBlocked: Boolean,
+    val sendBlockedReason: String?,
+) {
+    companion object {
+        const val INTERFACE_BLUETOOTH = "bluetooth_mesh"
+        const val INTERFACE_RNODE = "rnode"
+        const val INTERFACE_TCP = "tcp"
+        const val MIN_SECONDS = 60
+        const val MAX_SECONDS = 24 * 60 * 60
+    }
+}

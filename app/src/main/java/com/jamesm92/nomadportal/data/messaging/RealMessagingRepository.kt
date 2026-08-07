@@ -73,6 +73,70 @@ class RealMessagingRepository : MessagingRepository {
         }
     }
 
+    override fun announceStatus(): Flow<AnnounceStatus> = flow {
+        while (true) {
+            emit(fetchAnnounceStatus())
+            // Ticks faster than the main POLL_INTERVAL_MS — this backs a
+            // live "time since last announce" display that should count
+            // up smoothly, not jump in 4s steps.
+            delay(1000L)
+        }
+    }.flowOn(Dispatchers.IO)
+
+    override suspend fun setAnnounceMax(interfaceKey: String, seconds: Int) {
+        withContext(Dispatchers.IO) {
+            orchestrator.callAttr("set_announce_max", interfaceKey, seconds)
+        }
+    }
+
+    override suspend fun setAutoAnnounceEnabled(interfaceKey: String, enabled: Boolean) {
+        withContext(Dispatchers.IO) {
+            orchestrator.callAttr("set_auto_announce_enabled", interfaceKey, enabled)
+        }
+    }
+
+    override suspend fun setAutoAnnounceInterval(interfaceKey: String, seconds: Int) {
+        withContext(Dispatchers.IO) {
+            orchestrator.callAttr("set_auto_announce_interval", interfaceKey, seconds)
+        }
+    }
+
+    override suspend fun announceNow(): Boolean = withContext(Dispatchers.IO) {
+        val obj = JSONObject(orchestrator.callAttr("announce_now").toString())
+        obj.optBoolean("success", false)
+    }
+
+    private fun fetchAnnounceStatus(): AnnounceStatus {
+        val obj = JSONObject(orchestrator.callAttr("get_announce_status_json").toString())
+        val interfacesObj = obj.getJSONObject("interfaces")
+        val interfaces = interfacesObj.keys().asSequence().associateWith { key ->
+            val cfg = interfacesObj.getJSONObject(key)
+            InterfaceAnnounceConfig(
+                announceMaxSeconds = cfg.optInt("announce_max_seconds", AnnounceStatus.MAX_SECONDS),
+                autoAnnounceEnabled = cfg.optBoolean("auto_announce_enabled", true),
+                autoAnnounceIntervalSeconds = cfg.optInt(
+                    "auto_announce_interval_seconds",
+                    AnnounceStatus.MAX_SECONDS,
+                ),
+            )
+        }
+        return AnnounceStatus(
+            interfaces = interfaces,
+            lastAnnounceAtMillis = if (obj.isNull("last_announce_at")) {
+                null
+            } else {
+                (obj.optDouble("last_announce_at", 0.0) * 1000).toLong()
+            },
+            lxmfAddress = if (obj.isNull("lxmf_address")) null else obj.optString("lxmf_address"),
+            sendBlocked = obj.optBoolean("send_blocked", false),
+            sendBlockedReason = if (obj.isNull("send_blocked_reason")) {
+                null
+            } else {
+                obj.optString("send_blocked_reason")
+            },
+        )
+    }
+
     // Synchronous per MessagingRepository's own contract — safe here
     // since get_contact_json is a cheap in-memory dict/JSON operation,
     // no RNS network I/O, matching what was already true of

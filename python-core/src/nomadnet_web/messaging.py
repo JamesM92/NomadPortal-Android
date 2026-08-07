@@ -77,6 +77,13 @@ class MessagingService:
         self._user_routers: dict = {}
         os.makedirs(storage_path, exist_ok=True)
 
+        # user_sub -> unix timestamp of that user's last successful
+        # announce (bootstrap or otherwise). Read by orchestrator.py to
+        # decide whether a send-in-progress needs a fresh announce
+        # first — see do_announce()'s own doc comment for why the
+        # decision of *when* lives up there instead of in here.
+        self._last_announce_at: dict = {}
+
     # ------------------------------------------------------------------
     # Setup helpers
     # ------------------------------------------------------------------
@@ -169,6 +176,27 @@ class MessagingService:
                 identity_id[:16], registered.hexhash[:16],
                 user_sub[:16] if user_sub else "anon",
             )
+
+            # Bootstrap announce — unconditional, regardless of
+            # auto_announce_enabled (see that field's own comment): a
+            # freshly-registered identity has never announced before,
+            # so no peer on the mesh has a path to it yet. Without this,
+            # every message sent *to* a brand-new install would fail
+            # with no path known until the user happened to find and
+            # tap a manual announce control. Best-effort — failure here
+            # (e.g. RNS not fully up yet) just means the periodic loop
+            # or a manual announce catches it later; it doesn't block
+            # router registration from succeeding.
+            try:
+                router.announce(registered.hash)
+                self._last_announce_at[user_sub] = time.time()
+                log.info(
+                    "Bootstrap-announced new delivery identity %s",
+                    registered.hexhash[:16],
+                )
+            except Exception as exc:
+                log.warning("Bootstrap announce failed for %s: %s", identity_id[:16], exc)
+
             return data
 
         except Exception as exc:
@@ -223,12 +251,19 @@ class MessagingService:
         return data["dest"].hexhash if data else None
 
     def do_announce(self, user_sub: str = "") -> tuple[bool, str]:
-        """Announce via the user's LXMRouter so app_data (display name) is included."""
+        """Announce via the user's LXMRouter so app_data (display name) is included.
+
+        Manual trigger (UI "Announce now" button) as well as what the
+        auto-announce loop below calls internally — both paths go
+        through here so ``_last_announce_at`` is always updated
+        consistently regardless of which one fired.
+        """
         data = self._get_user_router(user_sub)
         if data is None:
             return False, "No delivery identity registered for this user"
         try:
             data["router"].announce(data["dest"].hash)
+            self._last_announce_at[user_sub] = time.time()
             log.info(
                 "Announced LXMF delivery destination %s",
                 data["dest"].hexhash[:16],
@@ -237,6 +272,23 @@ class MessagingService:
         except Exception as exc:
             log.error("Announce failed: %s", exc)
             return False, str(exc)
+
+    # ------------------------------------------------------------------
+    # Auto-announce: configurable periodic re-announcing
+    # ------------------------------------------------------------------
+
+    def get_announce_status(self, user_sub: str = "") -> dict:
+        """Raw facts only — no policy (enabled/interval/staleness-window
+        decisions live in orchestrator.py, which is the layer that
+        actually has interface-state visibility; see its own module-level
+        doc comment on the auto-announce section for why). Just this
+        user's last-announce timestamp (unix seconds, None if never) and
+        LXMF address (None if no router exists yet)."""
+        data = self._user_routers.get(user_sub)
+        return {
+            "last_announce_at": self._last_announce_at.get(user_sub),
+            "lxmf_address": data["dest"].hexhash if data else None,
+        }
 
     # ------------------------------------------------------------------
     # Public API

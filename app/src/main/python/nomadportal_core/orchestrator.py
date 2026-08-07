@@ -58,6 +58,8 @@ import os
 import re
 import sys
 import threading
+import time
+from typing import Optional
 
 log = logging.getLogger(__name__)
 
@@ -212,7 +214,14 @@ def _run_deferred_setup() -> None:
         return
 
     steps = [
+        # Each router setup_delivery() registers gets its own one-time
+        # bootstrap announce inside _init_user_router. Periodic
+        # re-announcing beyond that (per-interface, configurable) is
+        # start_announce_loop() below, plus a send-time staleness check
+        # in send_message() — see this module's announce-section doc
+        # comment for the full design.
         ("LXMF delivery setup", lambda: _messaging.setup_delivery(_identity_store)),
+        ("LXMF auto-announce loop", start_announce_loop),
         ("LXMF propagation sync service", _prop_sync.start),
         ("LXMF tracker registration", _register_lxmf_tracker),
     ]
@@ -577,15 +586,263 @@ def set_contact_favorite(hash_hex: str, value: bool) -> bool:
     return store.set_favorite(hash_hex, value)
 
 
+# ---------------------------------------------------------------------------
+# LXMF identity auto-announce — configurable, but announcing at least once
+# is an actual LXMF/RNS protocol requirement, not a cosmetic feature: path
+# discovery is fundamentally announce-based, so a delivery identity that
+# has never announced is unreachable by any other peer, full stop (see
+# _init_user_router's bootstrap-announce comment). What's genuinely
+# configurable here is only the *periodic re*-announce policy on top of
+# that baseline.
+#
+# Deliberately staleness-checked lazily, right before each send, rather
+# than on a fixed background timer — a device that never sends anything
+# doesn't need to keep re-announcing on a clock (per explicit design
+# direction: "it should only need to do an announce before a message if
+# it hasnt done an announce in a time window"). And that time window
+# itself isn't one global number: it depends on which of this device's
+# *own* interfaces are currently up when the send happens, because they
+# carry very different path-staleness risk — a Bluetooth mesh neighbor
+# set changes far faster than a stable TCP/internet path. `_active_interfaces`
+# (this module's own live interface-toggle state) is what makes that
+# possible to compute here rather than in messaging.py, which has no
+# visibility into interface state at all by design (see its own "clean
+# UI-agnostic port" convention).
+# ---------------------------------------------------------------------------
+
+# Per-interface: two independent knobs, per explicit design direction —
+# "announce_max_seconds" is how stale the last announce is allowed to
+# get before a *send* needs a fresh one first ("messages announce time
+# max"); "auto_announce_enabled"/"auto_announce_interval_seconds" is
+# whether/how often this device proactively re-announces on its own
+# initiative, independent of whether a message happens to be going out
+# ("auto announce time", can be disabled per interface). RNS's own
+# announce() call always broadcasts to every currently-active interface
+# at once — there's no public API to target one specific interface (this
+# was explicitly confirmed rather than assumed: no such method found,
+# and it can't be verified further without RNS itself being importable
+# in this dev environment, only in the Android build's Chaquopy cache).
+# So per-interface config here drives *timing* decisions (which
+# interfaces being active determines which thresholds apply), never
+# *which interface carries the actual announce packet* — that's always
+# "however many are active, all of them," by RNS's own design.
+_interface_announce_config: dict = {
+    "bluetooth_mesh": {
+        "announce_max_seconds": 15 * 60,
+        "auto_announce_enabled": True,
+        "auto_announce_interval_seconds": 15 * 60,
+    },
+    "rnode": {
+        "announce_max_seconds": 2 * 60 * 60,
+        "auto_announce_enabled": True,
+        "auto_announce_interval_seconds": 2 * 60 * 60,
+    },
+    "tcp": {
+        "announce_max_seconds": 6 * 60 * 60,
+        "auto_announce_enabled": True,
+        "auto_announce_interval_seconds": 6 * 60 * 60,
+    },
+}
+# How often the background loop wakes up to check whether any active
+# interface's auto_announce_interval_seconds has elapsed.
+ANNOUNCE_LOOP_TICK = 30
+_announce_loop_started = False
+
+
+def _active_announce_configs() -> list:
+    """Configs for whichever known interfaces (bluetooth_mesh/rnode/tcp)
+    are currently active — empty if none of the active interfaces are
+    ones this section tracks (e.g. only wifi_discovery is on)."""
+    return [
+        _interface_announce_config[key]
+        for key in _active_interfaces
+        if key in _interface_announce_config
+    ]
+
+
+def _seconds_since_last_announce() -> Optional[float]:
+    if _messaging is None:
+        return None
+    last = _messaging.get_announce_status(user_sub="").get("last_announce_at")
+    return None if last is None else time.time() - last
+
+
+def _check_send_allowed() -> tuple:
+    """(allowed, block_reason). block_reason is None when allowed.
+
+    Blocking (not just skipping a background announce) is deliberate,
+    per explicit design direction: if every currently-active interface
+    has auto-announce turned off and the last announce is older than
+    the strictest active threshold, this device can't autonomously fix
+    that (auto-announce being off means exactly that: don't announce
+    without being asked to) — so the send itself has to stop and say
+    why, rather than silently going out over a possibly-stale/no-path
+    identity. If auto-announce IS allowed on at least one active
+    interface, this announces first (broadcast, per this section's own
+    doc comment) and then allows the send through.
+    """
+    if _messaging is None:
+        return True, None  # let send_message's own None-check handle this
+
+    configs = _active_announce_configs()
+    if not configs:
+        return True, None  # nothing this section tracks is active — no policy to enforce
+
+    max_threshold = min(c["announce_max_seconds"] for c in configs)
+    since = _seconds_since_last_announce()
+    stale = since is None or since >= max_threshold
+
+    if not stale:
+        return True, None
+
+    any_auto_enabled = any(c["auto_announce_enabled"] for c in configs)
+    if any_auto_enabled:
+        _messaging.do_announce(user_sub="")
+        return True, None
+
+    return False, (
+        "Your identity hasn't announced recently enough to reliably reach "
+        "this contact, and auto-announce is disabled for every currently "
+        "active connection. Tap Announce now in Settings, or re-enable "
+        "auto-announce, then try again."
+    )
+
+
+def _announce_loop() -> None:
+    while True:
+        time.sleep(ANNOUNCE_LOOP_TICK)
+        if _messaging is None:
+            continue
+        configs = _active_announce_configs()
+        due = [c for c in configs if c["auto_announce_enabled"]]
+        if not due:
+            continue
+        since = _seconds_since_last_announce()
+        if since is None or since >= min(c["auto_announce_interval_seconds"] for c in due):
+            _messaging.do_announce(user_sub="")
+
+
+def start_announce_loop() -> None:
+    """Idempotent — a second call is a no-op. Same daemon-thread shape as
+    lxmf_sync.py's PropagationSyncService.start()."""
+    global _announce_loop_started
+    with _lock:
+        if _announce_loop_started:
+            return
+        _announce_loop_started = True
+    threading.Thread(target=_announce_loop, daemon=True, name="lxmf-auto-announce").start()
+
+
+def get_announce_status_json() -> str:
+    """[AnnounceStatus] shape: interfaces (bluetooth_mesh/rnode/tcp ->
+    {announce_max_seconds, auto_announce_enabled,
+    auto_announce_interval_seconds} — always all three keys regardless
+    of which are currently active), last_announce_at (unix seconds,
+    nullable), lxmf_address (nullable — null before the delivery router
+    exists, e.g. RNS still starting up), send_blocked +
+    send_blocked_reason (a read-only preview of what
+    _check_send_allowed() would currently decide — lets the UI show a
+    warning before the user even tries to send, not just react to a
+    failed send afterward)."""
+    import json
+    lxmf_address = None
+    last_announce_at = None
+    if _messaging is not None:
+        status = _messaging.get_announce_status(user_sub="")
+        lxmf_address = status.get("lxmf_address")
+        last_announce_at = status.get("last_announce_at")
+
+    # Preview only — never triggers an announce itself (unlike the real
+    # _check_send_allowed() call send_message() makes), so polling this
+    # for UI display can't have side effects.
+    configs = _active_announce_configs()
+    send_blocked = False
+    send_blocked_reason = None
+    if configs:
+        max_threshold = min(c["announce_max_seconds"] for c in configs)
+        since = _seconds_since_last_announce()
+        stale = since is None or since >= max_threshold
+        if stale and not any(c["auto_announce_enabled"] for c in configs):
+            send_blocked = True
+            send_blocked_reason = (
+                "Identity announce is stale and auto-announce is disabled "
+                "for the active connection — sends will be blocked until "
+                "you announce manually or re-enable auto-announce."
+            )
+
+    return json.dumps({
+        "interfaces": dict(_interface_announce_config),
+        "last_announce_at": last_announce_at,
+        "lxmf_address": lxmf_address,
+        "send_blocked": send_blocked,
+        "send_blocked_reason": send_blocked_reason,
+    })
+
+
+def set_announce_max(interface_key: str, seconds: int) -> None:
+    """`interface_key` must be one of _interface_announce_config's keys
+    ("bluetooth_mesh"/"rnode"/"tcp") — silently ignored otherwise rather
+    than raising, so a future Kotlin-side typo/version-skew can't crash
+    this call. Clamped to [1 minute, 24 hours] — below a minute risks
+    flooding, beyond 24h risks peers' paths aging out regardless."""
+    if interface_key not in _interface_announce_config:
+        log.warning("Ignoring announce_max for unknown interface '%s'", interface_key)
+        return
+    _interface_announce_config[interface_key]["announce_max_seconds"] = max(
+        60, min(24 * 60 * 60, int(seconds))
+    )
+
+
+def set_auto_announce_enabled(interface_key: str, enabled: bool) -> None:
+    if interface_key not in _interface_announce_config:
+        log.warning("Ignoring auto_announce_enabled for unknown interface '%s'", interface_key)
+        return
+    _interface_announce_config[interface_key]["auto_announce_enabled"] = bool(enabled)
+
+
+def set_auto_announce_interval(interface_key: str, seconds: int) -> None:
+    if interface_key not in _interface_announce_config:
+        log.warning("Ignoring auto_announce_interval for unknown interface '%s'", interface_key)
+        return
+    _interface_announce_config[interface_key]["auto_announce_interval_seconds"] = max(
+        60, min(24 * 60 * 60, int(seconds))
+    )
+
+
+def announce_now() -> str:
+    """[AnnounceResult] shape: success, message. Manual trigger for the
+    UI's "Announce now" control — goes through the same do_announce()
+    _check_send_allowed() uses internally, so last_announce_at (and
+    therefore staleness for both the send-block check and the auto-
+    announce loop) updates consistently either way."""
+    import json
+    if _messaging is None:
+        return json.dumps({"success": False, "message": "Messaging not initialized yet"})
+    success, message = _messaging.do_announce(user_sub="")
+    return json.dumps({"success": success, "message": message})
+
+
 def send_message(dest_hash_hex: str, content: str) -> None:
-    """Raises RuntimeError on failure (e.g. no delivery identity
-    registered) — matches MessagingRepository.sendMessage's `suspend
-    fun` contract of surfacing failure via exception. Fast/non-blocking
-    on the Python side (messaging.py queues and spawns its own delivery
-    thread), but still run via Dispatchers.IO for the Chaquopy/GIL
-    crossing, consistent with every other bridge call here."""
+    """Raises RuntimeError on failure — e.g. no delivery identity
+    registered, OR _check_send_allowed() blocked this send because the
+    identity's announce is stale and auto-announce is disabled on every
+    currently-active interface (see that function's own doc comment;
+    matches what get_announce_status_json()'s send_blocked/
+    send_blocked_reason already let the UI warn about proactively,
+    before the user even tries). Matches MessagingRepository.sendMessage's
+    `suspend fun` contract of surfacing failure via exception either way.
+
+    _check_send_allowed() runs first, synchronously — when it decides an
+    announce is due, that's a real (if usually fast) RNS announce call,
+    not just a state check, so this can occasionally add real latency to
+    a send. Accepted trade-off: correctness (the recipient actually
+    having a path to reach us back, or a relay having a fresh path to
+    reach *them*) matters more here than shaving this call's latency."""
     if _messaging is None:
         raise RuntimeError("Messaging not initialized yet")
+    allowed, block_reason = _check_send_allowed()
+    if not allowed:
+        raise RuntimeError(block_reason)
     ok, result = _messaging.send_message(dest_hash_hex, content, "", "")
     if not ok:
         raise RuntimeError(result)

@@ -90,6 +90,53 @@ class StubMessagingRepository(private val scope: CoroutineScope) : MessagingRepo
     override fun contact(contactHash: String): Contact? =
         contacts.value.find { it.lxmfHash == contactHash }
 
+    private val announceStatus = MutableStateFlow(
+        AnnounceStatus(
+            interfaces = mapOf(
+                AnnounceStatus.INTERFACE_BLUETOOTH to InterfaceAnnounceConfig(15 * 60, true, 15 * 60),
+                AnnounceStatus.INTERFACE_RNODE to InterfaceAnnounceConfig(2 * 60 * 60, true, 2 * 60 * 60),
+                AnnounceStatus.INTERFACE_TCP to InterfaceAnnounceConfig(6 * 60 * 60, true, 6 * 60 * 60),
+            ),
+            lastAnnounceAtMillis = System.currentTimeMillis(),
+            lxmfAddress = "stub0000000000000000000000000000",
+            sendBlocked = false,
+            sendBlockedReason = null,
+        )
+    )
+
+    override fun announceStatus(): StateFlow<AnnounceStatus> = announceStatus.asStateFlow()
+
+    override suspend fun setAnnounceMax(interfaceKey: String, seconds: Int) {
+        updateInterfaceConfig(interfaceKey) { it.copy(announceMaxSeconds = seconds) }
+    }
+
+    override suspend fun setAutoAnnounceEnabled(interfaceKey: String, enabled: Boolean) {
+        updateInterfaceConfig(interfaceKey) { it.copy(autoAnnounceEnabled = enabled) }
+    }
+
+    override suspend fun setAutoAnnounceInterval(interfaceKey: String, seconds: Int) {
+        updateInterfaceConfig(interfaceKey) { it.copy(autoAnnounceIntervalSeconds = seconds) }
+    }
+
+    private fun updateInterfaceConfig(
+        interfaceKey: String,
+        transform: (InterfaceAnnounceConfig) -> InterfaceAnnounceConfig,
+    ) {
+        val current = announceStatus.value.interfaces[interfaceKey] ?: return
+        announceStatus.value = announceStatus.value.copy(
+            interfaces = announceStatus.value.interfaces + (interfaceKey to transform(current)),
+        )
+    }
+
+    override suspend fun announceNow(): Boolean {
+        announceStatus.value = announceStatus.value.copy(
+            lastAnnounceAtMillis = System.currentTimeMillis(),
+            sendBlocked = false,
+            sendBlockedReason = null,
+        )
+        return true
+    }
+
     private fun seedThread(firstIsSent: Boolean): List<Message> {
         val now = System.currentTimeMillis()
         val texts = listOf(

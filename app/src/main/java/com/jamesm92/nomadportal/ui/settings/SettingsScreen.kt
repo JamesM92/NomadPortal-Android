@@ -13,12 +13,17 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.PowerSettingsNew
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.FilterChip
+import androidx.compose.material3.FilterChipDefaults
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -41,12 +46,16 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import com.jamesm92.nomadportal.connectivity.InterfaceController
 import com.jamesm92.nomadportal.data.SettingsRepository
+import com.jamesm92.nomadportal.data.messaging.AnnounceStatus
+import com.jamesm92.nomadportal.data.messaging.InterfaceAnnounceConfig
+import com.jamesm92.nomadportal.data.messaging.MessagingRepository
 import com.jamesm92.nomadportal.panicwipe.PanicWipe
 import com.jamesm92.nomadportal.permissions.BLUETOOTH_PERMISSIONS
 import com.jamesm92.nomadportal.permissions.hasBluetoothPermissions
 import com.jamesm92.nomadportal.ui.components.AdaptiveTopAppBar
 import com.jamesm92.nomadportal.ui.components.PanicWipeLogo
 import com.jamesm92.nomadportal.ui.components.VerticalScrollIndicator
+import com.jamesm92.nomadportal.ui.theme.NomadTextDim
 import kotlin.math.roundToInt
 import kotlinx.coroutines.launch
 
@@ -65,12 +74,14 @@ import kotlinx.coroutines.launch
 fun SettingsScreen(
     interfaceController: InterfaceController,
     settingsRepository: SettingsRepository,
+    messagingRepository: MessagingRepository,
     onBack: () -> Unit,
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
 
     val textScale by settingsRepository.textScale.collectAsState(initial = SettingsRepository.DEFAULT_TEXT_SCALE)
+    val announceStatus by messagingRepository.announceStatus().collectAsState(initial = null)
 
     val tcpEnabled by interfaceController.tcpEnabled.collectAsState()
     val bluetoothMeshEnabled by interfaceController.bluetoothMeshEnabled.collectAsState()
@@ -183,6 +194,39 @@ fun SettingsScreen(
                     checked = nodeHostingEnabled,
                     onCheckedChange = { scope.launch { interfaceController.setNodeHostingEnabled(it) } },
                 )
+            }
+
+            item { HorizontalDivider() }
+            item { SectionHeader("Announce") }
+            announceStatus?.let { status ->
+                item {
+                    AnnounceOverview(
+                        status = status,
+                        onAnnounceNow = { scope.launch { messagingRepository.announceNow() } },
+                    )
+                }
+                items(
+                    listOf(
+                        Triple("Bluetooth mesh", AnnounceStatus.INTERFACE_BLUETOOTH, status.interfaces[AnnounceStatus.INTERFACE_BLUETOOTH]),
+                        Triple("RNode", AnnounceStatus.INTERFACE_RNODE, status.interfaces[AnnounceStatus.INTERFACE_RNODE]),
+                        Triple("TCP", AnnounceStatus.INTERFACE_TCP, status.interfaces[AnnounceStatus.INTERFACE_TCP]),
+                    ),
+                    key = { it.second },
+                ) { (label, key, config) ->
+                    if (config != null) {
+                        InterfaceAnnounceSection(
+                            label = label,
+                            config = config,
+                            onAnnounceMaxChange = { scope.launch { messagingRepository.setAnnounceMax(key, it) } },
+                            onAutoAnnounceEnabledChange = {
+                                scope.launch { messagingRepository.setAutoAnnounceEnabled(key, it) }
+                            },
+                            onAutoAnnounceIntervalChange = {
+                                scope.launch { messagingRepository.setAutoAnnounceInterval(key, it) }
+                            },
+                        )
+                    }
+                }
             }
 
             item { HorizontalDivider() }
@@ -316,5 +360,146 @@ private fun ToggleRow(
     ) {
         Text(text = label, style = MaterialTheme.typography.bodyLarge)
         Switch(checked = checked, onCheckedChange = onCheckedChange)
+    }
+}
+
+/**
+ * Identity summary + manual trigger for the Announce section — the LXMF
+ * address, how long since the last announce, and (per explicit design:
+ * "messages need to have a note that you wont be allowed to send if it
+ * is disabled") a persistent warning banner whenever
+ * [AnnounceStatus.sendBlocked] is true, so this is visible before the
+ * user even opens a conversation and tries to send, not just as a
+ * reactive error afterward.
+ */
+@Composable
+private fun AnnounceOverview(status: AnnounceStatus, onAnnounceNow: () -> Unit) {
+    Column(modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp)) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = status.lxmfAddress?.let { "LXMF: ${it.take(16)}…" } ?: "LXMF address not ready yet",
+                    style = MaterialTheme.typography.bodyLarge,
+                )
+                Text(
+                    text = status.lastAnnounceAtMillis?.let { "Last announced ${formatSince(it)} ago" }
+                        ?: "Never announced yet",
+                    style = MaterialTheme.typography.bodyLarge.copy(
+                        fontSize = MaterialTheme.typography.bodyLarge.fontSize * 0.8f,
+                    ),
+                    color = NomadTextDim,
+                )
+            }
+            TextButton(onClick = onAnnounceNow) { Text("Announce now") }
+        }
+        if (status.sendBlocked) {
+            Text(
+                text = status.sendBlockedReason ?: "Sending is currently blocked.",
+                style = MaterialTheme.typography.bodyLarge.copy(
+                    fontSize = MaterialTheme.typography.bodyLarge.fontSize * 0.85f,
+                ),
+                color = MaterialTheme.colorScheme.error,
+                modifier = Modifier.padding(top = 4.dp),
+            )
+        }
+    }
+}
+
+/**
+ * One interface's own announce policy — two independent controls per
+ * [InterfaceAnnounceConfig]'s own doc comment: "announce max" (how stale
+ * before a send needs a fresh announce first) and auto-announce
+ * (enabled + its own interval, proactive re-announcing independent of
+ * sending). Both durations use preset chips rather than a continuous
+ * Slider — the useful range here (1 minute to 24 hours) is too wide for
+ * fine drag control at the low end on a linear slider, and these are
+ * naturally "pick a sensible bucket" values, not continuously-tunable
+ * ones.
+ */
+@Composable
+private fun InterfaceAnnounceSection(
+    label: String,
+    config: InterfaceAnnounceConfig,
+    onAnnounceMaxChange: (Int) -> Unit,
+    onAutoAnnounceEnabledChange: (Boolean) -> Unit,
+    onAutoAnnounceIntervalChange: (Int) -> Unit,
+) {
+    Column(modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)) {
+        Text(text = label, style = MaterialTheme.typography.bodyLarge, color = MaterialTheme.colorScheme.secondary)
+
+        Text(
+            text = "Announce max: ${formatDuration(config.announceMaxSeconds)}",
+            style = MaterialTheme.typography.bodyLarge.copy(fontSize = MaterialTheme.typography.bodyLarge.fontSize * 0.85f),
+            modifier = Modifier.padding(top = 6.dp),
+        )
+        DurationPresetRow(selectedSeconds = config.announceMaxSeconds, onSelect = onAnnounceMaxChange)
+
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text(
+                text = "Auto-announce",
+                style = MaterialTheme.typography.bodyLarge.copy(fontSize = MaterialTheme.typography.bodyLarge.fontSize * 0.85f),
+            )
+            Switch(checked = config.autoAnnounceEnabled, onCheckedChange = onAutoAnnounceEnabledChange)
+        }
+        if (config.autoAnnounceEnabled) {
+            Text(
+                text = "Auto-announce every: ${formatDuration(config.autoAnnounceIntervalSeconds)}",
+                style = MaterialTheme.typography.bodyLarge.copy(fontSize = MaterialTheme.typography.bodyLarge.fontSize * 0.85f),
+            )
+            DurationPresetRow(selectedSeconds = config.autoAnnounceIntervalSeconds, onSelect = onAutoAnnounceIntervalChange)
+        }
+    }
+}
+
+private val DURATION_PRESETS_SECONDS = listOf(
+    15 * 60, 30 * 60, 60 * 60, 2 * 60 * 60, 6 * 60 * 60, 12 * 60 * 60, 24 * 60 * 60,
+)
+
+@Composable
+private fun DurationPresetRow(selectedSeconds: Int, onSelect: (Int) -> Unit) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .horizontalScroll(rememberScrollState())
+            .padding(vertical = 4.dp),
+        horizontalArrangement = Arrangement.spacedBy(6.dp),
+    ) {
+        DURATION_PRESETS_SECONDS.forEach { seconds ->
+            FilterChip(
+                selected = seconds == selectedSeconds,
+                onClick = { onSelect(seconds) },
+                label = {
+                    Text(
+                        formatDuration(seconds),
+                        style = MaterialTheme.typography.bodyLarge.copy(fontSize = MaterialTheme.typography.bodyLarge.fontSize * 0.75f),
+                    )
+                },
+                colors = FilterChipDefaults.filterChipColors(),
+            )
+        }
+    }
+}
+
+private fun formatDuration(seconds: Int): String = when {
+    seconds < 3600 -> "${seconds / 60}m"
+    seconds % 3600 == 0 -> "${seconds / 3600}h"
+    else -> "${seconds / 60}m"
+}
+
+/** Caller (AnnounceOverview) appends " ago" itself — bare duration only. */
+private fun formatSince(millis: Long): String {
+    val diffSeconds = ((System.currentTimeMillis() - millis) / 1000).coerceAtLeast(0)
+    return when {
+        diffSeconds < 3600 -> "${diffSeconds / 60}m"
+        diffSeconds < 86_400 -> "${diffSeconds / 3600}h"
+        else -> "${diffSeconds / 86_400}d"
     }
 }

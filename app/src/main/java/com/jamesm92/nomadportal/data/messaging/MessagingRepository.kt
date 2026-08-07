@@ -34,4 +34,21 @@ interface MessagingRepository {
 
     /** Synchronous lookup — contact display data (name/icon) for a known hash, or null if not found. */
     fun contact(contactHash: String): Contact?
+
+    /**
+     * Auto-announce status/config, per interface — see [AnnounceStatus]'s
+     * own doc comment for why this exists at all (announcing at least
+     * once is an LXMF protocol requirement for this identity to be
+     * reachable, not just a cosmetic feature).
+     */
+    fun announceStatus(): Flow<AnnounceStatus>
+
+    /** [interfaceKey] is one of [AnnounceStatus.INTERFACE_BLUETOOTH]/
+     * [AnnounceStatus.INTERFACE_RNODE]/[AnnounceStatus.INTERFACE_TCP]. */
+    suspend fun setAnnounceMax(interfaceKey: String, seconds: Int)
+    suspend fun setAutoAnnounceEnabled(interfaceKey: String, enabled: Boolean)
+    suspend fun setAutoAnnounceInterval(interfaceKey: String, seconds: Int)
+
+    /** Manual "Announce now" trigger. Returns true on success. */
+    suspend fun announceNow(): Boolean
 }

@@ -18,6 +18,7 @@ import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
@@ -67,9 +68,11 @@ fun ConversationScreen(
     onBack: () -> Unit,
 ) {
     val messages by repository.messages(contact.lxmfHash).collectAsState(initial = emptyList())
+    val announceStatus by repository.announceStatus().collectAsState(initial = null)
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
     var draft by remember { mutableStateOf("") }
+    var sendError by remember { mutableStateOf<String?>(null) }
 
     LaunchedEffect(contact.lxmfHash) {
         repository.markRead(contact.lxmfHash)
@@ -119,6 +122,24 @@ fun ConversationScreen(
                 }
             }
 
+            // Proactive warning, per explicit design direction ("messages
+            // need to have a note that you wont be allowed to send if it
+            // is disabled") — shown before the user even tries to send,
+            // not just reacted to after a failed attempt. sendError below
+            // (a real send failure) is the reactive fallback for whatever
+            // this proactive check couldn't predict.
+            val blockedNote = announceStatus?.takeIf { it.sendBlocked }?.sendBlockedReason
+            (blockedNote ?: sendError)?.let { note ->
+                Text(
+                    text = note,
+                    style = MaterialTheme.typography.bodyLarge.copy(
+                        fontSize = MaterialTheme.typography.bodyLarge.fontSize * 0.85f,
+                    ),
+                    color = MaterialTheme.colorScheme.error,
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 4.dp),
+                )
+            }
+
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -133,11 +154,17 @@ fun ConversationScreen(
                     placeholder = { Text("Message") },
                     keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send),
                     keyboardActions = KeyboardActions(onSend = {
-                        sendDraft(draft, contact.lxmfHash, repository, scope) { draft = "" }
+                        sendDraft(draft, contact.lxmfHash, repository, scope, onError = { sendError = it }) {
+                            draft = ""
+                            sendError = null
+                        }
                     }),
                 )
                 IconButton(onClick = {
-                    sendDraft(draft, contact.lxmfHash, repository, scope) { draft = "" }
+                    sendDraft(draft, contact.lxmfHash, repository, scope, onError = { sendError = it }) {
+                        draft = ""
+                        sendError = null
+                    }
                 }) {
                     Icon(Icons.AutoMirrored.Filled.Send, contentDescription = "Send")
                 }
@@ -151,10 +178,22 @@ private fun sendDraft(
     contactHash: String,
     repository: MessagingRepository,
     scope: kotlinx.coroutines.CoroutineScope,
+    onError: (String) -> Unit,
     onSent: () -> Unit,
 ) {
     val trimmed = draft.trim()
     if (trimmed.isEmpty()) return
-    scope.launch { repository.sendMessage(contactHash, trimmed) }
-    onSent()
+    scope.launch {
+        try {
+            repository.sendMessage(contactHash, trimmed)
+            onSent()
+        } catch (e: Exception) {
+            // Reactive fallback for whatever the proactive
+            // AnnounceStatus.sendBlocked check above didn't predict
+            // (e.g. a send-blocked message from send_message() itself,
+            // or any other failure) — the draft is deliberately NOT
+            // cleared here, so the user doesn't lose what they typed.
+            onError(e.message ?: "Failed to send message")
+        }
+    }
 }

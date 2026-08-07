@@ -48,6 +48,7 @@ fun NomadNavHost(
             SettingsScreen(
                 interfaceController = interfaceController,
                 settingsRepository = settingsRepository,
+                messagingRepository = messagingRepository,
                 onBack = { navController.popBackStack() },
             )
         }
