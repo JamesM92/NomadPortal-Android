@@ -337,7 +337,9 @@ private fun IdentityIconPreview(
     }
 }
 
-private enum class ColorSection { BACKGROUND, FOREGROUND }
+/** The three accordion sections [IconAppearanceEditor] toggles between —
+ * only one expanded at a time (see that function's own doc comment). */
+private enum class EditorSection { BACKGROUND, FOREGROUND, ICON }
 
 /** Collapsed-by-default color picker: a tappable one-line summary (swatch
  * dot + label + chevron) that expands to the full [ColorSwatchRow] grid
@@ -381,6 +383,51 @@ private fun CompactColorRow(
     }
 }
 
+/** Same collapsed-by-default convention as [CompactColorRow], for the
+ * icon section: a preview circle (rendered in the currently-selected
+ * colors, same as each row inside the expanded list) + the current
+ * icon's name + chevron. The actual search/list/Save UI it expands to
+ * is rendered by [IconAppearanceEditor] itself, not here — this is only
+ * the one-line summary row. */
+@Composable
+private fun CompactIconRow(
+    glyphName: String,
+    background: Color,
+    foreground: Color,
+    expanded: Boolean,
+    onToggle: () -> Unit,
+) {
+    val vector = remember(glyphName) { materialIconFor(glyphName) }
+    Row(
+        modifier = Modifier.fillMaxWidth().clickable(onClick = onToggle),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        Box(
+            modifier = Modifier
+                .size(24.dp)
+                .clip(CircleShape)
+                .background(background)
+                .border(1.dp, NomadBg3, CircleShape),
+            contentAlignment = Alignment.Center,
+        ) {
+            if (vector != null) {
+                Icon(imageVector = vector, contentDescription = null, tint = foreground, modifier = Modifier.size(14.dp))
+            }
+        }
+        Text(
+            text = "Icon: ${glyphName.replace('_', ' ')}",
+            style = MaterialTheme.typography.bodyLarge,
+            modifier = Modifier.weight(1f),
+        )
+        Icon(
+            imageVector = if (expanded) Icons.Filled.ExpandLess else Icons.Filled.ExpandMore,
+            contentDescription = if (expanded) "Collapse" else "Change icon",
+            tint = NomadTextDim,
+        )
+    }
+}
+
 /** Preset background/foreground swatches offered by the editor below —
  * a small curated palette (this app's own accent colors plus basics)
  * rather than a full RGB picker, matching the rest of this app's
@@ -392,20 +439,22 @@ private val ICON_COLOR_SWATCHES = listOf(
 )
 
 /**
- * Inline editor for this device's own [ContactIcon.Appearance]. Order
- * is deliberate, per explicit direction: background color, then
- * foreground color, *then* a searchable vertical list of every icon
- * name this app can resolve ([ICON_APPEARANCE_NAMES] — now the full
- * [com.jamesm92.nomadportal.data.messaging.materialIconFor] catalog,
- * search is what makes browsing that practical) — colors first so each
- * icon row can preview itself live in the colors already chosen, rather
- * than picking an icon before knowing what it'll actually look like.
+ * Inline editor for this device's own [ContactIcon.Appearance] — three
+ * accordion sections (background color, foreground color, icon), only
+ * one expanded at a time, per explicit direction: the icon picker
+ * itself "still needs to be a collapsed view" (a compact preview row
+ * like the color rows already were, not always-expanded), and opening
+ * it should mean "only icons are in view" — expanding one section via
+ * [expandedSection] structurally collapses whichever other section was
+ * open, so the icon list is never sharing screen space with a color
+ * grid above it.
  *
- * Tapping an icon saves and closes immediately — there's no separate
- * bottom Save button. A dedicated Cancel only, up in a header row: a
- * real on-device report found a Save/Cancel row below a tall searchable
- * list landed off-screen, needing a scroll past the whole list to reach
- * it.
+ * The icon section keeps its own bottom Save/Cancel row *inside* the
+ * expanded section, not floating at the whole editor's very bottom —
+ * that's specifically what avoided the earlier real on-device report
+ * (Save landing off-screen below a tall list): the list is the only
+ * other thing visible while it's open, so Save is always right below
+ * it, never buried under two more open sections above.
  */
 @Composable
 private fun IconAppearanceEditor(
@@ -419,29 +468,28 @@ private fun IconAppearanceEditor(
     var selectedBg by remember(current) { mutableStateOf(current?.backgroundColor ?: NomadAccent) }
     var selectedFg by remember(current) { mutableStateOf(current?.foregroundColor ?: Color.White) }
     var searchQuery by remember { mutableStateOf("") }
-    // Which color section (if any) is showing its full swatch grid —
-    // per explicit direction, a color is "assumed already picked" (both
-    // start with a real default, never blank) so the swatch grid stays
-    // collapsed to a compact one-line summary until tapped open, rather
-    // than permanently occupying space above the icon list/keyboard.
-    // Picking a swatch collapses it back down immediately.
-    var expandedColorSection by remember { mutableStateOf<ColorSection?>(null) }
+    // Accordion: only one of the three sections is ever expanded at
+    // once — see this function's own doc comment.
+    var expandedSection by remember { mutableStateOf<EditorSection?>(null) }
 
     val filteredNames = remember(searchQuery) {
         val q = searchQuery.trim().lowercase().replace(' ', '_')
         if (q.isBlank()) ICON_APPEARANCE_NAMES else ICON_APPEARANCE_NAMES.filter { it.contains(q) }
     }
 
-    // Scrolls to whatever's already selected every time this editor is
-    // (re)opened — per explicit request — rather than always starting
-    // back at the front of the list, which previously meant re-finding
-    // your own icon by scrolling every single time. Only meaningful
-    // against the unfiltered list (search starts blank each open).
+    // Scrolls to whatever's already selected every time the icon
+    // section is (re)opened — per explicit request — rather than always
+    // starting back at the front of the list, which previously meant
+    // re-finding your own icon by scrolling every single time. Only
+    // meaningful against the unfiltered list (search starts blank each
+    // open).
     val listState = rememberLazyListState()
-    LaunchedEffect(Unit) {
-        val index = ICON_APPEARANCE_NAMES.indexOf(selectedGlyph)
-        if (index >= 0) {
-            listState.scrollToItem(index)
+    LaunchedEffect(expandedSection) {
+        if (expandedSection == EditorSection.ICON) {
+            val index = ICON_APPEARANCE_NAMES.indexOf(selectedGlyph)
+            if (index >= 0) {
+                listState.scrollToItem(index)
+            }
         }
     }
 
@@ -453,13 +501,6 @@ private fun IconAppearanceEditor(
             .padding(12.dp),
         verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
-        // Cancel lives up here, not a bottom row — per a real on-device
-        // report, a Save/Cancel row below a tall searchable icon list
-        // ended up off-screen (had to scroll past the whole list to
-        // reach it). Picking an icon below now saves immediately (see
-        // that row's own onClick), so Cancel is the only action left
-        // that needs a dedicated control, and it's reachable without
-        // scrolling either way.
         Row(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.End,
@@ -470,106 +511,120 @@ private fun IconAppearanceEditor(
         CompactColorRow(
             label = "Background color",
             selected = selectedBg,
-            expanded = expandedColorSection == ColorSection.BACKGROUND,
+            expanded = expandedSection == EditorSection.BACKGROUND,
             onToggle = {
-                expandedColorSection = if (expandedColorSection == ColorSection.BACKGROUND) {
+                expandedSection = if (expandedSection == EditorSection.BACKGROUND) {
                     null
                 } else {
-                    ColorSection.BACKGROUND
+                    EditorSection.BACKGROUND
                 }
             },
             onSelect = {
                 selectedBg = it
-                expandedColorSection = null
+                expandedSection = null
             },
         )
 
         CompactColorRow(
             label = "Icon color",
             selected = selectedFg,
-            expanded = expandedColorSection == ColorSection.FOREGROUND,
+            expanded = expandedSection == EditorSection.FOREGROUND,
             onToggle = {
-                expandedColorSection = if (expandedColorSection == ColorSection.FOREGROUND) {
+                expandedSection = if (expandedSection == EditorSection.FOREGROUND) {
                     null
                 } else {
-                    ColorSection.FOREGROUND
+                    EditorSection.FOREGROUND
                 }
             },
             onSelect = {
                 selectedFg = it
-                expandedColorSection = null
+                expandedSection = null
             },
         )
 
-        Text(text = "Choose an icon", style = MaterialTheme.typography.bodyLarge)
-        SearchField(
-            query = searchQuery,
-            onQueryChange = { searchQuery = it },
-            placeholder = "Search icons",
-            modifier = Modifier.fillMaxWidth(),
+        CompactIconRow(
+            glyphName = selectedGlyph,
+            background = selectedBg,
+            foreground = selectedFg,
+            expanded = expandedSection == EditorSection.ICON,
+            onToggle = {
+                expandedSection = if (expandedSection == EditorSection.ICON) null else EditorSection.ICON
+            },
         )
-        // Bounded height — this list nests inside HomeScreen's own
-        // verticalScroll Column, so an unbounded LazyColumn here would
-        // conflict with that outer scroll's own height constraints
-        // (same reasoning as NodeListScreen's bounded Favorites pane).
-        LazyColumn(state = listState, modifier = Modifier.fillMaxWidth().heightIn(max = 320.dp)) {
-            items(filteredNames, key = { it }) { name ->
-                val vector = materialIconFor(name)
-                if (vector != null) {
-                    val isSelected = name == selectedGlyph
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            // Saves immediately on tap — see this
-                            // function's own doc comment for why there's
-                            // no separate bottom Save button anymore.
-                            .clickable { onSave(name, selectedFg, selectedBg) }
-                            .background(
-                                if (isSelected) {
-                                    MaterialTheme.colorScheme.secondary.copy(alpha = 0.15f)
-                                } else {
-                                    Color.Transparent
-                                },
-                            )
-                            .padding(vertical = 6.dp, horizontal = 4.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(12.dp),
-                    ) {
-                        // Live-updates with the colors selected above —
-                        // per explicit request ("icons in list shoukd
-                        // update based on the colors selected") — free
-                        // from Compose's own recomposition since this
-                        // reads the same selectedBg/selectedFg state.
-                        Box(
+
+        if (expandedSection == EditorSection.ICON) {
+            SearchField(
+                query = searchQuery,
+                onQueryChange = { searchQuery = it },
+                placeholder = "Search icons",
+                modifier = Modifier.fillMaxWidth(),
+            )
+            // Bounded height — this list nests inside HomeScreen's own
+            // verticalScroll Column, so an unbounded LazyColumn here
+            // would conflict with that outer scroll's own height
+            // constraints (same reasoning as NodeListScreen's bounded
+            // Favorites pane).
+            LazyColumn(state = listState, modifier = Modifier.fillMaxWidth().heightIn(max = 320.dp)) {
+                items(filteredNames, key = { it }) { name ->
+                    val vector = materialIconFor(name)
+                    if (vector != null) {
+                        val isSelected = name == selectedGlyph
+                        Row(
                             modifier = Modifier
-                                .size(36.dp)
-                                .clip(CircleShape)
-                                .background(selectedBg),
-                            contentAlignment = Alignment.Center,
+                                .fillMaxWidth()
+                                .clickable { selectedGlyph = name }
+                                .background(
+                                    if (isSelected) {
+                                        MaterialTheme.colorScheme.secondary.copy(alpha = 0.15f)
+                                    } else {
+                                        Color.Transparent
+                                    },
+                                )
+                                .padding(vertical = 6.dp, horizontal = 4.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(12.dp),
                         ) {
-                            Icon(
-                                imageVector = vector,
-                                contentDescription = null,
-                                tint = selectedFg,
-                                modifier = Modifier.size(20.dp),
+                            // Live-updates with the colors selected
+                            // above — free from Compose's own
+                            // recomposition since this reads the same
+                            // selectedBg/selectedFg state.
+                            Box(
+                                modifier = Modifier
+                                    .size(36.dp)
+                                    .clip(CircleShape)
+                                    .background(selectedBg),
+                                contentAlignment = Alignment.Center,
+                            ) {
+                                Icon(
+                                    imageVector = vector,
+                                    contentDescription = null,
+                                    tint = selectedFg,
+                                    modifier = Modifier.size(20.dp),
+                                )
+                            }
+                            Text(
+                                text = name.replace('_', ' '),
+                                style = MaterialTheme.typography.bodyLarge.copy(
+                                    fontSize = MaterialTheme.typography.bodyLarge.fontSize * 0.85f,
+                                ),
+                                modifier = Modifier.weight(1f),
                             )
-                        }
-                        Text(
-                            text = name.replace('_', ' '),
-                            style = MaterialTheme.typography.bodyLarge.copy(
-                                fontSize = MaterialTheme.typography.bodyLarge.fontSize * 0.85f,
-                            ),
-                            modifier = Modifier.weight(1f),
-                        )
-                        if (isSelected) {
-                            Icon(
-                                imageVector = Icons.Filled.Check,
-                                contentDescription = "Selected",
-                                tint = MaterialTheme.colorScheme.secondary,
-                            )
+                            if (isSelected) {
+                                Icon(
+                                    imageVector = Icons.Filled.Check,
+                                    contentDescription = "Selected",
+                                    tint = MaterialTheme.colorScheme.secondary,
+                                )
+                            }
                         }
                     }
                 }
+            }
+            // Save lives right here, directly below the list — per
+            // explicit direction — never below anything else, since the
+            // color sections are always collapsed while this one's open.
+            Row(horizontalArrangement = Arrangement.End, modifier = Modifier.fillMaxWidth()) {
+                Button(onClick = { onSave(selectedGlyph, selectedFg, selectedBg) }) { Text("Save") }
             }
         }
     }

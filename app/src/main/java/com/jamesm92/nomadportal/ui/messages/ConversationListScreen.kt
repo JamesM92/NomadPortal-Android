@@ -29,6 +29,7 @@ import androidx.compose.material.icons.filled.FavoriteBorder
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.LocalMinimumInteractiveComponentSize
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -38,6 +39,7 @@ import androidx.compose.material3.Tab
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -508,20 +510,30 @@ private fun ConversationRow(
                 )
             }
         }
-        IconButton(onClick = onToggleFavorite) {
-            Icon(
-                imageVector = if (summary.contact.isFavorite) Icons.Filled.Favorite else Icons.Filled.FavoriteBorder,
-                contentDescription = if (summary.contact.isFavorite) "Unfavorite" else "Favorite",
-                tint = if (summary.contact.isFavorite) MaterialTheme.colorScheme.primary else NomadTextDim,
-            )
-        }
-        if (onDelete != null) {
-            IconButton(onClick = onDelete) {
+        // Zeroed touch-target reservation — without it, IconButton pads
+        // itself out to the ~48dp accessibility minimum regardless of
+        // the icon's own size, which read as way too much horizontal
+        // space on either side of these two in a dense row (real
+        // on-device report). Same fix as every other compact icon
+        // control in this app (BrowserScreen's nav row, the TCP table).
+        CompositionLocalProvider(LocalMinimumInteractiveComponentSize provides 0.dp) {
+            IconButton(onClick = onToggleFavorite, modifier = Modifier.size(32.dp)) {
                 Icon(
-                    imageVector = Icons.Filled.Delete,
-                    contentDescription = "Delete chat",
-                    tint = NomadTextDim,
+                    imageVector = if (summary.contact.isFavorite) Icons.Filled.Favorite else Icons.Filled.FavoriteBorder,
+                    contentDescription = if (summary.contact.isFavorite) "Unfavorite" else "Favorite",
+                    tint = if (summary.contact.isFavorite) MaterialTheme.colorScheme.primary else NomadTextDim,
+                    modifier = Modifier.size(20.dp),
                 )
+            }
+            if (onDelete != null) {
+                IconButton(onClick = onDelete, modifier = Modifier.size(32.dp)) {
+                    Icon(
+                        imageVector = Icons.Filled.Delete,
+                        contentDescription = "Delete chat",
+                        tint = NomadTextDim,
+                        modifier = Modifier.size(20.dp),
+                    )
+                }
             }
         }
     }
