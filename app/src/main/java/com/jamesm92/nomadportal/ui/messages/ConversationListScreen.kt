@@ -231,12 +231,15 @@ fun ConversationListScreen(
                 .padding(top = innerPadding.calculateTopPadding())
                 .dismissKeyboardOnTap(),
         ) {
-            SearchField(
-                query = searchQuery,
-                onQueryChange = { searchQuery = it },
-                placeholder = if (selectedTab == 0) "Search chats" else "Search users",
-            )
-            SortDropdown(selected = sortOption, onSelect = { sortOption = it })
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                SearchField(
+                    query = searchQuery,
+                    onQueryChange = { searchQuery = it },
+                    placeholder = if (selectedTab == 0) "Search chats" else "Search users",
+                    modifier = Modifier.weight(1f),
+                )
+                SortDropdown(selected = sortOption, onSelect = { sortOption = it })
+            }
 
             if (selectedTab == 0) {
                 // Headers always outside any LazyColumn — always visible,

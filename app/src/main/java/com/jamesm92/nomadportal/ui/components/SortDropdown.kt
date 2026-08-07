@@ -4,7 +4,6 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.material.icons.Icons
@@ -27,9 +26,12 @@ import com.jamesm92.nomadportal.ui.theme.NomadTextDim
 /**
  * Shared sort selector for [com.jamesm92.nomadportal.ui.browser.NodeListScreen]
  * and [com.jamesm92.nomadportal.ui.messages.ConversationListScreen] — sits
- * directly below each screen's [SearchField], per explicit request ("in
- * line with the search bars should be a sort drop down"). The four
- * options apply identically in concept to both screens (nodes and
+ * inline at the end of each screen's [SearchField] row, per explicit
+ * request (tried as its own full-width row below the search bar first;
+ * moved inline right after). Wraps its own content rather than filling
+ * available width, so it sits compactly at the end of a `Row` shared
+ * with the search field instead of claiming a whole row for itself. The
+ * four options apply identically in concept to both screens (nodes and
  * contacts both carry a recency/name/hop-count/announce-count), even
  * though the two screens sort two different item types — each screen
  * supplies its own comparator, this only owns the selection UI/state.
@@ -51,14 +53,17 @@ fun SortDropdown(
     Box(modifier = modifier) {
         Row(
             modifier = Modifier
-                .fillMaxWidth()
                 .clickable { expanded = true }
-                .padding(horizontal = 16.dp, vertical = 6.dp),
+                .padding(horizontal = 8.dp, vertical = 6.dp),
             verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.SpaceBetween,
+            horizontalArrangement = Arrangement.spacedBy(2.dp),
         ) {
+            // No "Sort:" prefix now that this sits inline next to the
+            // search field instead of on its own full-width row — there
+            // isn't room for it, and the icon's contentDescription still
+            // carries that context for accessibility.
             Text(
-                text = "Sort: ${selected.label}",
+                text = selected.label,
                 style = MaterialTheme.typography.bodyLarge.copy(
                     fontSize = MaterialTheme.typography.bodyLarge.fontSize * 0.75f,
                 ),

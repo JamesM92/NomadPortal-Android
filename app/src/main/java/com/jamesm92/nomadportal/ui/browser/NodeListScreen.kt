@@ -166,12 +166,15 @@ fun NodeListScreen(
                 .padding(top = innerPadding.calculateTopPadding())
                 .dismissKeyboardOnTap(),
         ) {
-            SearchField(
-                query = searchQuery,
-                onQueryChange = { searchQuery = it },
-                placeholder = "Search nodes",
-            )
-            SortDropdown(selected = sortOption, onSelect = { sortOption = it })
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                SearchField(
+                    query = searchQuery,
+                    onQueryChange = { searchQuery = it },
+                    placeholder = "Search nodes",
+                    modifier = Modifier.weight(1f),
+                )
+                SortDropdown(selected = sortOption, onSelect = { sortOption = it })
+            }
 
             // Header always outside any LazyColumn — always visible,
             // always tappable, regardless of dominance state. While
