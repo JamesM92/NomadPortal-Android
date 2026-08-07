@@ -47,6 +47,7 @@ import com.jamesm92.nomadportal.ui.components.AdaptiveTopAppBar
 import com.jamesm92.nomadportal.ui.components.ContactAvatar
 import com.jamesm92.nomadportal.ui.components.PanicWipeLogo
 import com.jamesm92.nomadportal.ui.components.dismissKeyboardOnTap
+import com.jamesm92.nomadportal.ui.theme.NomadTextDim
 import kotlinx.coroutines.launch
 
 /**
@@ -167,14 +168,31 @@ fun ConversationScreen(
                                 Icon(Icons.Filled.Close, contentDescription = "Cancel")
                             }
                         } else {
-                            Text(
-                                text = liveContact.displayName,
-                                style = MaterialTheme.typography.bodyLarge.copy(
-                                    fontSize = MaterialTheme.typography.bodyLarge.fontSize * 0.9f,
-                                ),
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis,
-                            )
+                            Column(modifier = Modifier.weight(1f, fill = false)) {
+                                Text(
+                                    text = liveContact.displayName,
+                                    style = MaterialTheme.typography.bodyLarge.copy(
+                                        fontSize = MaterialTheme.typography.bodyLarge.fontSize * 0.9f,
+                                    ),
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                )
+                                // Full LXMF address, per explicit request
+                                // — small enough plus no-wrap/ellipsis to
+                                // always stay a single line across the
+                                // top rather than pushing the header
+                                // taller.
+                                Text(
+                                    text = liveContact.lxmfHash,
+                                    style = MaterialTheme.typography.bodyLarge.copy(
+                                        fontSize = MaterialTheme.typography.bodyLarge.fontSize * 0.55f,
+                                    ),
+                                    color = NomadTextDim,
+                                    maxLines = 1,
+                                    softWrap = false,
+                                    overflow = TextOverflow.Ellipsis,
+                                )
+                            }
                             IconButton(onClick = { editingName = true }) {
                                 Icon(Icons.Filled.Edit, contentDescription = "Rename")
                             }
