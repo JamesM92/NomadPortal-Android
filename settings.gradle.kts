@@ -32,7 +32,18 @@ include(":app")
 // redirects it to build from source. When the library is actually
 // published, delete this block; the declared dependency coordinate in
 // app/build.gradle.kts doesn't need to change at all.
-includeBuild("../micron2compose") {
+//
+// Location is overridable via the MICRON2COMPOSE_DIR env var. Local dev
+// defaults to a true sibling checkout (../micron2compose) — this repo's
+// own dev-setup convention. CI can't use that: actions/checkout@v7
+// refuses to place a checkout outside $GITHUB_WORKSPACE (a real failure
+// hit here: "Repository path '.../micron2compose' is not under
+// '.../NomadPortal-Android'"), so ci.yml checks micron2compose out to a
+// subdirectory of this repo's own workspace instead and points this at
+// that via the env var — see ci.yml's matching comment on its own
+// checkout step.
+val micron2composeDir = System.getenv("MICRON2COMPOSE_DIR") ?: "../micron2compose"
+includeBuild(micron2composeDir) {
     dependencySubstitution {
         substitute(module("com.github.JamesM92:micron2compose"))
             .using(project(":micron2compose"))
