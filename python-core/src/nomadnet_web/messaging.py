@@ -19,17 +19,52 @@ log = logging.getLogger(__name__)
 PATH_WAIT = 10  # seconds to wait for identity recall after path request
 
 
-def _hex_to_bytes(value: str) -> bytes:
-    """Convert '#rrggbb' (or 'rrggbb') to a 3-byte color tuple. Falls back to grey."""
+def _channel_to_255(v) -> int:
+    """Normalise one FIELD_ICON_APPEARANCE color channel to a 0-255 int,
+    accepting either a 0-1 float (the real LXMF/Sideband convention — see
+    _rgba_to_hex's own doc comment) or an already-0-255 value."""
+    try:
+        v = float(v)
+    except (TypeError, ValueError):
+        return 128
+    if v <= 1.0:
+        v *= 255.0
+    return max(0, min(255, int(round(v))))
+
+
+def _rgba_to_hex(value) -> str:
+    """FIELD_ICON_APPEARANCE color channel -> '#rrggbb'.
+
+    Accepts the real LXMF/Sideband shape — a [r,g,b] or [r,g,b,a] sequence
+    of 0-1 floats, confirmed directly against Sideband's own
+    DEFAULT_APPEARANCE = ["account", [0,0,0,1], [1,1,1,1]] (Sideband is
+    LXMF's own reference client, by the same author as the LXMF library
+    itself) — plus a legacy 3-byte (0-255 int) tuple, for back-compat with
+    an earlier build of this app that sent that shape. Falls back to grey
+    for anything else.
+    """
+    if isinstance(value, (bytes, bytearray)) and len(value) >= 3:
+        return "#%02x%02x%02x" % (value[0], value[1], value[2])
+    if isinstance(value, (list, tuple)) and len(value) >= 3:
+        r, g, b = (_channel_to_255(value[i]) for i in range(3))
+        return "#%02x%02x%02x" % (r, g, b)
+    return "#888888"
+
+
+def _hex_to_rgba(value, alpha: float = 1.0) -> list:
+    """'#rrggbb' -> [r,g,b,a] with 0-1 float channels — the real LXMF/
+    Sideband FIELD_ICON_APPEARANCE color shape (see _rgba_to_hex). Falls
+    back to mid-grey for anything unparseable."""
     if not isinstance(value, str):
-        return b'\x80\x80\x80'
+        return [0.5, 0.5, 0.5, alpha]
     s = value.lstrip("#")
     if len(s) != 6:
-        return b'\x80\x80\x80'
+        return [0.5, 0.5, 0.5, alpha]
     try:
-        return bytes.fromhex(s)
+        r, g, b = bytes.fromhex(s)
     except ValueError:
-        return b'\x80\x80\x80'
+        return [0.5, 0.5, 0.5, alpha]
+    return [r / 255.0, g / 255.0, b / 255.0, alpha]
 
 
 def _detect_image_mime(data: bytes) -> str:
@@ -39,31 +74,6 @@ def _detect_image_mime(data: bytes) -> str:
     if data[:4] == b'RIFF' and data[8:12] == b'WEBP':        return "image/webp"
     if data[:5] == b'<?xml' or data[:4] == b'<svg':          return "image/svg+xml"
     return "image/png"
-
-
-def _render_appearance_svg(name, fg, bg) -> tuple:
-    """Render LXMF FIELD_ICON_APPEARANCE to (base64_svg, mime).
-
-    appearance is [icon_name, fg_color_bytes(3), bg_color_bytes(3)]. We produce
-    a 32×32 colored circle with the first letter of the icon name as a glyph
-    placeholder — material-symbol rendering would require shipping a webfont.
-    """
-    import base64
-    def _hex(c):
-        if isinstance(c, (bytes, bytearray)) and len(c) >= 3:
-            return "#%02x%02x%02x" % (c[0], c[1], c[2])
-        return "#888888"
-    fg_hex  = _hex(fg)
-    bg_hex  = _hex(bg)
-    initial = ((name[:1] if isinstance(name, str) else "") or "?").upper()
-    svg = (
-        '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">'
-        f'<circle cx="16" cy="16" r="16" fill="{bg_hex}"/>'
-        f'<text x="16" y="22" text-anchor="middle" font-size="18" '
-        f'font-family="sans-serif" font-weight="bold" fill="{fg_hex}">{initial}</text>'
-        '</svg>'
-    )
-    return base64.b64encode(svg.encode("utf-8")).decode("ascii"), "image/svg+xml"
 
 
 class MessagingService:
@@ -278,6 +288,20 @@ class MessagingService:
                 log.warning("Renamed identity but couldn't update live app_data: %s", exc)
         return True
 
+    def set_icon_appearance(self, glyph: str, fg_hex: str, bg_hex: str, user_sub: str = "") -> bool:
+        """Sets this user's own FIELD_ICON_APPEARANCE descriptor —
+        attached to every future outbound message via _deliver()'s
+        fields[0x04] construction above. Persisted only; unlike
+        set_display_name there's no live router state to refresh
+        immediately, since the icon rides along per-outgoing-message
+        rather than being baked into the destination itself."""
+        if self._identity_store is None:
+            return False
+        entry = self._identity_store.get_for_user(user_sub)
+        if entry is None:
+            return False
+        return self._identity_store.set_icon_appearance(entry["id"], glyph, fg_hex, bg_hex)
+
     def do_announce(self, user_sub: str = "") -> tuple[bool, str]:
         """Announce via the user's LXMRouter so app_data (display name) is included.
 
@@ -364,35 +388,38 @@ class MessagingService:
                 return ""
             return val.decode("utf-8", errors="replace") if isinstance(val, bytes) else str(val)
 
-        # Extract icon from LXMF fields. Two formats are supported:
-        #   FIELD_ICON_APPEARANCE (0x04) = [icon_name_str, fg_bytes(3), bg_bytes(3)]
-        #     — the MeshChat vector-icon descriptor. Rendered server-side to an SVG.
-        #   FIELD_IMAGE          (0x06) = [image_type_str, image_bytes]
-        #     — a raw image. Stored directly with detected MIME type.
-        # Some older clients may also send raw bytes under 0x04; we accept that too.
-        icon_b64  = None
-        icon_mime = "image/png"
+        # Extract icon from LXMF fields. A contact can carry either — never
+        # both — of two independent descriptors, matching real-world LXMF
+        # clients (Sideband/MeshChat):
+        #   FIELD_ICON_APPEARANCE (0x04) = [icon_name_str, fg_rgba, bg_rgba]
+        #     — a *live* icon descriptor (see _rgba_to_hex's own doc
+        #     comment for the real color shape). icon_name_str is meant to
+        #     be looked up against a Material-style icon set client-side
+        #     (see ContactAvatar.kt) — this layer stores the raw
+        #     descriptor, it does not rasterize it.
+        #   FIELD_IMAGE (0x06) = [image_type_str, image_bytes]
+        #     — an actual bitmap the peer supplied, stored as-is.
+        # Appearance is preferred when (implausibly) both are present,
+        # since it's the "live" descriptor.
+        icon_appearance = None  # (glyph, fg_hex, bg_hex) or None
+        icon_image = None       # (b64, mime) or None
         try:
-            import base64
             fields = getattr(message, "fields", None) or {}
             appearance = fields.get(0x04)
             image      = fields.get(0x06)
 
             if isinstance(appearance, list) and len(appearance) >= 3:
-                icon_b64, icon_mime = _render_appearance_svg(
-                    appearance[0], appearance[1], appearance[2]
-                )
-            elif isinstance(appearance, (bytes, bytearray)) and appearance:
-                icon_b64  = base64.b64encode(appearance).decode("ascii")
-                icon_mime = _detect_image_mime(appearance)
+                glyph = appearance[0] if isinstance(appearance[0], str) and appearance[0] else "?"
+                icon_appearance = (glyph, _rgba_to_hex(appearance[1]), _rgba_to_hex(appearance[2]))
             elif isinstance(image, list) and len(image) >= 2 and isinstance(image[1], (bytes, bytearray)):
-                icon_b64  = base64.b64encode(image[1]).decode("ascii")
+                import base64
                 ext = (image[0] or "").lower() if isinstance(image[0], str) else ""
-                icon_mime = {
+                mime = {
                     "jpg": "image/jpeg", "jpeg": "image/jpeg",
                     "png": "image/png",  "gif":  "image/gif",
                     "webp":"image/webp", "svg":  "image/svg+xml",
                 }.get(ext, _detect_image_mime(image[1]))
+                icon_image = (base64.b64encode(image[1]).decode("ascii"), mime)
         except Exception as exc:
             log.debug("Icon extraction skipped: %s", exc)
 
@@ -415,8 +442,16 @@ class MessagingService:
         if self._msg_store:
             self._msg_store.save_received(entry)
 
-        if icon_b64 and self._contact_mgr and source_hex and user_sub:
-            self._contact_mgr.for_user(user_sub).set_icon(source_hex, icon_b64, icon_mime)
+        # user_sub is "" for this app's single-user design — a bare
+        # `and user_sub` truthy check would silently never fire (the same
+        # bug pattern already found+fixed elsewhere in this codebase); the
+        # actual precondition is source_hex being non-empty, not user_sub.
+        if self._contact_mgr and source_hex:
+            store = self._contact_mgr.for_user(user_sub)
+            if icon_appearance:
+                store.set_icon_appearance(source_hex, *icon_appearance)
+            elif icon_image:
+                store.set_icon(source_hex, *icon_image)
 
     def _send(
         self,
@@ -492,15 +527,18 @@ class MessagingService:
                     "lxmf",
                     "delivery",
                 )
-                # Attach the sender's icon appearance if one is set.
+                # Attach the sender's icon appearance if one is set. Same
+                # user_sub="" gate bug as _on_delivery() above — user_sub
+                # is a valid (empty-string) key for this app's single-user
+                # design, not a falsy "no user" sentinel.
                 fields = {}
-                if self._identity_store and user_sub:
+                if self._identity_store:
                     icon = self._identity_store.get_icon_appearance_for_user(user_sub)
                     if icon:
                         fields[0x04] = [
                             icon.get("glyph", "?"),
-                            _hex_to_bytes(icon.get("fg", "#ffffff")),
-                            _hex_to_bytes(icon.get("bg", "#5ba3c9")),
+                            _hex_to_rgba(icon.get("fg", "#ffffff")),
+                            _hex_to_rgba(icon.get("bg", "#5ba3c9")),
                         ]
 
                 # Prefer OPPORTUNISTIC (single encrypted packet, no link needed).

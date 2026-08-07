@@ -1,5 +1,6 @@
 package com.jamesm92.nomadportal.data.messaging
 
+import androidx.compose.ui.graphics.Color
 import kotlinx.coroutines.flow.Flow
 
 /**
@@ -59,4 +60,11 @@ interface MessagingRepository {
 
     /** Renames this device's LXMF identity. Returns true on success. */
     suspend fun setDisplayName(name: String): Boolean
+
+    /** Sets this device's own FIELD_ICON_APPEARANCE — [glyphName] should
+     * be one of [ICON_APPEARANCE_NAMES] (the Home screen's glyph editor
+     * only offers names this app can actually resolve back to a real
+     * icon, per [materialIconFor]'s own doc comment). Returns true on
+     * success. */
+    suspend fun setIconAppearance(glyphName: String, foreground: Color, background: Color): Boolean
 }

@@ -157,11 +157,14 @@ class IdentityStore:
     # ------------------------------------------------------------------
 
     def set_icon_appearance(self, identity_id: str, glyph: str, fg_hex: str, bg_hex: str) -> bool:
-        """Store the user's icon descriptor: a single-char glyph and two hex colors."""
+        """Store this identity's icon descriptor: an icon name (looked up
+        against a Material-style icon set client-side — see
+        ContactAvatar.kt/IconAppearance.kt, not a literal single
+        character) and two hex colors."""
         entry = self._data.get(identity_id)
         if not entry:
             return False
-        glyph  = (glyph or "?")[:8].strip() or "?"
+        glyph  = (glyph or "?").strip()[:40] or "?"
         fg_hex = _normalise_hex(fg_hex, "#ffffff")
         bg_hex = _normalise_hex(bg_hex, "#5ba3c9")
         entry["icon"] = {"glyph": glyph, "fg": fg_hex, "bg": bg_hex}

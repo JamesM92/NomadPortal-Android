@@ -5,17 +5,14 @@ import androidx.compose.ui.graphics.Color
 /**
  * A contact in the LXMF address book. [icon] mirrors LXMF's two
  * appearance fields (porting-notes.md §4): the `0x04` icon-appearance
- * field (glyph name + color, the common case) and the `0x06` raw-image
- * field (an actual bitmap the peer supplied). As of Aug 2026,
- * [com.jamesm92.nomadportal.data.messaging.RealMessagingRepository]
- * backs this with real LXMF data — but `messaging.py` pre-renders a
- * `0x04` icon-appearance into a flat SVG server-side before it's ever
- * stored, so in practice [icon] only ever comes back as
- * [ContactIcon.RawImage] (SVG or raster) or [ContactIcon.None], never
- * [ContactIcon.Appearance] with a live glyph/color pair — see that
- * repository's own doc comment. [ContactIcon.Appearance] is only real for
- * [com.jamesm92.nomadportal.data.messaging.StubMessagingRepository]'s
- * fake data now.
+ * field (icon name + fg/bg colors — [ContactIcon.Appearance], resolved
+ * against a Material Icons Extended name via [materialIconFor] where
+ * possible, falling back to an initial-letter glyph otherwise — see
+ * [com.jamesm92.nomadportal.ui.components.ContactAvatar]) and the `0x06`
+ * raw-image field ([ContactIcon.RawImage], an actual bitmap the peer
+ * supplied). `messaging.py` stores both descriptors as structured data
+ * (never pre-flattened to an image), so both variants are real for
+ * [com.jamesm92.nomadportal.data.messaging.RealMessagingRepository].
  */
 data class Contact(
     val lxmfHash: String,
@@ -36,8 +33,18 @@ data class Contact(
 )
 
 sealed interface ContactIcon {
-    /** LXMF field `0x04`: an icon glyph name + a color, chosen by the contact. */
-    data class Appearance(val glyphName: String, val color: Color) : ContactIcon
+    /** LXMF field `0x04`: an icon name + fg/bg colors, chosen by the
+     * contact. [glyphName] is looked up against [materialIconFor]'s
+     * curated name table client-side (real-world icon names follow
+     * Sideband/Material Design Icons conventions like "account" or
+     * "hiking", a different namespace than Compose's own Material Icons
+     * Extended — see that function's doc comment) — no match falls back
+     * to an initial-letter glyph in [foregroundColor] instead. */
+    data class Appearance(
+        val glyphName: String,
+        val backgroundColor: Color,
+        val foregroundColor: Color = Color.White,
+    ) : ContactIcon
     /** LXMF field `0x06`: a raw image the contact supplied, not yet decoded/rendered here. */
     class RawImage(val bytes: ByteArray) : ContactIcon {
         // Not a data class: ByteArray needs content-aware equals/hashCode,
@@ -140,6 +147,12 @@ data class AnnounceStatus(
      * itself doesn't exist yet (shouldn't normally happen — one is
      * created at app startup). */
     val displayName: String?,
+    /** This device's own FIELD_ICON_APPEARANCE descriptor — null until
+     * set once via [MessagingRepository.setIconAppearance] on the Home
+     * screen's glyph editor; there is no default, matching this app's
+     * "authoritative toggle" philosophy of never fabricating identity
+     * data the user hasn't actually set. */
+    val iconAppearance: ContactIcon.Appearance?,
     val sendBlocked: Boolean,
     val sendBlockedReason: String?,
 ) {

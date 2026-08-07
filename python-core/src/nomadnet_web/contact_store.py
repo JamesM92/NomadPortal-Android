@@ -71,7 +71,7 @@ class ContactStore:
         return True
 
     def set_icon(self, hash_hex: str, icon_b64: str, icon_mime: str = "image/png") -> None:
-        """Store or update a contact's icon (base64-encoded bytes from FIELD_ICON_APPEARANCE)."""
+        """Store or update a contact's raw image icon (FIELD_IMAGE, 0x06)."""
         with self._lock:
             entry = self._data.get(hash_hex)
             if entry is None:
@@ -89,6 +89,36 @@ class ContactStore:
                 entry["icon"]      = icon_b64
                 entry["icon_mime"] = icon_mime
                 entry["updated"]   = time.time()
+            snapshot = dict(self._data)
+        self._persist(snapshot)
+
+    def set_icon_appearance(self, hash_hex: str, glyph: str, fg_hex: str, bg_hex: str) -> None:
+        """Store or update a contact's LXMF FIELD_ICON_APPEARANCE (0x04)
+        descriptor — an icon name plus two hex colors, meant to be looked
+        up against a Material-style icon set client-side (see
+        ContactAvatar.kt), not rasterized here."""
+        with self._lock:
+            entry = self._data.get(hash_hex)
+            if entry is None:
+                entry = {
+                    "hash":      hash_hex,
+                    "name":      hash_hex[:16],
+                    "note":      "",
+                    "favorited": False,
+                    "created":   time.time(),
+                    "updated":   time.time(),
+                }
+                self._data[hash_hex] = entry
+                log.info("Added contact (icon appearance) %s", hash_hex[:16])
+            if (
+                entry.get("icon_glyph") != glyph
+                or entry.get("icon_fg") != fg_hex
+                or entry.get("icon_bg") != bg_hex
+            ):
+                entry["icon_glyph"] = glyph
+                entry["icon_fg"]    = fg_hex
+                entry["icon_bg"]    = bg_hex
+                entry["updated"]    = time.time()
             snapshot = dict(self._data)
         self._persist(snapshot)
 

@@ -1,6 +1,7 @@
 package com.jamesm92.nomadportal.data.messaging
 
 import android.util.Base64
+import androidx.compose.ui.graphics.Color
 import com.chaquo.python.PyException
 import com.chaquo.python.Python
 import java.io.IOException
@@ -110,6 +111,16 @@ class RealMessagingRepository : MessagingRepository {
         orchestrator.callAttr("set_display_name", name).toBoolean()
     }
 
+    override suspend fun setIconAppearance(glyphName: String, foreground: Color, background: Color): Boolean =
+        withContext(Dispatchers.IO) {
+            orchestrator.callAttr(
+                "set_icon_appearance",
+                glyphName,
+                foreground.toHexString(),
+                background.toHexString(),
+            ).toBoolean()
+        }
+
     private fun fetchAnnounceStatus(): AnnounceStatus {
         val obj = JSONObject(orchestrator.callAttr("get_announce_status_json").toString())
         val interfacesObj = obj.getJSONObject("interfaces")
@@ -133,6 +144,15 @@ class RealMessagingRepository : MessagingRepository {
             },
             lxmfAddress = if (obj.isNull("lxmf_address")) null else obj.optString("lxmf_address"),
             displayName = if (obj.isNull("display_name")) null else obj.optString("display_name"),
+            iconAppearance = if (obj.isNull("icon_glyph")) {
+                null
+            } else {
+                ContactIcon.Appearance(
+                    glyphName = obj.getString("icon_glyph"),
+                    backgroundColor = parseHexColor(obj.optStringOrNull("icon_bg"), Color(0xFF888888)),
+                    foregroundColor = parseHexColor(obj.optStringOrNull("icon_fg"), Color.White),
+                )
+            },
             sendBlocked = obj.optBoolean("send_blocked", false),
             sendBlockedReason = if (obj.isNull("send_blocked_reason")) {
                 null
@@ -169,22 +189,35 @@ class RealMessagingRepository : MessagingRepository {
         return (0 until array.length()).map { i -> parseMessage(array.getJSONObject(i)) }
     }
 
+    /** `optString(key, null)` reads as a Java-platform `String!` to
+     * Kotlin, which infers `Nothing?` for a literal `null` argument and
+     * warns — this spells out the same "null when absent" behavior
+     * without that inference trap. */
+    private fun JSONObject.optStringOrNull(key: String): String? =
+        if (isNull(key)) null else optString(key)
+
     private fun parseContact(obj: JSONObject): Contact {
         val hash = obj.getString("hash")
-        val icon = if (obj.isNull("icon")) {
-            ContactIcon.None
-        } else {
-            // messaging.py stores whichever of LXMF's 0x04 (icon-
-            // appearance, pre-rendered into a flat SVG server-side —
-            // there's no separate glyph-name/color field surviving to
-            // read back) or 0x06 (raw image) fields arrived, base64-
-            // encoded, under the same `icon` key — see the
-            // orchestration-design memory. Both land as RawImage;
-            // ContactAvatar.kt doesn't decode/render RawImage bytes yet
-            // (falls back to initials) regardless of mime type, so an
-            // SVG payload here is inert, not broken — a real Compose SVG
-            // decoder is a separate, later piece of work.
+        // messaging.py stores a contact's icon as one of two mutually
+        // exclusive descriptors — 0x06 raw image (base64 bytes under
+        // `icon`) or 0x04 icon-appearance (structured `icon_glyph`/
+        // `icon_fg`/`icon_bg`, never rasterized server-side) — see
+        // contact_store.py's own doc comment. Raw image takes priority
+        // when (implausibly) both are present, matching messaging.py's
+        // own preference.
+        val icon = if (!obj.isNull("icon")) {
             ContactIcon.RawImage(Base64.decode(obj.getString("icon"), Base64.DEFAULT))
+        } else if (!obj.isNull("icon_glyph")) {
+            ContactIcon.Appearance(
+                glyphName = obj.getString("icon_glyph"),
+                // Grey fallback matches messaging.py's own "#888888"
+                // default (_rgba_to_hex) — kept consistent rather than
+                // pulling in a UI theme color from this data layer.
+                backgroundColor = parseHexColor(obj.optStringOrNull("icon_bg"), Color(0xFF888888)),
+                foregroundColor = parseHexColor(obj.optStringOrNull("icon_fg"), Color.White),
+            )
+        } else {
+            ContactIcon.None
         }
         return Contact(
             lxmfHash = hash,

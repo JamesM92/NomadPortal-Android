@@ -102,6 +102,7 @@ class StubMessagingRepository(private val scope: CoroutineScope) : MessagingRepo
             lastAnnounceAtMillis = System.currentTimeMillis(),
             lxmfAddress = "stub0000000000000000000000000000",
             displayName = "Stub User",
+            iconAppearance = ContactIcon.Appearance("hiking", Color(0xFF7EC8A0), Color.White),
             sendBlocked = false,
             sendBlockedReason = null,
         )
@@ -123,6 +124,13 @@ class StubMessagingRepository(private val scope: CoroutineScope) : MessagingRepo
 
     override suspend fun setDisplayName(name: String): Boolean {
         announceStatus.value = announceStatus.value.copy(displayName = name)
+        return true
+    }
+
+    override suspend fun setIconAppearance(glyphName: String, foreground: Color, background: Color): Boolean {
+        announceStatus.value = announceStatus.value.copy(
+            iconAppearance = ContactIcon.Appearance(glyphName, background, foreground),
+        )
         return true
     }
 

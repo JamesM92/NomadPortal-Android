@@ -652,6 +652,9 @@ def _conversation_entries() -> list:
             "name": name,
             "icon": contact.get("icon") if contact else None,
             "icon_mime": contact.get("icon_mime") if contact else None,
+            "icon_glyph": contact.get("icon_glyph") if contact else None,
+            "icon_fg": contact.get("icon_fg") if contact else None,
+            "icon_bg": contact.get("icon_bg") if contact else None,
             "favorited": bool(contact.get("favorited")) if contact else False,
             "last_seen": peer.get("last_seen") if peer else None,
             "hops": peer.get("hops") if peer else None,
@@ -669,15 +672,17 @@ def _conversation_entries() -> list:
 
 def get_conversations_json() -> str:
     """[ConversationSummary] shape: hash, name, icon (base64, nullable),
-    icon_mime (nullable), favorited, last_seen (unix seconds, nullable —
-    last LXMF peer announce, not last message), hops (nullable),
-    announce_count (nullable — total announces heard from this peer),
-    last_message (last entry of messages, or None), unread_count. Full
-    per-message list is included too (Kotlin ignores it here) purely
-    because computing it separately per-conversation would mean
-    re-deriving the same sent/received union twice — cheap either way,
-    these are in-memory list reads capped at 500+500 total
-    (message_store.py's MAX_MESSAGES)."""
+    icon_mime (nullable), icon_glyph/icon_fg/icon_bg (FIELD_ICON_APPEARANCE
+    descriptor, all-or-nothing nullable trio — mutually exclusive with
+    icon/icon_mime, see contact_store.py's own doc comment), favorited,
+    last_seen (unix seconds, nullable — last LXMF peer announce, not last
+    message), hops (nullable), announce_count (nullable — total announces
+    heard from this peer), last_message (last entry of messages, or
+    None), unread_count. Full per-message list is included too (Kotlin
+    ignores it here) purely because computing it separately per-
+    conversation would mean re-deriving the same sent/received union
+    twice — cheap either way, these are in-memory list reads capped at
+    500+500 total (message_store.py's MAX_MESSAGES)."""
     import json
     entries = _conversation_entries()
     summaries = [
@@ -686,6 +691,9 @@ def get_conversations_json() -> str:
             "name": e["name"],
             "icon": e["icon"],
             "icon_mime": e["icon_mime"],
+            "icon_glyph": e["icon_glyph"],
+            "icon_fg": e["icon_fg"],
+            "icon_bg": e["icon_bg"],
             "favorited": e["favorited"],
             "last_seen": e["last_seen"],
             "hops": e["hops"],
@@ -722,6 +730,7 @@ def get_contact_json(contact_hash: str) -> str:
             return json.dumps({
                 "hash": e["hash"], "name": e["name"],
                 "icon": e["icon"], "icon_mime": e["icon_mime"],
+                "icon_glyph": e["icon_glyph"], "icon_fg": e["icon_fg"], "icon_bg": e["icon_bg"],
                 "favorited": e["favorited"],
             })
     return ""
@@ -940,10 +949,18 @@ def get_announce_status_json() -> str:
         lxmf_address = status.get("lxmf_address")
         last_announce_at = status.get("last_announce_at")
     display_name = None
+    icon_glyph = None
+    icon_fg = None
+    icon_bg = None
     if _identity_store is not None:
         entry = _identity_store.get_for_user("")
         if entry is not None:
             display_name = entry.get("name")
+        icon = _identity_store.get_icon_appearance_for_user("")
+        if icon is not None:
+            icon_glyph = icon.get("glyph")
+            icon_fg = icon.get("fg")
+            icon_bg = icon.get("bg")
 
     # Preview only — never triggers an announce itself (unlike the real
     # _check_send_allowed() call send_message() makes), so polling this
@@ -970,6 +987,9 @@ def get_announce_status_json() -> str:
         "last_announce_at": last_announce_at,
         "lxmf_address": lxmf_address,
         "display_name": display_name,
+        "icon_glyph": icon_glyph,
+        "icon_fg": icon_fg,
+        "icon_bg": icon_bg,
         "send_blocked": send_blocked,
         "send_blocked_reason": send_blocked_reason,
     })
@@ -982,6 +1002,17 @@ def set_display_name(name: str) -> bool:
     if _messaging is None:
         return False
     return _messaging.set_display_name(name, user_sub="")
+
+
+def set_icon_appearance(glyph: str, fg_hex: str, bg_hex: str) -> bool:
+    """Sets this device's own FIELD_ICON_APPEARANCE descriptor — attached
+    to every future outbound LXMF message. See
+    MessagingService.set_icon_appearance's own doc comment; glyph is an
+    icon name looked up client-side against Kotlin's Material Icons
+    Extended mapping (IconAppearance.kt), fg_hex/bg_hex are '#rrggbb'."""
+    if _messaging is None:
+        return False
+    return _messaging.set_icon_appearance(glyph, fg_hex, bg_hex, user_sub="")
 
 
 def set_auto_announce_master(enabled: bool) -> None:
