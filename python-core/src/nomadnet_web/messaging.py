@@ -568,8 +568,23 @@ class MessagingService:
                 if self._identity_store:
                     icon = self._identity_store.get_icon_appearance_for_user(user_sub)
                     if icon:
+                        # This app stores/looks up icon names with
+                        # underscores internally (IconAppearance.kt's own
+                        # map keys, e.g. "music_note") — but real MDI
+                        # names (what MeshChat/Sideband actually resolve)
+                        # are kebab-case with hyphens, e.g. "music-note"
+                        # (confirmed against MeshChat's own frontend:
+                        # `.replace(/([a-z])([A-Z])/g, '$1-$2')`). A real
+                        # interop bug, found via live testing: MeshChat
+                        # received our fg/bg colors correctly but showed
+                        # "?" for the icon itself, because "music_note"
+                        # isn't a name it has. The receive side already
+                        # tolerates both separators (materialIconFor's
+                        # own `.replace('-', '_')`), so only the send
+                        # side needs converting.
+                        glyph = (icon.get("glyph") or "?").replace("_", "-")
                         fields[0x04] = [
-                            icon.get("glyph", "?"),
+                            glyph,
                             _hex_to_icon_bytes(icon.get("fg", "#ffffff")),
                             _hex_to_icon_bytes(icon.get("bg", "#5ba3c9")),
                         ]

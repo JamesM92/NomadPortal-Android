@@ -10,6 +10,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
@@ -23,6 +24,8 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Edit
+import androidx.compose.material.icons.filled.ExpandLess
+import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material.icons.filled.Explore
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.Button
@@ -129,6 +132,17 @@ fun HomeScreen(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(innerPadding)
+                // enableEdgeToEdge() (MainActivity) means the system no
+                // longer auto-resizes/pans the window when the IME opens
+                // — the app has to claim that inset itself, same root
+                // cause as ConversationScreen's earlier message-field-
+                // hidden-behind-keyboard fix. Without this, the icon
+                // editor's search field/list end up behind the keyboard
+                // once it opens (real on-device report). Applied before
+                // verticalScroll so the keyboard shrinks the visible
+                // scrollable area rather than the content just being
+                // covered by it.
+                .imePadding()
                 .padding(horizontal = 16.dp, vertical = 8.dp)
                 // The icon editor's picker grid can push this section
                 // taller than short/landscape screens — scrollable rather
@@ -323,6 +337,50 @@ private fun IdentityIconPreview(
     }
 }
 
+private enum class ColorSection { BACKGROUND, FOREGROUND }
+
+/** Collapsed-by-default color picker: a tappable one-line summary (swatch
+ * dot + label + chevron) that expands to the full [ColorSwatchRow] grid
+ * only while [expanded] — see [IconAppearanceEditor]'s own doc comment
+ * for why nothing here starts pre-expanded. */
+@Composable
+private fun CompactColorRow(
+    label: String,
+    selected: Color,
+    expanded: Boolean,
+    onToggle: () -> Unit,
+    onSelect: (Color) -> Unit,
+) {
+    Column(modifier = Modifier.fillMaxWidth()) {
+        Row(
+            modifier = Modifier.fillMaxWidth().clickable(onClick = onToggle),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            Box(
+                modifier = Modifier
+                    .size(24.dp)
+                    .clip(CircleShape)
+                    .background(selected)
+                    .border(1.dp, NomadBg3, CircleShape),
+            )
+            Text(text = label, style = MaterialTheme.typography.bodyLarge, modifier = Modifier.weight(1f))
+            Icon(
+                imageVector = if (expanded) Icons.Filled.ExpandLess else Icons.Filled.ExpandMore,
+                contentDescription = if (expanded) "Collapse" else "Change $label",
+                tint = NomadTextDim,
+            )
+        }
+        if (expanded) {
+            ColorSwatchRow(
+                selected = selected,
+                onSelect = onSelect,
+                modifier = Modifier.padding(top = 6.dp),
+            )
+        }
+    }
+}
+
 /** Preset background/foreground swatches offered by the editor below —
  * a small curated palette (this app's own accent colors plus basics)
  * rather than a full RGB picker, matching the rest of this app's
@@ -355,6 +413,13 @@ private fun IconAppearanceEditor(
     var selectedBg by remember(current) { mutableStateOf(current?.backgroundColor ?: NomadAccent) }
     var selectedFg by remember(current) { mutableStateOf(current?.foregroundColor ?: Color.White) }
     var searchQuery by remember { mutableStateOf("") }
+    // Which color section (if any) is showing its full swatch grid —
+    // per explicit direction, a color is "assumed already picked" (both
+    // start with a real default, never blank) so the swatch grid stays
+    // collapsed to a compact one-line summary until tapped open, rather
+    // than permanently occupying space above the icon list/keyboard.
+    // Picking a swatch collapses it back down immediately.
+    var expandedColorSection by remember { mutableStateOf<ColorSection?>(null) }
 
     val filteredNames = remember(searchQuery) {
         val q = searchQuery.trim().lowercase().replace(' ', '_')
@@ -382,11 +447,39 @@ private fun IconAppearanceEditor(
             .padding(12.dp),
         verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
-        Text(text = "Background color", style = MaterialTheme.typography.bodyLarge)
-        ColorSwatchRow(selected = selectedBg, onSelect = { selectedBg = it })
+        CompactColorRow(
+            label = "Background color",
+            selected = selectedBg,
+            expanded = expandedColorSection == ColorSection.BACKGROUND,
+            onToggle = {
+                expandedColorSection = if (expandedColorSection == ColorSection.BACKGROUND) {
+                    null
+                } else {
+                    ColorSection.BACKGROUND
+                }
+            },
+            onSelect = {
+                selectedBg = it
+                expandedColorSection = null
+            },
+        )
 
-        Text(text = "Icon color", style = MaterialTheme.typography.bodyLarge)
-        ColorSwatchRow(selected = selectedFg, onSelect = { selectedFg = it })
+        CompactColorRow(
+            label = "Icon color",
+            selected = selectedFg,
+            expanded = expandedColorSection == ColorSection.FOREGROUND,
+            onToggle = {
+                expandedColorSection = if (expandedColorSection == ColorSection.FOREGROUND) {
+                    null
+                } else {
+                    ColorSection.FOREGROUND
+                }
+            },
+            onSelect = {
+                selectedFg = it
+                expandedColorSection = null
+            },
+        )
 
         Text(text = "Choose an icon", style = MaterialTheme.typography.bodyLarge)
         SearchField(
@@ -465,8 +558,8 @@ private fun IconAppearanceEditor(
 }
 
 @Composable
-private fun ColorSwatchRow(selected: Color, onSelect: (Color) -> Unit) {
-    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+private fun ColorSwatchRow(selected: Color, onSelect: (Color) -> Unit, modifier: Modifier = Modifier) {
+    Row(modifier = modifier, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
         ICON_COLOR_SWATCHES.forEach { swatch ->
             Box(
                 modifier = Modifier

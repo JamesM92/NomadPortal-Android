@@ -10,6 +10,7 @@ import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
@@ -58,7 +59,13 @@ import kotlinx.coroutines.launch
  *   settles, not just once" bug class entirely, rather than patching it
  *   with a `ViewTreeObserver`-equivalent listener: the newest message
  *   stays pinned at the visual bottom by construction, regardless of how
- *   many times the keyboard-open transition resizes the layout.
+ *   many times the keyboard-open transition resizes the layout. That
+ *   alone doesn't cover a *newly arrived* message while the list was
+ *   scrolled up reading history, though (Compose anchors scroll state to
+ *   the item that was visible, not to "index 0" — a real on-device
+ *   report: the chat didn't auto-scroll on send) — the `LaunchedEffect
+ *   (messages.size)` below handles that explicitly, for both directions
+ *   (sent and received), not just sends.
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -76,6 +83,20 @@ fun ConversationScreen(
 
     LaunchedEffect(contact.lxmfHash) {
         repository.markRead(contact.lxmfHash)
+    }
+
+    val listState = rememberLazyListState()
+    // Index 0 is the visual bottom (reverseLayout = true below) — scroll
+    // there whenever the message count changes so a freshly sent or
+    // received message is always brought into view, not left off-screen
+    // if the list happened to be scrolled up. Keyed on size rather than
+    // the newest message's own id: a sent message's id gets rewritten
+    // once delivery confirms (client UUID -> real LXMF hash — see
+    // Message's own doc comment), which would otherwise double-fire this.
+    LaunchedEffect(messages.size) {
+        if (messages.isNotEmpty()) {
+            listState.animateScrollToItem(0)
+        }
     }
 
     Scaffold(
@@ -109,6 +130,7 @@ fun ConversationScreen(
         // only the suggestion bar visible above it).
         Column(modifier = Modifier.padding(innerPadding).imePadding()) {
             LazyColumn(
+                state = listState,
                 modifier = Modifier
                     .fillMaxSize()
                     .weight(1f)
