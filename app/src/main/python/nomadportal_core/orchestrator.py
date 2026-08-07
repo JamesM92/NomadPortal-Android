@@ -610,36 +610,39 @@ def set_contact_favorite(hash_hex: str, value: bool) -> bool:
 # UI-agnostic port" convention).
 # ---------------------------------------------------------------------------
 
-# Per-interface: two independent knobs, per explicit design direction —
+# Per-interface: two independent numbers, per explicit design direction
+# (settled into a plain 2-column table, one row per interface —
+# "protocol | message | auto" — after a few rounds of iteration) —
 # "announce_max_seconds" is how stale the last announce is allowed to
-# get before a *send* needs a fresh one first ("messages announce time
-# max"); "auto_announce_enabled"/"auto_announce_interval_seconds" is
-# whether/how often this device proactively re-announces on its own
-# initiative, independent of whether a message happens to be going out
-# ("auto announce time", can be disabled per interface). RNS's own
-# announce() call always broadcasts to every currently-active interface
-# at once — there's no public API to target one specific interface (this
-# was explicitly confirmed rather than assumed: no such method found,
-# and it can't be verified further without RNS itself being importable
-# in this dev environment, only in the Android build's Chaquopy cache).
-# So per-interface config here drives *timing* decisions (which
-# interfaces being active determines which thresholds apply), never
-# *which interface carries the actual announce packet* — that's always
+# get before a *send* needs a fresh one first ("message" column); "auto
+# _announce_interval_seconds" is how often this device proactively
+# re-announces on its own initiative, independent of whether a message
+# happens to be going out ("auto" column) — **0 means disabled** for
+# that interface, no separate enabled flag. RNS's own announce() call
+# always broadcasts to every currently-active interface at once —
+# there's no public API to target one specific interface (this was
+# explicitly confirmed rather than assumed: no such method found, and it
+# can't be verified further without RNS itself being importable in this
+# dev environment, only in the Android build's Chaquopy cache). So
+# per-interface config here drives *timing* decisions (which interfaces
+# being active determines which thresholds apply), never *which
+# interface carries the actual announce packet* — that's always
 # "however many are active, all of them," by RNS's own design.
 _interface_announce_config: dict = {
+    "tcp": {
+        "announce_max_seconds": 3 * 60 * 60,
+        "auto_announce_interval_seconds": 6 * 60 * 60,
+    },
     "bluetooth_mesh": {
         "announce_max_seconds": 15 * 60,
-        "auto_announce_enabled": True,
-        "auto_announce_interval_seconds": 15 * 60,
+        "auto_announce_interval_seconds": 30 * 60,
     },
     "rnode": {
-        "announce_max_seconds": 2 * 60 * 60,
-        "auto_announce_enabled": True,
-        "auto_announce_interval_seconds": 2 * 60 * 60,
+        "announce_max_seconds": 3 * 60 * 60,
+        "auto_announce_interval_seconds": 6 * 60 * 60,
     },
-    "tcp": {
-        "announce_max_seconds": 6 * 60 * 60,
-        "auto_announce_enabled": True,
+    "wifi_discovery": {
+        "announce_max_seconds": 3 * 60 * 60,
         "auto_announce_interval_seconds": 6 * 60 * 60,
     },
 }
@@ -672,14 +675,14 @@ def _check_send_allowed() -> tuple:
 
     Blocking (not just skipping a background announce) is deliberate,
     per explicit design direction: if every currently-active interface
-    has auto-announce turned off and the last announce is older than
-    the strictest active threshold, this device can't autonomously fix
-    that (auto-announce being off means exactly that: don't announce
-    without being asked to) — so the send itself has to stop and say
-    why, rather than silently going out over a possibly-stale/no-path
-    identity. If auto-announce IS allowed on at least one active
-    interface, this announces first (broadcast, per this section's own
-    doc comment) and then allows the send through.
+    has auto-announce set to 0 (disabled) and the last announce is older
+    than the strictest active threshold, this device can't autonomously
+    fix that (0 means exactly that: don't announce without being asked
+    to) — so the send itself has to stop and say why, rather than
+    silently going out over a possibly-stale/no-path identity. If
+    auto-announce IS enabled (> 0) on at least one active interface,
+    this announces first (broadcast, per this section's own doc comment)
+    and then allows the send through.
     """
     if _messaging is None:
         return True, None  # let send_message's own None-check handle this
@@ -695,16 +698,16 @@ def _check_send_allowed() -> tuple:
     if not stale:
         return True, None
 
-    any_auto_enabled = any(c["auto_announce_enabled"] for c in configs)
+    any_auto_enabled = any(c["auto_announce_interval_seconds"] > 0 for c in configs)
     if any_auto_enabled:
         _messaging.do_announce(user_sub="")
         return True, None
 
     return False, (
         "Your identity hasn't announced recently enough to reliably reach "
-        "this contact, and auto-announce is disabled for every currently "
-        "active connection. Tap Announce now in Settings, or re-enable "
-        "auto-announce, then try again."
+        "this contact, and auto-announce is set to 0 (disabled) for every "
+        "currently active connection. Tap Announce now in Settings, or "
+        "set an auto-announce interval, then try again."
     )
 
 
@@ -714,7 +717,7 @@ def _announce_loop() -> None:
         if _messaging is None:
             continue
         configs = _active_announce_configs()
-        due = [c for c in configs if c["auto_announce_enabled"]]
+        due = [c for c in configs if c["auto_announce_interval_seconds"] > 0]
         if not due:
             continue
         since = _seconds_since_last_announce()
@@ -734,16 +737,17 @@ def start_announce_loop() -> None:
 
 
 def get_announce_status_json() -> str:
-    """[AnnounceStatus] shape: interfaces (bluetooth_mesh/rnode/tcp ->
-    {announce_max_seconds, auto_announce_enabled,
-    auto_announce_interval_seconds} — always all three keys regardless
-    of which are currently active), last_announce_at (unix seconds,
-    nullable), lxmf_address (nullable — null before the delivery router
-    exists, e.g. RNS still starting up), send_blocked +
-    send_blocked_reason (a read-only preview of what
-    _check_send_allowed() would currently decide — lets the UI show a
-    warning before the user even tries to send, not just react to a
-    failed send afterward)."""
+    """[AnnounceStatus] shape: interfaces (tcp/bluetooth_mesh/rnode/
+    wifi_discovery -> {announce_max_seconds,
+    auto_announce_interval_seconds} — always all four keys regardless of
+    which are currently active; auto_announce_interval_seconds == 0
+    means disabled for that interface, there's no separate enabled
+    flag), last_announce_at (unix seconds, nullable), lxmf_address
+    (nullable — null before the delivery router exists, e.g. RNS still
+    starting up), send_blocked + send_blocked_reason (a read-only
+    preview of what _check_send_allowed() would currently decide — lets
+    the UI show a warning before the user even tries to send, not just
+    react to a failed send afterward)."""
     import json
     lxmf_address = None
     last_announce_at = None
@@ -762,12 +766,13 @@ def get_announce_status_json() -> str:
         max_threshold = min(c["announce_max_seconds"] for c in configs)
         since = _seconds_since_last_announce()
         stale = since is None or since >= max_threshold
-        if stale and not any(c["auto_announce_enabled"] for c in configs):
+        if stale and not any(c["auto_announce_interval_seconds"] > 0 for c in configs):
             send_blocked = True
             send_blocked_reason = (
-                "Identity announce is stale and auto-announce is disabled "
-                "for the active connection — sends will be blocked until "
-                "you announce manually or re-enable auto-announce."
+                "Identity announce is stale and auto-announce is set to 0 "
+                "(disabled) for the active connection — sends will be "
+                "blocked until you announce manually or set an "
+                "auto-announce interval."
             )
 
     return json.dumps({
@@ -781,10 +786,15 @@ def get_announce_status_json() -> str:
 
 def set_announce_max(interface_key: str, seconds: int) -> None:
     """`interface_key` must be one of _interface_announce_config's keys
-    ("bluetooth_mesh"/"rnode"/"tcp") — silently ignored otherwise rather
-    than raising, so a future Kotlin-side typo/version-skew can't crash
-    this call. Clamped to [1 minute, 24 hours] — below a minute risks
-    flooding, beyond 24h risks peers' paths aging out regardless."""
+    ("tcp"/"bluetooth_mesh"/"rnode"/"wifi_discovery") — silently ignored
+    otherwise rather than raising, so a future Kotlin-side typo/
+    version-skew can't crash this call. Clamped to [1 minute, 24 hours]
+    — below a minute risks flooding, beyond 24h risks peers' paths aging
+    out regardless. Unlike set_auto_announce_interval, 0 has no special
+    meaning here — a send-blocking "message max" of 0 would mean every
+    send always requires a fresh announce, which is legal but almost
+    certainly not what typing 0 into this field means to a user, so it's
+    clamped to the same [1min, 24h] floor as anything else."""
     if interface_key not in _interface_announce_config:
         log.warning("Ignoring announce_max for unknown interface '%s'", interface_key)
         return
@@ -793,20 +803,15 @@ def set_announce_max(interface_key: str, seconds: int) -> None:
     )
 
 
-def set_auto_announce_enabled(interface_key: str, enabled: bool) -> None:
-    if interface_key not in _interface_announce_config:
-        log.warning("Ignoring auto_announce_enabled for unknown interface '%s'", interface_key)
-        return
-    _interface_announce_config[interface_key]["auto_announce_enabled"] = bool(enabled)
-
-
 def set_auto_announce_interval(interface_key: str, seconds: int) -> None:
+    """0 means disabled for this interface — no separate enabled flag
+    (see this section's module-level doc comment). Any nonzero value is
+    clamped to [1 minute, 24 hours], same reasoning as set_announce_max."""
     if interface_key not in _interface_announce_config:
         log.warning("Ignoring auto_announce_interval for unknown interface '%s'", interface_key)
         return
-    _interface_announce_config[interface_key]["auto_announce_interval_seconds"] = max(
-        60, min(24 * 60 * 60, int(seconds))
-    )
+    clamped = 0 if seconds <= 0 else max(60, min(24 * 60 * 60, int(seconds)))
+    _interface_announce_config[interface_key]["auto_announce_interval_seconds"] = clamped
 
 
 def announce_now() -> str:

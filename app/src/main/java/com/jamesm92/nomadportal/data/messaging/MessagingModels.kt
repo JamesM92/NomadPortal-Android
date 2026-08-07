@@ -85,14 +85,16 @@ data class ConversationSummary(
  * - [autoAnnounceEnabled]/[autoAnnounceIntervalSeconds] ("auto announce
  *   time"): whether/how often this device proactively re-announces on
  *   its own initiative, independent of whether a message happens to be
- *   going out. Can be disabled per interface — but see [AnnounceStatus]'s
+ *   going out. **0 means disabled for that interface — no separate
+ *   enabled flag**, per explicit design direction. See [AnnounceStatus]'s
  *   own doc comment for what disabling it actually means for sending.
  */
 data class InterfaceAnnounceConfig(
     val announceMaxSeconds: Int,
-    val autoAnnounceEnabled: Boolean,
     val autoAnnounceIntervalSeconds: Int,
-)
+) {
+    val autoAnnounceEnabled: Boolean get() = autoAnnounceIntervalSeconds > 0
+}
 
 /**
  * Auto-announce configuration/status for this device's own LXMF
@@ -131,9 +133,10 @@ data class AnnounceStatus(
     val sendBlockedReason: String?,
 ) {
     companion object {
+        const val INTERFACE_TCP = "tcp"
         const val INTERFACE_BLUETOOTH = "bluetooth_mesh"
         const val INTERFACE_RNODE = "rnode"
-        const val INTERFACE_TCP = "tcp"
+        const val INTERFACE_WIFI_DISCOVERY = "wifi_discovery"
         const val MIN_SECONDS = 60
         const val MAX_SECONDS = 24 * 60 * 60
     }

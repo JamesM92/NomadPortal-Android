@@ -43,10 +43,12 @@ interface MessagingRepository {
      */
     fun announceStatus(): Flow<AnnounceStatus>
 
-    /** [interfaceKey] is one of [AnnounceStatus.INTERFACE_BLUETOOTH]/
-     * [AnnounceStatus.INTERFACE_RNODE]/[AnnounceStatus.INTERFACE_TCP]. */
+    /** [interfaceKey] is one of [AnnounceStatus.INTERFACE_TCP]/
+     * [AnnounceStatus.INTERFACE_BLUETOOTH]/[AnnounceStatus.INTERFACE_RNODE]/
+     * [AnnounceStatus.INTERFACE_WIFI_DISCOVERY]. */
     suspend fun setAnnounceMax(interfaceKey: String, seconds: Int)
-    suspend fun setAutoAnnounceEnabled(interfaceKey: String, enabled: Boolean)
+
+    /** 0 disables auto-announce for this interface — no separate enabled flag. */
     suspend fun setAutoAnnounceInterval(interfaceKey: String, seconds: Int)
 
     /** Manual "Announce now" trigger. Returns true on success. */

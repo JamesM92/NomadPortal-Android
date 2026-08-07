@@ -93,9 +93,10 @@ class StubMessagingRepository(private val scope: CoroutineScope) : MessagingRepo
     private val announceStatus = MutableStateFlow(
         AnnounceStatus(
             interfaces = mapOf(
-                AnnounceStatus.INTERFACE_BLUETOOTH to InterfaceAnnounceConfig(15 * 60, true, 15 * 60),
-                AnnounceStatus.INTERFACE_RNODE to InterfaceAnnounceConfig(2 * 60 * 60, true, 2 * 60 * 60),
-                AnnounceStatus.INTERFACE_TCP to InterfaceAnnounceConfig(6 * 60 * 60, true, 6 * 60 * 60),
+                AnnounceStatus.INTERFACE_TCP to InterfaceAnnounceConfig(3 * 60 * 60, 6 * 60 * 60),
+                AnnounceStatus.INTERFACE_BLUETOOTH to InterfaceAnnounceConfig(15 * 60, 30 * 60),
+                AnnounceStatus.INTERFACE_RNODE to InterfaceAnnounceConfig(3 * 60 * 60, 6 * 60 * 60),
+                AnnounceStatus.INTERFACE_WIFI_DISCOVERY to InterfaceAnnounceConfig(3 * 60 * 60, 6 * 60 * 60),
             ),
             lastAnnounceAtMillis = System.currentTimeMillis(),
             lxmfAddress = "stub0000000000000000000000000000",
@@ -108,10 +109,6 @@ class StubMessagingRepository(private val scope: CoroutineScope) : MessagingRepo
 
     override suspend fun setAnnounceMax(interfaceKey: String, seconds: Int) {
         updateInterfaceConfig(interfaceKey) { it.copy(announceMaxSeconds = seconds) }
-    }
-
-    override suspend fun setAutoAnnounceEnabled(interfaceKey: String, enabled: Boolean) {
-        updateInterfaceConfig(interfaceKey) { it.copy(autoAnnounceEnabled = enabled) }
     }
 
     override suspend fun setAutoAnnounceInterval(interfaceKey: String, seconds: Int) {

@@ -177,9 +177,10 @@ class MessagingService:
                 user_sub[:16] if user_sub else "anon",
             )
 
-            # Bootstrap announce — unconditional, regardless of
-            # auto_announce_enabled (see that field's own comment): a
-            # freshly-registered identity has never announced before,
+            # Bootstrap announce — unconditional, regardless of any
+            # per-interface auto-announce config (orchestrator.py's
+            # concern, not this module's): a freshly-registered identity
+            # has never announced before,
             # so no peer on the mesh has a path to it yet. Without this,
             # every message sent *to* a brand-new install would fail
             # with no path known until the user happened to find and

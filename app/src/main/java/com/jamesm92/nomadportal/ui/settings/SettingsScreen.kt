@@ -1,48 +1,63 @@
 package com.jamesm92.nomadportal.ui.settings
 
+import android.content.res.Configuration
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.horizontalScroll
-import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.text.BasicTextField
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.PowerSettingsNew
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.FilterChip
-import androidx.compose.material3.FilterChipDefaults
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.SecondaryTabRow
 import androidx.compose.material3.Slider
 import androidx.compose.material3.Switch
+import androidx.compose.material3.Tab
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.input.VisualTransformation
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import com.jamesm92.nomadportal.connectivity.InterfaceController
 import com.jamesm92.nomadportal.data.SettingsRepository
@@ -102,158 +117,177 @@ fun SettingsScreen(
         }
     }
 
+    // Main = the quick on/off switches someone reaches for constantly
+    // (connectivity + hosting, kill switch included); everything else is
+    // "more in depth" and lives in its own sub-tab instead of all being
+    // stacked in one long scroll — per explicit request.
+    var selectedTab by remember { mutableIntStateOf(0) }
+    val isLandscape = LocalConfiguration.current.orientation == Configuration.ORIENTATION_LANDSCAPE
+    val tabLabels = listOf("Main", "Announce", "Appearance", "Permissions")
+
     Scaffold(
         topBar = {
-            AdaptiveTopAppBar(
-                title = { Text("Settings") },
-                navigationIcon = {
-                    IconButton(onClick = onBack) {
-                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
-                    }
-                },
-                actions = {
-                    PanicWipeLogo(
-                        modifier = Modifier.padding(end = 8.dp),
-                        onTripleTap = {
-                            scope.launch {
-                                PanicWipe.perform(context)
-                                PanicWipe.restartApp(context)
-                            }
-                        },
-                    )
-                },
-            )
-        },
-    ) { innerPadding ->
-        val listState = rememberLazyListState()
-        Box(modifier = Modifier.fillMaxSize().padding(innerPadding)) {
-            LazyColumn(modifier = Modifier.fillMaxSize(), state = listState) {
-            item {
-                SectionHeaderWithKillSwitch(
-                    title = "Connectivity",
-                    onKill = {
-                        scope.launch {
-                            // Only the four connectivity interfaces, not
-                            // node hosting — hosting lives under its own
-                            // "Hosting" section below and isn't a
-                            // communication method itself (see
-                            // setNodeHostingEnabled's own doc comment:
-                            // it's independent of which interfaces are
-                            // up). A user reaching for a kill switch wants
-                            // this device to stop talking, not to also
-                            // silently stop answering requests it was
-                            // already committed to serving.
-                            interfaceController.setTcpEnabled(false)
-                            interfaceController.setBluetoothMeshEnabled(false)
-                            interfaceController.setRNodeEnabled(false)
-                            interfaceController.setWifiDiscoveryEnabled(false)
+            Column {
+                AdaptiveTopAppBar(
+                    title = { Text("Settings") },
+                    navigationIcon = {
+                        IconButton(onClick = onBack) {
+                            Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
                         }
                     },
-                )
-            }
-            item {
-                ToggleRow(
-                    label = "TCP",
-                    checked = tcpEnabled,
-                    onCheckedChange = { scope.launch { interfaceController.setTcpEnabled(it) } },
-                )
-            }
-            item {
-                ToggleRow(
-                    label = "Bluetooth mesh",
-                    checked = bluetoothMeshEnabled,
-                    onCheckedChange = { turningOn ->
-                        if (turningOn && !bluetoothGranted) {
-                            permissionLauncher.launch(BLUETOOTH_PERMISSIONS)
-                        } else {
-                            scope.launch { interfaceController.setBluetoothMeshEnabled(turningOn) }
-                        }
-                    },
-                )
-            }
-            item {
-                ToggleRow(
-                    label = "RNode",
-                    checked = rNodeEnabled,
-                    onCheckedChange = { scope.launch { interfaceController.setRNodeEnabled(it) } },
-                )
-            }
-            item {
-                ToggleRow(
-                    label = "Local network discovery",
-                    checked = wifiDiscoveryEnabled,
-                    onCheckedChange = { scope.launch { interfaceController.setWifiDiscoveryEnabled(it) } },
-                )
-            }
-
-            item { HorizontalDivider() }
-            item { SectionHeader("Hosting") }
-            item {
-                ToggleRow(
-                    label = "Host a NomadNet node",
-                    checked = nodeHostingEnabled,
-                    onCheckedChange = { scope.launch { interfaceController.setNodeHostingEnabled(it) } },
-                )
-            }
-
-            item { HorizontalDivider() }
-            item { SectionHeader("Announce") }
-            announceStatus?.let { status ->
-                item {
-                    AnnounceOverview(
-                        status = status,
-                        onAnnounceNow = { scope.launch { messagingRepository.announceNow() } },
-                    )
-                }
-                items(
-                    listOf(
-                        Triple("Bluetooth mesh", AnnounceStatus.INTERFACE_BLUETOOTH, status.interfaces[AnnounceStatus.INTERFACE_BLUETOOTH]),
-                        Triple("RNode", AnnounceStatus.INTERFACE_RNODE, status.interfaces[AnnounceStatus.INTERFACE_RNODE]),
-                        Triple("TCP", AnnounceStatus.INTERFACE_TCP, status.interfaces[AnnounceStatus.INTERFACE_TCP]),
-                    ),
-                    key = { it.second },
-                ) { (label, key, config) ->
-                    if (config != null) {
-                        InterfaceAnnounceSection(
-                            label = label,
-                            config = config,
-                            onAnnounceMaxChange = { scope.launch { messagingRepository.setAnnounceMax(key, it) } },
-                            onAutoAnnounceEnabledChange = {
-                                scope.launch { messagingRepository.setAutoAnnounceEnabled(key, it) }
+                    actions = {
+                        PanicWipeLogo(
+                            modifier = Modifier.padding(end = 8.dp),
+                            onTripleTap = {
+                                scope.launch {
+                                    PanicWipe.perform(context)
+                                    PanicWipe.restartApp(context)
+                                }
                             },
-                            onAutoAnnounceIntervalChange = {
-                                scope.launch { messagingRepository.setAutoAnnounceInterval(key, it) }
+                        )
+                    },
+                )
+                SecondaryTabRow(
+                    selectedTabIndex = selectedTab,
+                    modifier = Modifier.height(if (isLandscape) 28.dp else 36.dp),
+                ) {
+                    tabLabels.forEachIndexed { index, label ->
+                        Tab(
+                            selected = selectedTab == index,
+                            onClick = { selectedTab = index },
+                            text = {
+                                Text(
+                                    label,
+                                    style = MaterialTheme.typography.bodyLarge.copy(
+                                        fontSize = MaterialTheme.typography.bodyLarge.fontSize * 0.8f,
+                                        fontWeight = if (selectedTab == index) FontWeight.Bold else FontWeight.Normal,
+                                    ),
+                                    color = if (selectedTab == index) {
+                                        MaterialTheme.colorScheme.primary
+                                    } else {
+                                        NomadTextDim
+                                    },
+                                )
                             },
                         )
                     }
                 }
             }
+        },
+    ) { innerPadding ->
+        val listState = rememberLazyListState()
+        Box(modifier = Modifier.fillMaxSize().padding(innerPadding)) {
+            LazyColumn(modifier = Modifier.fillMaxSize(), state = listState) {
+            if (selectedTab == 0) {
+                item {
+                    SectionHeaderWithKillSwitch(
+                        title = "Connectivity",
+                        onKill = {
+                            scope.launch {
+                                // Only the four connectivity interfaces, not
+                                // node hosting — hosting lives under its own
+                                // "Hosting" section below and isn't a
+                                // communication method itself (see
+                                // setNodeHostingEnabled's own doc comment:
+                                // it's independent of which interfaces are
+                                // up). A user reaching for a kill switch wants
+                                // this device to stop talking, not to also
+                                // silently stop answering requests it was
+                                // already committed to serving.
+                                interfaceController.setTcpEnabled(false)
+                                interfaceController.setBluetoothMeshEnabled(false)
+                                interfaceController.setRNodeEnabled(false)
+                                interfaceController.setWifiDiscoveryEnabled(false)
+                            }
+                        },
+                    )
+                }
+                item {
+                    ToggleRow(
+                        label = "TCP",
+                        checked = tcpEnabled,
+                        onCheckedChange = { scope.launch { interfaceController.setTcpEnabled(it) } },
+                    )
+                }
+                item {
+                    ToggleRow(
+                        label = "Bluetooth mesh",
+                        checked = bluetoothMeshEnabled,
+                        onCheckedChange = { turningOn ->
+                            if (turningOn && !bluetoothGranted) {
+                                permissionLauncher.launch(BLUETOOTH_PERMISSIONS)
+                            } else {
+                                scope.launch { interfaceController.setBluetoothMeshEnabled(turningOn) }
+                            }
+                        },
+                    )
+                }
+                item {
+                    ToggleRow(
+                        label = "RNode",
+                        checked = rNodeEnabled,
+                        onCheckedChange = { scope.launch { interfaceController.setRNodeEnabled(it) } },
+                    )
+                }
+                item {
+                    ToggleRow(
+                        label = "Local network discovery",
+                        checked = wifiDiscoveryEnabled,
+                        onCheckedChange = { scope.launch { interfaceController.setWifiDiscoveryEnabled(it) } },
+                    )
+                }
 
-            item { HorizontalDivider() }
-            item { SectionHeader("Appearance") }
-            item {
-                TextScaleRow(
-                    scale = textScale,
-                    onScaleChange = { scope.launch { settingsRepository.setTextScale(it) } },
-                )
+                item { HorizontalDivider() }
+                item { SectionHeader("Hosting") }
+                item {
+                    ToggleRow(
+                        label = "Host a NomadNet node",
+                        checked = nodeHostingEnabled,
+                        onCheckedChange = { scope.launch { interfaceController.setNodeHostingEnabled(it) } },
+                    )
+                }
+            } else if (selectedTab == 1) {
+                announceStatus?.let { status ->
+                    item {
+                        AnnounceOverview(
+                            status = status,
+                            onAnnounceNow = { scope.launch { messagingRepository.announceNow() } },
+                        )
+                    }
+                    item {
+                        AnnounceTable(
+                            interfaces = status.interfaces,
+                            onAnnounceMaxChange = { key, seconds ->
+                                scope.launch { messagingRepository.setAnnounceMax(key, seconds) }
+                            },
+                            onAutoAnnounceIntervalChange = { key, seconds ->
+                                scope.launch { messagingRepository.setAutoAnnounceInterval(key, seconds) }
+                            },
+                        )
+                    }
+                }
+            } else if (selectedTab == 2) {
+                item {
+                    TextScaleRow(
+                        scale = textScale,
+                        onScaleChange = { scope.launch { settingsRepository.setTextScale(it) } },
+                    )
+                }
+            } else {
+                item {
+                    Text(
+                        text = "Every permission this app requests is optional. Denying any of them " +
+                            "leaves the related feature off — the rest of the app keeps working. " +
+                            "This app never requests location permission, under any circumstances.",
+                        style = MaterialTheme.typography.bodyLarge,
+                        modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
+                    )
+                }
             }
-
-            item { HorizontalDivider() }
-            item { SectionHeader("Permissions") }
-            item {
-                Text(
-                    text = "Every permission this app requests is optional. Denying any of them " +
-                        "leaves the related feature off — the rest of the app keeps working. " +
-                        "This app never requests location permission, under any circumstances.",
-                    style = MaterialTheme.typography.bodyLarge,
-                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
-                )
             }
-            }
-            // Custom-drawn, same as BrowserScreen's page viewer —
-            // Settings' list is long enough (four sections plus
-            // permissions text) to benefit from the same "how much more
-            // is there" cue.
+            // Custom-drawn, same as BrowserScreen's page viewer — some
+            // tabs (Main, Announce) are long enough to benefit from the
+            // same "how much more is there" cue.
             VerticalScrollIndicator(
                 listState,
                 modifier = Modifier.align(Alignment.CenterEnd).fillMaxHeight(),
@@ -410,88 +444,152 @@ private fun AnnounceOverview(status: AnnounceStatus, onAnnounceNow: () -> Unit) 
 }
 
 /**
- * One interface's own announce policy — two independent controls per
- * [InterfaceAnnounceConfig]'s own doc comment: "announce max" (how stale
- * before a send needs a fresh announce first) and auto-announce
- * (enabled + its own interval, proactive re-announcing independent of
- * sending). Both durations use preset chips rather than a continuous
- * Slider — the useful range here (1 minute to 24 hours) is too wide for
- * fine drag control at the low end on a linear slider, and these are
- * naturally "pick a sensible bucket" values, not continuously-tunable
- * ones.
+ * Per-interface announce policy as a plain table — one row per
+ * interface (protocol | message max | auto interval), both durations
+ * entered directly as a number of minutes rather than preset chips (an
+ * earlier version of this UI) or a slider — per explicit request.
+ * **0 in the "Auto" column disables auto-announce for that interface —
+ * there's no separate enabled switch**, matching
+ * [InterfaceAnnounceConfig.autoAnnounceEnabled]'s own derivation.
  */
 @Composable
-private fun InterfaceAnnounceSection(
-    label: String,
-    config: InterfaceAnnounceConfig,
-    onAnnounceMaxChange: (Int) -> Unit,
-    onAutoAnnounceEnabledChange: (Boolean) -> Unit,
-    onAutoAnnounceIntervalChange: (Int) -> Unit,
+private fun AnnounceTable(
+    interfaces: Map<String, InterfaceAnnounceConfig>,
+    onAnnounceMaxChange: (interfaceKey: String, seconds: Int) -> Unit,
+    onAutoAnnounceIntervalChange: (interfaceKey: String, seconds: Int) -> Unit,
 ) {
-    Column(modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)) {
-        Text(text = label, style = MaterialTheme.typography.bodyLarge, color = MaterialTheme.colorScheme.secondary)
+    val rows = listOf(
+        "TCP" to AnnounceStatus.INTERFACE_TCP,
+        "Bluetooth" to AnnounceStatus.INTERFACE_BLUETOOTH,
+        "RNode" to AnnounceStatus.INTERFACE_RNODE,
+        "LAN" to AnnounceStatus.INTERFACE_WIFI_DISCOVERY,
+    )
+    val headerStyle = MaterialTheme.typography.bodyLarge.copy(fontSize = MaterialTheme.typography.bodyLarge.fontSize * 0.7f)
 
+    Column(modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp)) {
+        Row(modifier = Modifier.fillMaxWidth().padding(bottom = 6.dp)) {
+            Text("Protocol", style = headerStyle, color = NomadTextDim, modifier = Modifier.weight(1f))
+            Text(
+                "Message (min)",
+                style = headerStyle,
+                color = NomadTextDim,
+                textAlign = TextAlign.Center,
+                modifier = Modifier.weight(1f),
+            )
+            Text(
+                "Auto (min)",
+                style = headerStyle,
+                color = NomadTextDim,
+                textAlign = TextAlign.Center,
+                modifier = Modifier.weight(1f),
+            )
+        }
+        HorizontalDivider()
+        rows.forEach { (label, key) ->
+            val config = interfaces[key] ?: return@forEach
+            Row(
+                modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(
+                    text = label,
+                    style = MaterialTheme.typography.bodyLarge.copy(fontSize = MaterialTheme.typography.bodyLarge.fontSize * 0.85f),
+                    modifier = Modifier.weight(1f),
+                )
+                MinutesField(
+                    seconds = config.announceMaxSeconds,
+                    allowZero = false,
+                    onCommit = { onAnnounceMaxChange(key, it) },
+                    modifier = Modifier.weight(1f).padding(horizontal = 4.dp),
+                )
+                MinutesField(
+                    seconds = config.autoAnnounceIntervalSeconds,
+                    allowZero = true,
+                    onCommit = { onAutoAnnounceIntervalChange(key, it) },
+                    modifier = Modifier.weight(1f).padding(horizontal = 4.dp),
+                )
+            }
+            HorizontalDivider()
+        }
         Text(
-            text = "Announce max: ${formatDuration(config.announceMaxSeconds)}",
-            style = MaterialTheme.typography.bodyLarge.copy(fontSize = MaterialTheme.typography.bodyLarge.fontSize * 0.85f),
+            text = "Auto = 0 disables auto-announce for that connection.",
+            style = headerStyle,
+            color = NomadTextDim,
             modifier = Modifier.padding(top = 6.dp),
         )
-        DurationPresetRow(selectedSeconds = config.announceMaxSeconds, onSelect = onAnnounceMaxChange)
-
-        Row(
-            modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Text(
-                text = "Auto-announce",
-                style = MaterialTheme.typography.bodyLarge.copy(fontSize = MaterialTheme.typography.bodyLarge.fontSize * 0.85f),
-            )
-            Switch(checked = config.autoAnnounceEnabled, onCheckedChange = onAutoAnnounceEnabledChange)
-        }
-        if (config.autoAnnounceEnabled) {
-            Text(
-                text = "Auto-announce every: ${formatDuration(config.autoAnnounceIntervalSeconds)}",
-                style = MaterialTheme.typography.bodyLarge.copy(fontSize = MaterialTheme.typography.bodyLarge.fontSize * 0.85f),
-            )
-            DurationPresetRow(selectedSeconds = config.autoAnnounceIntervalSeconds, onSelect = onAutoAnnounceIntervalChange)
-        }
     }
 }
 
-private val DURATION_PRESETS_SECONDS = listOf(
-    15 * 60, 30 * 60, 60 * 60, 2 * 60 * 60, 6 * 60 * 60, 12 * 60 * 60, 24 * 60 * 60,
-)
-
+/**
+ * A number-of-minutes cell, built on `BasicTextField` +
+ * `OutlinedTextFieldDefaults.DecorationBox` rather than the convenience
+ * `OutlinedTextField` — that convenience composable exposes no
+ * `contentPadding`, so a compact table cell built on it clips text no
+ * matter how the outer `Modifier` is tuned (see the
+ * `android-compose-compact-fields` skill for the full writeup; same
+ * root cause and fix as `BrowserScreen`'s address bar and
+ * `SearchField`). Commits on focus loss or the keyboard's Done action,
+ * clamped to [1, 1440] minutes — or snapped to 0 when [allowZero] and
+ * the typed value is 0/blank/invalid.
+ */
 @Composable
-private fun DurationPresetRow(selectedSeconds: Int, onSelect: (Int) -> Unit) {
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .horizontalScroll(rememberScrollState())
-            .padding(vertical = 4.dp),
-        horizontalArrangement = Arrangement.spacedBy(6.dp),
-    ) {
-        DURATION_PRESETS_SECONDS.forEach { seconds ->
-            FilterChip(
-                selected = seconds == selectedSeconds,
-                onClick = { onSelect(seconds) },
-                label = {
-                    Text(
-                        formatDuration(seconds),
-                        style = MaterialTheme.typography.bodyLarge.copy(fontSize = MaterialTheme.typography.bodyLarge.fontSize * 0.75f),
+private fun MinutesField(
+    seconds: Int,
+    allowZero: Boolean,
+    onCommit: (seconds: Int) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    var text by remember(seconds) { mutableStateOf((seconds / 60).toString()) }
+    val focusManager = LocalFocusManager.current
+    val interactionSource = remember { MutableInteractionSource() }
+
+    fun commit() {
+        val minutes = text.toIntOrNull()
+        val clampedMinutes = when {
+            minutes == null -> seconds / 60
+            minutes <= 0 -> if (allowZero) 0 else 1
+            else -> minutes.coerceAtMost(24 * 60)
+        }
+        text = clampedMinutes.toString()
+        onCommit(clampedMinutes * 60)
+    }
+
+    BasicTextField(
+        value = text,
+        onValueChange = { new -> if (new.length <= 5 && new.all { it.isDigit() }) text = new },
+        modifier = modifier.onFocusChanged { if (!it.isFocused) commit() },
+        textStyle = MaterialTheme.typography.bodyLarge.copy(
+            fontSize = MaterialTheme.typography.bodyLarge.fontSize * 0.85f,
+            textAlign = TextAlign.Center,
+            color = MaterialTheme.colorScheme.onSurface,
+        ),
+        singleLine = true,
+        cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
+        interactionSource = interactionSource,
+        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number, imeAction = ImeAction.Done),
+        keyboardActions = KeyboardActions(onDone = {
+            commit()
+            focusManager.clearFocus()
+        }),
+        decorationBox = { innerTextField ->
+            OutlinedTextFieldDefaults.DecorationBox(
+                value = text,
+                innerTextField = innerTextField,
+                enabled = true,
+                singleLine = true,
+                visualTransformation = VisualTransformation.None,
+                interactionSource = interactionSource,
+                contentPadding = PaddingValues(horizontal = 6.dp, vertical = 4.dp),
+                container = {
+                    OutlinedTextFieldDefaults.Container(
+                        enabled = true,
+                        isError = false,
+                        interactionSource = interactionSource,
                     )
                 },
-                colors = FilterChipDefaults.filterChipColors(),
             )
-        }
-    }
-}
-
-private fun formatDuration(seconds: Int): String = when {
-    seconds < 3600 -> "${seconds / 60}m"
-    seconds % 3600 == 0 -> "${seconds / 3600}h"
-    else -> "${seconds / 60}m"
+        },
+    )
 }
 
 /** Caller (AnnounceOverview) appends " ago" itself — bare duration only. */
