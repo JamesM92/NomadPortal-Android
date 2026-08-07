@@ -545,11 +545,27 @@ def set_contact_favorite(hash_hex: str, value: bool) -> bool:
     asymmetric" finding). upsert() first (no-op if it already exists)
     so set_favorite() always has a real entry to flip, rather than
     silently no-op'ing on a contact who genuinely exists from Kotlin's
-    point of view (browsing/messaging) but not yet from ContactStore's."""
+    point of view (browsing/messaging) but not yet from ContactStore's.
+
+    Passing the real LXMF-peer-tracker name into that upsert() matters,
+    not cosmetic: upsert() with no name falls back to the hash prefix
+    (contact_store.py's own `name or hash_hex[:16]`), and once that's
+    baked into the entry, _conversation_entries()'s `contact["name"] or
+    peer["name"] or hash[:16]` priority chain permanently prefers that
+    placeholder over the real announced name forever after — a non-empty
+    contact["name"] short-circuits the `or` before it ever reaches
+    peer["name"]. Confirmed as a real reported bug: newly favorited
+    contacts showed their hash instead of their set display name."""
     if _contact_store is None:
         return False
     store = _contact_store.for_user("")
-    store.upsert(hash_hex)
+    if store.get(hash_hex) is None:
+        best_name = ""
+        if _lxmf_tracker is not None:
+            peer = next((p for p in _lxmf_tracker.get_peers() if p["hash"] == hash_hex), None)
+            if peer:
+                best_name = peer.get("name") or ""
+        store.upsert(hash_hex, name=best_name)
     return store.set_favorite(hash_hex, value)
 
 

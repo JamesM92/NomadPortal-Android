@@ -2,8 +2,6 @@ package com.jamesm92.nomadportal.ui.browser
 
 import androidx.compose.animation.animateContentSize
 import androidx.compose.foundation.Canvas
-import androidx.compose.foundation.ExperimentalFoundationApi
-import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -30,6 +28,7 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -38,10 +37,15 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.jamesm92.nomadportal.data.browsing.BrowserRepository
 import com.jamesm92.nomadportal.data.browsing.NodeInfo
+import com.jamesm92.nomadportal.panicwipe.PanicWipe
+import com.jamesm92.nomadportal.ui.components.PanicWipeLogo
+import com.jamesm92.nomadportal.ui.components.SearchField
+import com.jamesm92.nomadportal.ui.components.dismissKeyboardOnTap
 import com.jamesm92.nomadportal.ui.theme.NomadAccent2
 import com.jamesm92.nomadportal.ui.theme.NomadError
 import com.jamesm92.nomadportal.ui.theme.NomadTextDim
@@ -55,15 +59,21 @@ import kotlinx.coroutines.launch
  * into two sections — favorited nodes first, then everything heard on
  * the mesh (favoriting adds a copy here, it doesn't remove the node from
  * "Announces heard") — so a busy hub's announce volume doesn't bury the
- * handful of nodes someone actually cares about. Favorites is a fixed
- * pane above its own bounded/independently-scrolling list, not part of
- * the "Announces heard" LazyColumn below — always visible, never
- * scrolled away, without needing `LazyColumn.stickyHeader` (tried first;
- * real device testing showed it not actually staying pinned once
- * scrolled past — this sidesteps whatever was wrong there instead of
- * chasing it further).
+ * handful of nodes someone actually cares about. Both section headers
+ * live directly in the outer [Column], not inside either section's own
+ * [LazyColumn] — so they're always visible above their (independently
+ * scrolling) content without needing `LazyColumn.stickyHeader` at all
+ * (tried first; real device testing showed it not actually staying
+ * pinned once scrolled past — this sidesteps the whole mechanism rather
+ * than chasing it further). Both headers stay tappable to
+ * collapse/expand at all times; `favoritesDominant` only nudges the
+ * *default* expanded state, it never locks a header — see
+ * `FAVORITES_AUTO_EXPAND_THRESHOLD`'s use below.
  */
-@OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
+/** See [NodeListScreen]'s `favoritesDominant` comment. */
+private const val FAVORITES_AUTO_EXPAND_THRESHOLD = 7
+
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun NodeListScreen(
     repository: BrowserRepository,
@@ -72,16 +82,50 @@ fun NodeListScreen(
 ) {
     val nodes by repository.discoveredNodes().collectAsState(initial = emptyList())
     val scope = rememberCoroutineScope()
+    val context = LocalContext.current
+    var searchQuery by remember { mutableStateOf("") }
+
+    // Filters name and hash (a user may search by either) — applied
+    // before the Favorites/Announces-heard split so a search still
+    // respects that split, not a flat re-merged result.
+    val filteredNodes = if (searchQuery.isBlank()) {
+        nodes
+    } else {
+        nodes.filter {
+            it.displayName.contains(searchQuery, ignoreCase = true) ||
+                it.hash.contains(searchQuery, ignoreCase = true)
+        }
+    }
 
     // Favoriting adds a copy to Favorites, it doesn't move the node out
     // of Announces heard — a favorited node is still a node you've
     // heard announce, so it stays listed there too (per explicit
     // request; the two sections are not a mutually-exclusive partition).
-    val favorites = nodes.filter { it.isFavorite }
-    val announcesHeard = nodes
+    val favorites = filteredNodes.filter { it.isFavorite }
+    // browser.py's get_nodes() sorts favorited nodes to the front (a
+    // deliberate tie-break ahead of recency, for the original app's one
+    // combined sidebar) — re-sorted here by pure recency so favoriting a
+    // node doesn't also reorder it within Announces heard, since
+    // favorite status is already shown via its own section + the heart
+    // icon, not by bubbling it to the top of this one too.
+    val announcesHeard = filteredNodes.sortedByDescending { it.lastAnnounceMillis }
 
     var favoritesExpanded by remember { mutableStateOf(true) }
     var announcesExpanded by remember { mutableStateOf(true) }
+    // "When a section is big enough to need the whole screen it auto
+    // collapses the other sections" — item-count based, not a real pixel
+    // measurement (would need onSizeChanged/BoxWithConstraints plumbing
+    // for genuinely adaptive sizing); this approximates it well enough
+    // without that.
+    val favoritesDominant = favorites.size > FAVORITES_AUTO_EXPAND_THRESHOLD
+    // A *default*, not a lock — auto-collapses Announces heard the
+    // moment Favorites crosses the threshold, but both headers stay
+    // clickable afterward (first cut wired this as collapsible=false,
+    // which made it impossible to manually re-expand either section —
+    // wrong, fixed per explicit follow-up).
+    LaunchedEffect(favoritesDominant) {
+        if (favoritesDominant) announcesExpanded = false
+    }
 
     Scaffold(
         topBar = {
@@ -92,23 +136,65 @@ fun NodeListScreen(
                         Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
                     }
                 },
+                actions = {
+                    PanicWipeLogo(
+                        modifier = Modifier.padding(end = 8.dp),
+                        onTripleTap = {
+                            scope.launch {
+                                PanicWipe.perform(context)
+                                PanicWipe.restartApp(context)
+                            }
+                        },
+                    )
+                },
             )
         },
     ) { innerPadding ->
-        Column(modifier = Modifier.fillMaxSize().padding(top = innerPadding.calculateTopPadding())) {
-            // Fixed pane — not inside the LazyColumn below, so it's
-            // always visible regardless of how far "Announces heard" is
-            // scrolled. Bounded height + its own LazyColumn (not a plain
-            // Column) so a large favorites list scrolls within itself
-            // instead of pushing "Announces heard" off-screen entirely.
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(top = innerPadding.calculateTopPadding())
+                .dismissKeyboardOnTap(),
+        ) {
+            SearchField(
+                query = searchQuery,
+                onQueryChange = { searchQuery = it },
+                placeholder = "Search nodes",
+            )
+
+            // Header always outside any LazyColumn — always visible,
+            // always tappable, regardless of dominance state. While
+            // Favorites is dominant, expanding either section collapses
+            // the other — "when a section is big enough to need the
+            // whole screen it auto collapses the other sections" applies
+            // to manual re-expansion too, not just the initial default
+            // (first cut only nudged the default once at mount, so
+            // manually expanding Announces heard back open left both
+            // expanded with no further collapsing — wrong, fixed here).
             SectionHeader(
                 title = "Favorites",
                 count = favorites.size,
                 expanded = favoritesExpanded,
-                onToggle = { favoritesExpanded = !favoritesExpanded },
+                onToggle = {
+                    favoritesExpanded = !favoritesExpanded
+                    if (favoritesExpanded && favoritesDominant) announcesExpanded = false
+                },
             )
             if (favoritesExpanded && favorites.isNotEmpty()) {
-                LazyColumn(modifier = Modifier.heightIn(max = 280.dp)) {
+                // Not yet dominant: bounded pane, so a large-but-not-yet-
+                // dominant favorites list scrolls within itself instead of
+                // pushing Announces heard off-screen. Once dominant, it
+                // takes the remaining space like Announces heard normally
+                // would (point 4 of the auto-collapse design: if both end
+                // up expanded at once, they split the remaining space
+                // evenly via weight(1f) on both — acceptable, not broken).
+                LazyColumn(
+                    modifier = if (favoritesDominant) {
+                        Modifier.weight(1f)
+                    } else {
+                        Modifier.heightIn(max = 280.dp)
+                    },
+                ) {
                     items(favorites, key = { it.hash }) { node ->
                         NodeRow(
                             node = node,
@@ -117,27 +203,24 @@ fun NodeListScreen(
                                 scope.launch { repository.setFavorite(node.hash, !node.isFavorite) }
                             },
                         )
+                        HorizontalDivider()
                     }
                 }
             }
 
             HorizontalDivider()
 
-            LazyColumn(modifier = Modifier.weight(1f)) {
-                // The only header in this LazyColumn (unlike the earlier,
-                // abandoned attempt at one shared stickyHeader spanning
-                // both Favorites and this section) — stays pinned while
-                // scrolling this section's own items, per request.
-                stickyHeader {
-                    SectionHeader(
-                        title = "Announces heard",
-                        count = announcesHeard.size,
-                        expanded = announcesExpanded,
-                        onToggle = { announcesExpanded = !announcesExpanded },
-                        modifier = Modifier.background(MaterialTheme.colorScheme.background),
-                    )
-                }
-                if (announcesExpanded) {
+            SectionHeader(
+                title = "Announces heard",
+                count = announcesHeard.size,
+                expanded = announcesExpanded,
+                onToggle = {
+                    announcesExpanded = !announcesExpanded
+                    if (announcesExpanded && favoritesDominant) favoritesExpanded = false
+                },
+            )
+            if (announcesExpanded) {
+                LazyColumn(modifier = Modifier.weight(1f)) {
                     items(announcesHeard, key = { it.hash }) { node ->
                         NodeRow(
                             node = node,
@@ -146,6 +229,7 @@ fun NodeListScreen(
                                 scope.launch { repository.setFavorite(node.hash, !node.isFavorite) }
                             },
                         )
+                        HorizontalDivider()
                     }
                 }
             }
@@ -153,6 +237,10 @@ fun NodeListScreen(
     }
 }
 
+/** [collapsible] = false renders a count-only label with no chevron and
+ * no click target — used when a section has been auto-collapsed by size
+ * rather than by the user's own toggle (see [NodeListScreen]'s
+ * `favoritesDominant` logic). */
 @Composable
 private fun SectionHeader(
     title: String,
@@ -160,25 +248,33 @@ private fun SectionHeader(
     expanded: Boolean,
     onToggle: () -> Unit,
     modifier: Modifier = Modifier,
+    collapsible: Boolean = true,
 ) {
     Row(
         modifier = modifier
             .fillMaxWidth()
-            .clickable(onClick = onToggle)
-            .padding(horizontal = 16.dp, vertical = 12.dp),
+            .then(if (collapsible) Modifier.clickable(onClick = onToggle) else Modifier)
+            // Tighter than before (was 12.dp) — this is a section
+            // divider, not a screen title, doesn't need that much room.
+            .padding(horizontal = 16.dp, vertical = 6.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.SpaceBetween,
     ) {
         Text(
             text = "$title ($count)",
-            style = MaterialTheme.typography.titleLarge,
+            style = MaterialTheme.typography.titleLarge.copy(
+                fontSize = MaterialTheme.typography.titleLarge.fontSize * 0.85f,
+            ),
             color = MaterialTheme.colorScheme.secondary,
         )
-        Icon(
-            imageVector = if (expanded) Icons.Filled.ExpandLess else Icons.Filled.ExpandMore,
-            contentDescription = if (expanded) "Collapse" else "Expand",
-            tint = NomadTextDim,
-        )
+        if (collapsible) {
+            Icon(
+                imageVector = if (expanded) Icons.Filled.ExpandLess else Icons.Filled.ExpandMore,
+                contentDescription = if (expanded) "Collapse" else "Expand",
+                tint = NomadTextDim,
+                modifier = Modifier.size(20.dp),
+            )
+        }
     }
 }
 
@@ -189,7 +285,10 @@ private fun NodeRow(node: NodeInfo, onClick: () -> Unit, onToggleFavorite: () ->
             .fillMaxWidth()
             .animateContentSize()
             .clickable(onClick = onClick)
-            .padding(horizontal = 16.dp, vertical = 12.dp),
+            // Tighter than before (was 12.dp) — a HorizontalDivider
+            // between rows now provides visual separation, so padding
+            // alone doesn't need to carry that job too.
+            .padding(horizontal = 16.dp, vertical = 6.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(12.dp),
     ) {

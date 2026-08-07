@@ -32,10 +32,14 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.unit.dp
 import com.jamesm92.nomadportal.data.messaging.Contact
 import com.jamesm92.nomadportal.data.messaging.MessagingRepository
+import com.jamesm92.nomadportal.panicwipe.PanicWipe
+import com.jamesm92.nomadportal.ui.components.PanicWipeLogo
+import com.jamesm92.nomadportal.ui.components.dismissKeyboardOnTap
 import kotlinx.coroutines.launch
 
 /**
@@ -64,6 +68,7 @@ fun ConversationScreen(
 ) {
     val messages by repository.messages(contact.lxmfHash).collectAsState(initial = emptyList())
     val scope = rememberCoroutineScope()
+    val context = LocalContext.current
     var draft by remember { mutableStateOf("") }
 
     LaunchedEffect(contact.lxmfHash) {
@@ -79,6 +84,17 @@ fun ConversationScreen(
                         Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
                     }
                 },
+                actions = {
+                    PanicWipeLogo(
+                        modifier = Modifier.padding(end = 8.dp),
+                        onTripleTap = {
+                            scope.launch {
+                                PanicWipe.perform(context)
+                                PanicWipe.restartApp(context)
+                            }
+                        },
+                    )
+                },
             )
         },
     ) { innerPadding ->
@@ -92,7 +108,8 @@ fun ConversationScreen(
             LazyColumn(
                 modifier = Modifier
                     .fillMaxSize()
-                    .weight(1f),
+                    .weight(1f)
+                    .dismissKeyboardOnTap(),
                 reverseLayout = true,
                 contentPadding = PaddingValues(12.dp),
                 verticalArrangement = Arrangement.spacedBy(8.dp),

@@ -5,11 +5,15 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.PowerSettingsNew
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
@@ -19,6 +23,7 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Slider
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
@@ -33,8 +38,10 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import com.jamesm92.nomadportal.connectivity.InterfaceController
 import com.jamesm92.nomadportal.data.SettingsRepository
+import com.jamesm92.nomadportal.panicwipe.PanicWipe
 import com.jamesm92.nomadportal.permissions.BLUETOOTH_PERMISSIONS
 import com.jamesm92.nomadportal.permissions.hasBluetoothPermissions
+import com.jamesm92.nomadportal.ui.components.PanicWipeLogo
 import kotlin.math.roundToInt
 import kotlinx.coroutines.launch
 
@@ -88,11 +95,44 @@ fun SettingsScreen(
                         Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
                     }
                 },
+                actions = {
+                    PanicWipeLogo(
+                        modifier = Modifier.padding(end = 8.dp),
+                        onTripleTap = {
+                            scope.launch {
+                                PanicWipe.perform(context)
+                                PanicWipe.restartApp(context)
+                            }
+                        },
+                    )
+                },
             )
         },
     ) { innerPadding ->
         LazyColumn(modifier = Modifier.padding(innerPadding)) {
-            item { SectionHeader("Connectivity") }
+            item {
+                SectionHeaderWithKillSwitch(
+                    title = "Connectivity",
+                    onKill = {
+                        scope.launch {
+                            // Only the four connectivity interfaces, not
+                            // node hosting — hosting lives under its own
+                            // "Hosting" section below and isn't a
+                            // communication method itself (see
+                            // setNodeHostingEnabled's own doc comment:
+                            // it's independent of which interfaces are
+                            // up). A user reaching for a kill switch wants
+                            // this device to stop talking, not to also
+                            // silently stop answering requests it was
+                            // already committed to serving.
+                            interfaceController.setTcpEnabled(false)
+                            interfaceController.setBluetoothMeshEnabled(false)
+                            interfaceController.setRNodeEnabled(false)
+                            interfaceController.setWifiDiscoveryEnabled(false)
+                        }
+                    },
+                )
+            }
             item {
                 ToggleRow(
                     label = "TCP",
@@ -194,6 +234,48 @@ private fun SectionHeader(title: String) {
         color = MaterialTheme.colorScheme.secondary,
         modifier = Modifier.padding(16.dp),
     )
+}
+
+/**
+ * [SectionHeader] plus a kill switch for the Connectivity section
+ * specifically — a single tap to force every communication interface
+ * (TCP, Bluetooth mesh, RNode, local network discovery) off at once,
+ * without hunting down four separate switches individually. Doesn't
+ * touch node hosting — see the call site's comment for why that's
+ * deliberately excluded.
+ */
+@Composable
+private fun SectionHeaderWithKillSwitch(title: String, onKill: () -> Unit) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(start = 16.dp, end = 8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.SpaceBetween,
+    ) {
+        Text(
+            text = title,
+            style = MaterialTheme.typography.titleLarge,
+            color = MaterialTheme.colorScheme.secondary,
+            modifier = Modifier.padding(vertical = 16.dp),
+        )
+        TextButton(onClick = onKill) {
+            Icon(
+                imageVector = Icons.Filled.PowerSettingsNew,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.error,
+                modifier = Modifier.size(18.dp),
+            )
+            Spacer(modifier = Modifier.width(4.dp))
+            Text(
+                "Kill",
+                color = MaterialTheme.colorScheme.error,
+                style = MaterialTheme.typography.bodyLarge.copy(
+                    fontSize = MaterialTheme.typography.bodyLarge.fontSize * 0.85f,
+                ),
+            )
+        }
+    }
 }
 
 /**

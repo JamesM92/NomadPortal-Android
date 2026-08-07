@@ -3,10 +3,12 @@ package com.jamesm92.nomadportal.ui.browser
 import androidx.compose.foundation.ScrollState
 import androidx.compose.foundation.background
 import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
@@ -14,6 +16,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.rememberLazyListState
@@ -24,15 +27,20 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.ArrowForward
+import androidx.compose.material.icons.filled.Code
+import androidx.compose.material.icons.filled.Favorite
+import androidx.compose.material.icons.filled.FavoriteBorder
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.LocalMinimumInteractiveComponentSize
 import androidx.compose.material3.LocalTextStyle
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.Composable
@@ -40,11 +48,15 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.collectAsState
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.input.ImeAction
@@ -60,8 +72,12 @@ import com.jamesm92.micron2compose.parser.MicronConverter
 import com.jamesm92.micron2compose.parser.TextRun
 import com.jamesm92.nomadportal.data.browsing.BrowserRepository
 import com.jamesm92.nomadportal.data.browsing.PageAddress
+import com.jamesm92.nomadportal.panicwipe.PanicWipe
+import com.jamesm92.nomadportal.ui.components.PanicWipeLogo
+import com.jamesm92.nomadportal.ui.components.dismissKeyboardOnTap
 import com.jamesm92.nomadportal.ui.theme.NomadMono
 import com.jamesm92.nomadportal.ui.theme.NomadTextDim
+import kotlinx.coroutines.launch
 
 /** A short, blank/near-empty page still needs *some* width — a phone-width
  * floor, not zero. */
@@ -95,6 +111,10 @@ fun BrowserScreen(
 ) {
     val converter = remember { MicronConverter() }
     val uriHandler = LocalUriHandler.current
+    val scope = rememberCoroutineScope()
+    val context = LocalContext.current
+    val focusManager = LocalFocusManager.current
+    val keyboardController = LocalSoftwareKeyboardController.current
     // Node list's displayName (announce-derived, same source NodeListScreen
     // shows) — used for the top bar title instead of the raw hash. Falls
     // back to a truncated hash if this node hasn't been discovered via an
@@ -108,13 +128,31 @@ fun BrowserScreen(
 
     var addressBarText by remember(currentAddress) { mutableStateOf(currentAddress.toUrl()) }
     var result by remember { mutableStateOf<ConvertResult?>(null) }
+    var rawSource by remember { mutableStateOf<String?>(null) }
     var loadError by remember { mutableStateOf<String?>(null) }
     var pendingWarning by remember { mutableStateOf<PendingLinkWarning?>(null) }
     var scrollToAnchor by remember { mutableStateOf<String?>(null) }
+    // "Raw" per the reference NomadPortal web app's own address-bar
+    // checkbox — swaps the rendered MicronPage for the page's actual
+    // unrendered .mu text, already fetched into `rawSource` below either
+    // way, so this is purely a view toggle, no extra fetch.
+    var showRawView by remember { mutableStateOf(false) }
+    val currentNodeFavorited = nodes.find { it.hash == currentAddress.nodeHash }?.isFavorite ?: false
 
     fun navigateTo(address: PageAddress) {
         history = history.take(historyIndex + 1) + address
         historyIndex = history.lastIndex
+    }
+
+    // Shared by both the keyboard's "Go" IME action and the address bar's
+    // own explicit Go button — per the reference NomadPortal web app, an
+    // IME action alone isn't discoverable as "how do I commit this URL",
+    // so there needs to be a visible button too, not just the keyboard's
+    // action key.
+    fun goToAddressBarUrl() {
+        PageAddress.fromUrl(addressBarText)?.let(::navigateTo)
+        focusManager.clearFocus(force = true)
+        keyboardController?.hide()
     }
 
     fun handleLink(target: LinkTarget) {
@@ -150,8 +188,10 @@ fun BrowserScreen(
     LaunchedEffect(currentAddress) {
         loadError = null
         result = null
+        rawSource = null
         try {
             val source = repository.fetchPage(currentAddress)
+            rawSource = source
             result = converter.convert(source, nodeHash = currentAddress.nodeHash, basePath = currentAddress.path)
         } catch (e: Exception) {
             loadError = e.message ?: "Failed to load page"
@@ -190,43 +230,135 @@ fun BrowserScreen(
                             Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back to nodes")
                         }
                     },
+                    actions = {
+                        PanicWipeLogo(
+                            modifier = Modifier.padding(end = 8.dp),
+                            onTripleTap = {
+                                scope.launch {
+                                    PanicWipe.perform(context)
+                                    PanicWipe.restartApp(context)
+                                }
+                            },
+                        )
+                    },
                 )
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 8.dp, vertical = 4.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(4.dp),
-                ) {
-                    IconButton(onClick = { if (historyIndex > 0) historyIndex-- }, enabled = historyIndex > 0) {
-                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back in history")
-                    }
-                    IconButton(
-                        onClick = { if (historyIndex < history.lastIndex) historyIndex++ },
-                        enabled = historyIndex < history.lastIndex,
+                // Back/forward/Go/favorite/raw all sized down to "just
+                // bigger than the icon they represent" — Material3's
+                // IconButton/Button both reserve a much larger touch
+                // target (48dp/40dp) by default regardless of the icon's
+                // own size, which read as oversized here; zeroing
+                // LocalMinimumInteractiveComponentSize for this row lets
+                // an explicit small Modifier.size actually take effect
+                // instead of being padded back out by that reservation.
+                CompositionLocalProvider(LocalMinimumInteractiveComponentSize provides 0.dp) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 8.dp, vertical = 4.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(2.dp),
                     ) {
-                        Icon(Icons.AutoMirrored.Filled.ArrowForward, contentDescription = "Forward in history")
+                        IconButton(
+                            onClick = { if (historyIndex > 0) historyIndex-- },
+                            enabled = historyIndex > 0,
+                            modifier = Modifier.size(24.dp),
+                        ) {
+                            Icon(
+                                Icons.AutoMirrored.Filled.ArrowBack,
+                                contentDescription = "Back in history",
+                                modifier = Modifier.size(16.dp),
+                            )
+                        }
+                        IconButton(
+                            onClick = { if (historyIndex < history.lastIndex) historyIndex++ },
+                            enabled = historyIndex < history.lastIndex,
+                            modifier = Modifier.size(24.dp),
+                        ) {
+                            Icon(
+                                Icons.AutoMirrored.Filled.ArrowForward,
+                                contentDescription = "Forward in history",
+                                modifier = Modifier.size(16.dp),
+                            )
+                        }
+                        OutlinedTextField(
+                            value = addressBarText,
+                            onValueChange = { addressBarText = it },
+                            modifier = Modifier
+                                .weight(1f)
+                                .padding(horizontal = 4.dp)
+                                .height(40.dp),
+                            textStyle = MaterialTheme.typography.bodyLarge.copy(fontSize = 13.sp),
+                            singleLine = true,
+                            keyboardOptions = KeyboardOptions(imeAction = ImeAction.Go),
+                            keyboardActions = KeyboardActions(onGo = { goToAddressBarUrl() }),
+                        )
+                        // Explicit Go button — per the reference app's
+                        // own address bar, not relying on the IME action
+                        // alone being discoverable.
+                        TextButton(
+                            onClick = ::goToAddressBarUrl,
+                            contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp),
+                            modifier = Modifier.height(24.dp),
+                        ) {
+                            Text("Go", style = MaterialTheme.typography.bodyLarge.copy(fontSize = 12.sp))
+                        }
+                        IconButton(
+                            onClick = {
+                                scope.launch {
+                                    repository.setFavorite(currentAddress.nodeHash, !currentNodeFavorited)
+                                }
+                            },
+                            modifier = Modifier.size(24.dp),
+                        ) {
+                            Icon(
+                                imageVector = if (currentNodeFavorited) Icons.Filled.Favorite else Icons.Filled.FavoriteBorder,
+                                contentDescription = if (currentNodeFavorited) "Unfavorite this node" else "Favorite this node",
+                                tint = if (currentNodeFavorited) MaterialTheme.colorScheme.primary else NomadTextDim,
+                                modifier = Modifier.size(16.dp),
+                            )
+                        }
+                        // "Raw" per the reference app's address-bar
+                        // checkbox — toggles the rendered MicronPage for
+                        // the page's actual unrendered .mu source (see
+                        // `rawSource`/`showRawView` above).
+                        IconButton(
+                            onClick = { showRawView = !showRawView },
+                            modifier = Modifier.size(24.dp),
+                        ) {
+                            Icon(
+                                imageVector = Icons.Filled.Code,
+                                contentDescription = if (showRawView) "Show rendered page" else "Show raw source",
+                                tint = if (showRawView) MaterialTheme.colorScheme.primary else NomadTextDim,
+                                modifier = Modifier.size(16.dp),
+                            )
+                        }
                     }
-                    OutlinedTextField(
-                        value = addressBarText,
-                        onValueChange = { addressBarText = it },
-                        modifier = Modifier.weight(1f),
-                        singleLine = true,
-                        keyboardOptions = KeyboardOptions(imeAction = ImeAction.Go),
-                        keyboardActions = KeyboardActions(onGo = {
-                            PageAddress.fromUrl(addressBarText)?.let(::navigateTo)
-                        }),
-                    )
                 }
             }
         },
     ) { innerPadding ->
-        Box(modifier = Modifier.fillMaxSize().padding(innerPadding)) {
+        Box(modifier = Modifier.fillMaxSize().padding(innerPadding).dismissKeyboardOnTap()) {
             when {
                 loadError != null -> Text(
                     text = "Couldn't load this page: $loadError",
                     color = MaterialTheme.colorScheme.error,
                     modifier = Modifier.padding(16.dp),
+                )
+                // Checked ahead of the rendered-page branch below —
+                // `showRawView` wins over `result != null` whenever both
+                // are true, since toggling Raw is meant to *replace* the
+                // rendered view, not sit alongside it.
+                showRawView && rawSource != null -> Text(
+                    text = rawSource!!,
+                    fontFamily = NomadMono,
+                    style = MaterialTheme.typography.bodyLarge.copy(
+                        fontSize = MaterialTheme.typography.bodyLarge.fontSize * 0.8f,
+                    ),
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .verticalScroll(rememberScrollState())
+                        .horizontalScroll(rememberScrollState())
+                        .padding(12.dp),
                 )
                 // Micron content is fixed-character-grid by design (box-
                 // drawing art, tables) — MicronBlock (micron2compose)

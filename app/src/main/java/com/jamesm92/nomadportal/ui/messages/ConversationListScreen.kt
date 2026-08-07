@@ -1,7 +1,6 @@
 package com.jamesm92.nomadportal.ui.messages
 
 import androidx.compose.animation.animateContentSize
-import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -10,6 +9,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -28,11 +28,15 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.SecondaryTabRow
+import androidx.compose.material3.Tab
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -40,6 +44,8 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -47,34 +53,37 @@ import com.jamesm92.nomadportal.data.messaging.Contact
 import com.jamesm92.nomadportal.data.messaging.ConversationSummary
 import com.jamesm92.nomadportal.data.messaging.Message
 import com.jamesm92.nomadportal.data.messaging.MessagingRepository
+import com.jamesm92.nomadportal.panicwipe.PanicWipe
 import com.jamesm92.nomadportal.ui.components.ContactAvatar
+import com.jamesm92.nomadportal.ui.components.PanicWipeLogo
+import com.jamesm92.nomadportal.ui.components.SearchField
+import com.jamesm92.nomadportal.ui.components.dismissKeyboardOnTap
 import com.jamesm92.nomadportal.ui.theme.NomadTextDim
 import kotlinx.coroutines.launch
 
 /**
- * Every known LXMF contact — not just active conversations. Split into
- * three sections, mirroring
- * [com.jamesm92.nomadportal.ui.browser.NodeListScreen]'s Favorites/
- * Announces-heard pattern:
- * - **Favorites** — a fixed pane above the rest, always visible (its own
- *   bounded/independently-scrolling list, not part of the LazyColumn
- *   below — see that screen's doc comment for why not
- *   `LazyColumn.stickyHeader`), even for a contact never actually
- *   messaged. Favoriting adds a copy here; it doesn't remove the contact
- *   from Messaged/Announces heard below.
- * - **Messaged** — real message history.
- * - **Announces heard** — LXMF peers heard via announce (see
- *   `nomadnet_web.lxmf_tracker`) but never messaged — surfaces the LXMF
- *   address/hop-count/last-heard data
- *   [Contact.lastAnnounceMillis]/[Contact.hopCount] carry for exactly
- *   this case, same fields [com.jamesm92.nomadportal.data.browsing.NodeInfo]
- *   uses for RNS node announces.
+ * Every known LXMF contact — not just active conversations. Two tabs,
+ * per explicit request:
+ * - **Chats** — Favorites (a fixed pane, always visible, not part of
+ *   the scrolling list below — see
+ *   [com.jamesm92.nomadportal.ui.browser.NodeListScreen]'s doc comment
+ *   for why not `LazyColumn.stickyHeader` for this one) plus "General
+ *   messages" (real message history). Favoriting adds a copy to
+ *   Favorites; it doesn't remove the contact from General messages.
+ * - **Users** — every LXMF peer ever heard via announce (see
+ *   `nomadnet_web.lxmf_tracker`), messaged or not — the same "everyone
+ *   heard, not just the ones you've talked to" role
+ *   [com.jamesm92.nomadportal.ui.browser.NodeListScreen]'s Announces
+ *   heard plays for nodes.
  *
- * Every row's subtitle line falls back to LXMF address + hop count + time
- * since last announce when there's no message to preview — the whole
- * point of the Announces-heard section existing.
+ * A row's subtitle line falls back to LXMF address + hop count + time
+ * since last announce when there's no message to preview — the normal
+ * case for anyone in the Users tab who's never been messaged.
  */
-@OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
+/** See [com.jamesm92.nomadportal.ui.browser.NodeListScreen]'s identical constant. */
+private const val FAVORITES_AUTO_EXPAND_THRESHOLD = 7
+
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun ConversationListScreen(
     repository: MessagingRepository,
@@ -83,17 +92,42 @@ fun ConversationListScreen(
 ) {
     val conversations by repository.conversations().collectAsState(initial = emptyList())
     val scope = rememberCoroutineScope()
+    val context = LocalContext.current
+    var searchQuery by remember { mutableStateOf("") }
+    var selectedTab by remember { mutableIntStateOf(0) }
+
+    val filtered = if (searchQuery.isBlank()) {
+        conversations
+    } else {
+        conversations.filter {
+            it.contact.displayName.contains(searchQuery, ignoreCase = true) ||
+                it.contact.lxmfHash.contains(searchQuery, ignoreCase = true)
+        }
+    }
 
     // Favoriting adds a copy to Favorites, it doesn't move the contact
-    // out of Messaged/Announces heard — per explicit request, these
-    // sections aren't a mutually-exclusive partition.
-    val favorites = conversations.filter { it.contact.isFavorite }
-    val messaged = conversations.filter { it.lastMessage != null }
-    val announcesHeard = conversations.filter { it.lastMessage == null }
+    // out of General messages/Users — these aren't mutually-exclusive
+    // partitions (matches NodeListScreen's identical convention).
+    // orchestrator.py's _conversation_entries() doesn't sort at all
+    // (arbitrary set-iteration order) — sorted here by recency so both
+    // tabs read newest-first, same principle as NodeListScreen's
+    // Announces-heard fix (favorite status shouldn't reorder either).
+    val favorites = filtered.filter { it.contact.isFavorite }
+    val generalMessages = filtered.filter { it.lastMessage != null }
+        .sortedByDescending { it.lastMessage?.timestampMillis ?: 0L }
+    val allUsers = filtered.sortedByDescending { it.contact.lastAnnounceMillis }
 
     var favoritesExpanded by remember { mutableStateOf(true) }
-    var messagedExpanded by remember { mutableStateOf(true) }
-    var announcesExpanded by remember { mutableStateOf(true) }
+    var generalExpanded by remember { mutableStateOf(true) }
+    // See NodeListScreen's identical `favoritesDominant` comment for the
+    // full rationale — same item-count-based approximation of "when a
+    // section is big enough to need the whole screen it auto collapses
+    // the other sections".
+    val favoritesDominant = favorites.size > FAVORITES_AUTO_EXPAND_THRESHOLD
+    // A default, not a lock — see NodeListScreen's identical comment.
+    LaunchedEffect(favoritesDominant) {
+        if (favoritesDominant) generalExpanded = false
+    }
 
     fun toggleFavorite(summary: ConversationSummary) {
         scope.launch { repository.setFavorite(summary.contact.lxmfHash, !summary.contact.isFavorite) }
@@ -101,80 +135,161 @@ fun ConversationListScreen(
 
     Scaffold(
         topBar = {
-            TopAppBar(
-                title = { Text("Messages") },
-                navigationIcon = {
-                    IconButton(onClick = onBack) {
-                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
-                    }
-                },
-            )
-        },
-    ) { innerPadding ->
-        Column(modifier = Modifier.fillMaxSize().padding(top = innerPadding.calculateTopPadding())) {
-            // Fixed pane — always visible regardless of how far
-            // Messaged/Announces heard is scrolled.
-            SectionHeader(
-                title = "Favorites",
-                count = favorites.size,
-                expanded = favoritesExpanded,
-                onToggle = { favoritesExpanded = !favoritesExpanded },
-            )
-            if (favoritesExpanded && favorites.isNotEmpty()) {
-                LazyColumn(modifier = Modifier.heightIn(max = 280.dp)) {
-                    items(favorites, key = { it.contact.lxmfHash }) { summary ->
-                        ConversationRow(
-                            summary = summary,
-                            onClick = { onOpenConversation(summary.contact.lxmfHash) },
-                            onToggleFavorite = { toggleFavorite(summary) },
+            Column {
+                TopAppBar(
+                    title = { Text("Messages") },
+                    navigationIcon = {
+                        IconButton(onClick = onBack) {
+                            Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
+                        }
+                    },
+                    actions = {
+                        PanicWipeLogo(
+                            modifier = Modifier.padding(end = 8.dp),
+                            onTripleTap = {
+                                scope.launch {
+                                    PanicWipe.perform(context)
+                                    PanicWipe.restartApp(context)
+                                }
+                            },
                         )
-                    }
+                    },
+                )
+                SecondaryTabRow(
+                    selectedTabIndex = selectedTab,
+                    // Material3's default tab height carries more
+                    // padding than a two-word text tab needs here.
+                    modifier = Modifier.height(36.dp),
+                ) {
+                    Tab(
+                        selected = selectedTab == 0,
+                        onClick = { selectedTab = 0 },
+                        text = {
+                            Text(
+                                "Chats",
+                                style = MaterialTheme.typography.bodyLarge.copy(
+                                    fontSize = MaterialTheme.typography.bodyLarge.fontSize * 0.8f,
+                                    fontWeight = if (selectedTab == 0) FontWeight.Bold else FontWeight.Normal,
+                                ),
+                                color = if (selectedTab == 0) {
+                                    MaterialTheme.colorScheme.primary
+                                } else {
+                                    NomadTextDim
+                                },
+                            )
+                        },
+                    )
+                    Tab(
+                        selected = selectedTab == 1,
+                        onClick = { selectedTab = 1 },
+                        text = {
+                            Text(
+                                "Users",
+                                style = MaterialTheme.typography.bodyLarge.copy(
+                                    fontSize = MaterialTheme.typography.bodyLarge.fontSize * 0.8f,
+                                    fontWeight = if (selectedTab == 1) FontWeight.Bold else FontWeight.Normal,
+                                ),
+                                color = if (selectedTab == 1) {
+                                    MaterialTheme.colorScheme.primary
+                                } else {
+                                    NomadTextDim
+                                },
+                            )
+                        },
+                    )
                 }
             }
+        },
+    ) { innerPadding ->
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(top = innerPadding.calculateTopPadding())
+                .dismissKeyboardOnTap(),
+        ) {
+            SearchField(
+                query = searchQuery,
+                onQueryChange = { searchQuery = it },
+                placeholder = if (selectedTab == 0) "Search chats" else "Search users",
+            )
 
-            HorizontalDivider()
-
-            LazyColumn(modifier = Modifier.weight(1f)) {
-                // Both are stickyHeader (not one item{} + one
-                // stickyHeader) so pinning correctly hands off from
-                // "Messaged" to "Announces heard" once you scroll past
-                // the Messaged section, rather than only the first one
-                // ever pinning.
-                stickyHeader {
-                    SectionHeader(
-                        title = "Messaged",
-                        count = messaged.size,
-                        expanded = messagedExpanded,
-                        onToggle = { messagedExpanded = !messagedExpanded },
-                        modifier = Modifier.background(MaterialTheme.colorScheme.background),
-                    )
-                }
-                if (messagedExpanded) {
-                    items(messaged, key = { it.contact.lxmfHash }) { summary ->
-                        ConversationRow(
-                            summary = summary,
-                            onClick = { onOpenConversation(summary.contact.lxmfHash) },
-                            onToggleFavorite = { toggleFavorite(summary) },
-                        )
+            if (selectedTab == 0) {
+                // Headers always outside any LazyColumn — always visible,
+                // always tappable, regardless of dominance state (see
+                // NodeListScreen's identical structure/comment).
+                // See NodeListScreen's identical comment: while Favorites
+                // is dominant, expanding either section collapses the
+                // other, not just at the initial default.
+                SectionHeader(
+                    title = "Favorites",
+                    count = favorites.size,
+                    expanded = favoritesExpanded,
+                    onToggle = {
+                        favoritesExpanded = !favoritesExpanded
+                        if (favoritesExpanded && favoritesDominant) generalExpanded = false
+                    },
+                )
+                if (favoritesExpanded && favorites.isNotEmpty()) {
+                    LazyColumn(
+                        modifier = if (favoritesDominant) {
+                            Modifier.weight(1f)
+                        } else {
+                            Modifier.heightIn(max = 280.dp)
+                        },
+                    ) {
+                        items(favorites, key = { it.contact.lxmfHash }) { summary ->
+                            ConversationRow(
+                                summary = summary,
+                                onClick = { onOpenConversation(summary.contact.lxmfHash) },
+                                onToggleFavorite = { toggleFavorite(summary) },
+                            )
+                            HorizontalDivider()
+                        }
                     }
                 }
 
-                stickyHeader {
-                    SectionHeader(
-                        title = "Announces heard",
-                        count = announcesHeard.size,
-                        expanded = announcesExpanded,
-                        onToggle = { announcesExpanded = !announcesExpanded },
-                        modifier = Modifier.background(MaterialTheme.colorScheme.background),
-                    )
+                HorizontalDivider()
+
+                SectionHeader(
+                    title = "General messages",
+                    count = generalMessages.size,
+                    expanded = generalExpanded,
+                    onToggle = {
+                        generalExpanded = !generalExpanded
+                        if (generalExpanded && favoritesDominant) favoritesExpanded = false
+                    },
+                )
+                if (generalExpanded) {
+                    LazyColumn(modifier = Modifier.weight(1f)) {
+                        items(generalMessages, key = { it.contact.lxmfHash }) { summary ->
+                            ConversationRow(
+                                summary = summary,
+                                onClick = { onOpenConversation(summary.contact.lxmfHash) },
+                                onToggleFavorite = { toggleFavorite(summary) },
+                            )
+                            HorizontalDivider()
+                        }
+                    }
                 }
-                if (announcesExpanded) {
-                    items(announcesHeard, key = { it.contact.lxmfHash }) { summary ->
+            } else {
+                // Single-section tab — nothing else competing for space,
+                // so the count header stays non-collapsible (unlike
+                // Chats' two headers above).
+                SectionHeader(
+                    title = "Users",
+                    count = allUsers.size,
+                    expanded = true,
+                    onToggle = {},
+                    collapsible = false,
+                )
+                LazyColumn(modifier = Modifier.weight(1f)) {
+                    items(allUsers, key = { it.contact.lxmfHash }) { summary ->
                         ConversationRow(
                             summary = summary,
                             onClick = { onOpenConversation(summary.contact.lxmfHash) },
                             onToggleFavorite = { toggleFavorite(summary) },
                         )
+                        HorizontalDivider()
                     }
                 }
             }
@@ -182,6 +297,13 @@ fun ConversationListScreen(
     }
 }
 
+/**
+ * [collapsible] = false renders a count-only label with no chevron and
+ * no click target — for the Users tab, which is the tab's entire
+ * content (nothing else competing for space, so nothing to collapse
+ * into), but still needs the same "how many" visibility every other
+ * section header carries.
+ */
 @Composable
 private fun SectionHeader(
     title: String,
@@ -189,25 +311,33 @@ private fun SectionHeader(
     expanded: Boolean,
     onToggle: () -> Unit,
     modifier: Modifier = Modifier,
+    collapsible: Boolean = true,
 ) {
     Row(
         modifier = modifier
             .fillMaxWidth()
-            .clickable(onClick = onToggle)
-            .padding(horizontal = 16.dp, vertical = 12.dp),
+            .then(if (collapsible) Modifier.clickable(onClick = onToggle) else Modifier)
+            // Tighter than before (was 12.dp) — this is a section
+            // divider, not a screen title, doesn't need that much room.
+            .padding(horizontal = 16.dp, vertical = 6.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.SpaceBetween,
     ) {
         Text(
             text = "$title ($count)",
-            style = MaterialTheme.typography.titleLarge,
+            style = MaterialTheme.typography.titleLarge.copy(
+                fontSize = MaterialTheme.typography.titleLarge.fontSize * 0.85f,
+            ),
             color = MaterialTheme.colorScheme.secondary,
         )
-        Icon(
-            imageVector = if (expanded) Icons.Filled.ExpandLess else Icons.Filled.ExpandMore,
-            contentDescription = if (expanded) "Collapse" else "Expand",
-            tint = NomadTextDim,
-        )
+        if (collapsible) {
+            Icon(
+                imageVector = if (expanded) Icons.Filled.ExpandLess else Icons.Filled.ExpandMore,
+                contentDescription = if (expanded) "Collapse" else "Expand",
+                tint = NomadTextDim,
+                modifier = Modifier.size(20.dp),
+            )
+        }
     }
 }
 
@@ -222,7 +352,9 @@ private fun ConversationRow(
             .fillMaxWidth()
             .animateContentSize()
             .clickable(onClick = onClick)
-            .padding(horizontal = 16.dp, vertical = 12.dp),
+            // Tighter than before (was 12.dp) — a HorizontalDivider
+            // between rows now provides visual separation.
+            .padding(horizontal = 16.dp, vertical = 6.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(12.dp),
     ) {
@@ -272,9 +404,8 @@ private fun ConversationRow(
 }
 
 /** Real message preview when one exists; otherwise falls back to the LXMF
- * address + hop count + time since last announce — the Announces-heard
- * section's whole reason for existing, matching NodeRow's identical
- * fallback shape for RNS nodes. */
+ * address + hop count + time since last announce — the normal case for
+ * anyone in the Users tab who's never been messaged. */
 private fun subtitleFor(contact: Contact, lastMessage: Message?): String {
     if (lastMessage != null) return lastMessage.content
     val hops = if (contact.hopCount < 0) "?" else contact.hopCount.toString()
