@@ -17,12 +17,23 @@ writeup, this is the condensed version:
   including a failed private-attribute workaround that surfaced a
   *deeper* leftover-state error in `RNS.Transport`). Do not add any
   "restart Reticulum" code path here.
-- Connectivity toggles are implemented by adding/removing individual
-  `RNS.Interface` objects on the *already-running* `Transport` —
-  `RNS.Transport.add_interface()` / `remove_interface()` — which is
-  exactly the mechanism `RNS.Reticulum.__init__` itself uses internally
-  when loading interfaces from its own config file. `Reticulum()` itself
-  is never touched after `start()`.
+- Connectivity toggles are implemented by adding individual `RNS.Interface`
+  objects via the running `Reticulum` instance's own `_add_interface()` —
+  **not** a bare `RNS.Transport.add_interface()` + `final_init()`, which
+  was tried first and is silently incomplete: `_add_interface()` is also
+  where RNS's own config-file loader sets `ifac_size` (and `mode`, `OUT`,
+  `announce_cap`, MTU optimization, IFAC key derivation if configured) on
+  every interface it builds — none of that happens if you only call
+  `Transport.add_interface()` yourself. Confirmed by direct on-device
+  repro: a manually-added `TCPClientInterface` connected its socket fine,
+  then immediately errored every single receive with `'TCPClientInterface'
+  object has no attribute 'ifac_size'` and looped reconnecting forever.
+  `_browser.reticulum` (the actual `Reticulum()` singleton — not
+  `_browser._rns`, which is just the `RNS` module reference used
+  elsewhere in `browser.py`) is what `_add_interface()` is called on.
+  Removal still goes through `interface.detach()` +
+  `RNS.Transport.remove_interface()` directly — that side was never
+  broken, only the setup side.
 - `TCPClientInterface` and `RNodeInterface` have real, correct
   `detach()` implementations (socket/radio cleanly closed) — safe to
   add/remove repeatedly.
@@ -44,9 +55,69 @@ writeup, this is the condensed version:
 
 import logging
 import os
+import re
+import sys
 import threading
 
 log = logging.getLogger(__name__)
+
+_CTRL_RE = re.compile(r"[\r\n\x00-\x08\x0b-\x1f\x7f]")
+
+
+def _setup_logging() -> None:
+    """Equivalent of the original Flask app's app.py:_setup_logging() —
+    ported here, not just skipped, because its absence was a real gap:
+    nomadnet_web's own log.info()/log.warning() calls (browser.py's node
+    discovery, lxmf_tracker's peer announces, etc.) use the stdlib
+    `logging` module, which does nothing without a configured handler —
+    unlike RNS's own separate RNS.log() mechanism, which writes to
+    stdout unconditionally and was the only thing visible here before
+    this existed. Found by noticing a real on-device run went completely
+    silent (not even the announce-flood nomadnet_web.browser normally
+    logs) despite RNS-level activity clearly working.
+
+    Chaquopy redirects Python's sys.stdout to logcat under the
+    `python.stdout` tag automatically (confirmed — RNS.log() output
+    already appears there), so `stream=sys.stdout` reaches the same
+    place on Android that it reaches `docker logs` in the original
+    deployment.
+
+    The log-injection guard (CR/LF strip filter) is carried over
+    unchanged and is not optional: node names, LXMF sender display
+    names, and other untrusted-peer-supplied strings flow into these
+    log calls, and CodeQL's py/log-injection rule treats this filter as
+    the sanitization barrier for all of them at once, at the root
+    logger, rather than needing every call site fixed individually.
+
+    LOG_LEVEL default kept at DEBUG, matching the original app's own
+    stated reasoning (diagnostic value has repeatedly earned its keep) —
+    revisit before a production release given battery/log-volume
+    tradeoffs on a mobile device don't quite match a server deployment;
+    not reconsidered here since this app is still pre-release.
+    """
+    logging.basicConfig(
+        level=logging.DEBUG,
+        format="%(asctime)s %(levelname)-8s %(name)s: %(message)s",
+        stream=sys.stdout,
+    )
+
+    class _StripCRLFFilter(logging.Filter):
+        def filter(self, record):
+            if isinstance(record.msg, str):
+                record.msg = _CTRL_RE.sub("?", record.msg)
+            if isinstance(record.args, tuple):
+                record.args = tuple(_scrub(a) for a in record.args)
+            elif isinstance(record.args, dict):
+                record.args = {k: _scrub(v) for k, v in record.args.items()}
+            return True
+
+    logging.getLogger().addFilter(_StripCRLFFilter())
+
+
+def _scrub(value):
+    if isinstance(value, str):
+        return _CTRL_RE.sub("?", value)
+    return value
 
 _lock = threading.Lock()
 _browser = None
@@ -82,6 +153,8 @@ def start(base_dir: str) -> None:
             log.info("orchestrator.start() called again — already started, ignoring")
             return
         _started = True
+
+    _setup_logging()
 
     rns_dir = os.path.join(base_dir, "reticulum")
     os.makedirs(rns_dir, exist_ok=True)
@@ -155,6 +228,22 @@ def is_ready() -> bool:
     return _browser is not None and _browser.wait_ready(timeout=0)
 
 
+def wait_ready(timeout: float = 300.0) -> bool:
+    """Blocking readiness wait — only safe to call from a background
+    thread (Chaquopy calls block that thread, not the JVM main thread,
+    but callers must still not invoke this from Android's main thread).
+    Used once, at app startup, so the caller knows when it's safe to
+    bring up whichever interfaces should start automatically (a
+    persisted-"on" toggle from a previous session, or this app's
+    TCP-on-by-default) — `start()` itself only constructs `NodeBrowser`/
+    RNS, it never adds any `Interface`, so without a caller doing this,
+    a persisted "TCP: on" setting would be cosmetic until a user
+    manually re-toggled it. Everything else that just needs a quick
+    non-blocking check should keep using `is_ready()`.
+    """
+    return _browser is not None and _browser.wait_ready(timeout=timeout)
+
+
 # ---------------------------------------------------------------------------
 # Connectivity toggles — add/remove RNS.Interface objects on the *running*
 # Transport. See this module's docstring for why this is the mechanism,
@@ -198,8 +287,11 @@ def _set_interface(key: str, enabled: bool, factory) -> None:
             if existing is not None:
                 return  # already on
             iface = factory()
-            RNS.Transport.add_interface(iface)
-            iface.final_init()
+            # _add_interface(), not a bare Transport.add_interface() +
+            # final_init() — see this module's docstring for why the
+            # latter silently leaves an interface half-initialized
+            # (missing ifac_size and friends).
+            _browser.reticulum._add_interface(iface)
             _active_interfaces[key] = iface
             log.info("Interface '%s' enabled", key)
         else:
@@ -214,8 +306,20 @@ def _set_interface(key: str, enabled: bool, factory) -> None:
 def _make_tcp_client(host: str, port: int):
     from RNS.Interfaces.TCPInterface import TCPClientInterface
     import RNS
-    config = {"name": "TCP Client", "target_host": host, "target_port": port}
-    return TCPClientInterface(RNS.Transport, config)
+    iface = TCPClientInterface(
+        RNS.Transport, {"name": "TCP Client", "target_host": host, "target_port": port},
+    )
+    # Matches config_gen.py's own documented recommendation (python-core)
+    # for busy public hubs: disables this interface's per-link announce
+    # rate-limiting, which otherwise holds/drops new-destination announces
+    # during a burst — exactly the traffic pattern a hub like michmesh
+    # produces. RNS defaults ingress_control=True; there's no constructor
+    # config key for it (unlike target_host/target_port), it's a plain
+    # attribute set after construction — matches how TCPClientInterface
+    # itself only reads it from the config dict for the config-file
+    # loading path, not something passable to __init__ directly here.
+    iface.ingress_control = False
+    return iface
 
 
 def _make_rnode(serial_port: str):

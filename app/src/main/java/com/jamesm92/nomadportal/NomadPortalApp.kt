@@ -13,6 +13,7 @@ import com.jamesm92.nomadportal.data.messaging.StubMessagingRepository
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 
 /**
@@ -62,6 +63,27 @@ class NomadPortalApp : Application() {
         appScope.launch(Dispatchers.IO) {
             val orchestrator = Python.getInstance().getModule("nomadportal_core.orchestrator")
             orchestrator.callAttr("start", noBackupFilesDir.absolutePath)
+
+            // start() only constructs NodeBrowser/RNS — it never adds any
+            // Interface itself. Without this, a persisted "TCP: on" (the
+            // default) would just sit there as an un-acted-on preference
+            // until a user happened to manually re-toggle it in Settings,
+            // which is exactly the "toggle that doesn't actually control
+            // what it claims to" failure this app's connectivity design
+            // (Authoritative toggles) exists to avoid. Blocks this IO
+            // thread (not the main thread) until RNS finishes its own
+            // init — real deployments can take 60-300s per the
+            // orchestrator's own docstring.
+            val ready = orchestrator.callAttr("wait_ready", 300.0).toBoolean()
+            if (!ready) {
+                return@launch
+            }
+            if (settingsRepository.tcpEnabled.first()) {
+                interfaceController.setTcpEnabled(true)
+            }
+            if (settingsRepository.wifiDiscoveryEnabled.first()) {
+                interfaceController.setWifiDiscoveryEnabled(true)
+            }
         }
 
         // Same pattern as interfaceController: StubMessagingRepository is
