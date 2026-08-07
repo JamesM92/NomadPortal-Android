@@ -125,50 +125,56 @@ fun ConversationScreen(
 
     Scaffold(
         topBar = {
-            AdaptiveTopAppBar(
-                title = {
-                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        // Falls back to the initial-letter circle when
-                        // there's no icon data — per explicit request,
-                        // this should always show *something* here, not
-                        // just when a real icon happens to be set. Fixed
-                        // 40dp, same as everywhere else ContactAvatar is
-                        // used (it always applies its own .size(40.dp)
-                        // last in the modifier chain regardless of what's
-                        // passed in, so there's no smaller variant to ask
-                        // for here).
-                        ContactAvatar(liveContact)
-                        if (editingName) {
-                            OutlinedTextField(
-                                value = nameDraft,
-                                onValueChange = { nameDraft = it },
-                                singleLine = true,
-                                textStyle = MaterialTheme.typography.bodyLarge.copy(
-                                    fontSize = MaterialTheme.typography.bodyLarge.fontSize * 0.9f,
-                                ),
-                                modifier = Modifier.weight(1f, fill = false),
-                            )
-                            IconButton(onClick = {
-                                val trimmed = nameDraft.trim()
-                                if (trimmed.isNotEmpty()) {
-                                    scope.launch {
-                                        if (repository.setContactName(contact.lxmfHash, trimmed)) {
-                                            liveContact = liveContact.copy(displayName = trimmed)
+            // Wrapped in a Column — same convention ConversationListScreen
+            // uses for its own SecondaryTabRow — so the LXMF address row
+            // below can span the screen's full width independently of
+            // the title slot's own layout, per explicit direction ("the
+            // lxmf address should be seperatre from the neame header, and
+            // should be able to go across the full top of the screen").
+            Column {
+                AdaptiveTopAppBar(
+                    title = {
+                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            // Falls back to the initial-letter circle when
+                            // there's no icon data — per explicit request,
+                            // this should always show *something* here, not
+                            // just when a real icon happens to be set. Fixed
+                            // 40dp, same as everywhere else ContactAvatar is
+                            // used (it always applies its own .size(40.dp)
+                            // last in the modifier chain regardless of what's
+                            // passed in, so there's no smaller variant to ask
+                            // for here).
+                            ContactAvatar(liveContact)
+                            if (editingName) {
+                                OutlinedTextField(
+                                    value = nameDraft,
+                                    onValueChange = { nameDraft = it },
+                                    singleLine = true,
+                                    textStyle = MaterialTheme.typography.bodyLarge.copy(
+                                        fontSize = MaterialTheme.typography.bodyLarge.fontSize * 0.9f,
+                                    ),
+                                    modifier = Modifier.weight(1f, fill = false),
+                                )
+                                IconButton(onClick = {
+                                    val trimmed = nameDraft.trim()
+                                    if (trimmed.isNotEmpty()) {
+                                        scope.launch {
+                                            if (repository.setContactName(contact.lxmfHash, trimmed)) {
+                                                liveContact = liveContact.copy(displayName = trimmed)
+                                            }
                                         }
                                     }
+                                    editingName = false
+                                }) {
+                                    Icon(Icons.Filled.Check, contentDescription = "Save name")
                                 }
-                                editingName = false
-                            }) {
-                                Icon(Icons.Filled.Check, contentDescription = "Save name")
-                            }
-                            IconButton(onClick = {
-                                nameDraft = liveContact.displayName
-                                editingName = false
-                            }) {
-                                Icon(Icons.Filled.Close, contentDescription = "Cancel")
-                            }
-                        } else {
-                            Column(modifier = Modifier.weight(1f, fill = false)) {
+                                IconButton(onClick = {
+                                    nameDraft = liveContact.displayName
+                                    editingName = false
+                                }) {
+                                    Icon(Icons.Filled.Close, contentDescription = "Cancel")
+                                }
+                            } else {
                                 Text(
                                     text = liveContact.displayName,
                                     style = MaterialTheme.typography.bodyLarge.copy(
@@ -176,46 +182,48 @@ fun ConversationScreen(
                                     ),
                                     maxLines = 1,
                                     overflow = TextOverflow.Ellipsis,
+                                    modifier = Modifier.weight(1f, fill = false),
                                 )
-                                // Full LXMF address, per explicit request
-                                // — small enough plus no-wrap/ellipsis to
-                                // always stay a single line across the
-                                // top rather than pushing the header
-                                // taller.
-                                Text(
-                                    text = liveContact.lxmfHash,
-                                    style = MaterialTheme.typography.bodyLarge.copy(
-                                        fontSize = MaterialTheme.typography.bodyLarge.fontSize * 0.55f,
-                                    ),
-                                    color = NomadTextDim,
-                                    maxLines = 1,
-                                    softWrap = false,
-                                    overflow = TextOverflow.Ellipsis,
-                                )
-                            }
-                            IconButton(onClick = { editingName = true }) {
-                                Icon(Icons.Filled.Edit, contentDescription = "Rename")
+                                IconButton(onClick = { editingName = true }) {
+                                    Icon(Icons.Filled.Edit, contentDescription = "Rename")
+                                }
                             }
                         }
-                    }
-                },
-                navigationIcon = {
-                    IconButton(onClick = onBack) {
-                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
-                    }
-                },
-                actions = {
-                    PanicWipeLogo(
-                        modifier = Modifier.padding(end = 8.dp),
-                        onTripleTap = {
-                            scope.launch {
-                                PanicWipe.perform(context)
-                                PanicWipe.restartApp(context)
-                            }
-                        },
-                    )
-                },
-            )
+                    },
+                    navigationIcon = {
+                        IconButton(onClick = onBack) {
+                            Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
+                        }
+                    },
+                    actions = {
+                        PanicWipeLogo(
+                            modifier = Modifier.padding(end = 8.dp),
+                            onTripleTap = {
+                                scope.launch {
+                                    PanicWipe.perform(context)
+                                    PanicWipe.restartApp(context)
+                                }
+                            },
+                        )
+                    },
+                )
+                // Full LXMF address, separate from the name row above —
+                // per explicit direction — spanning the full screen
+                // width rather than squeezed into the title slot next to
+                // the avatar/edit controls. Small enough plus no-wrap/
+                // ellipsis to always stay a single line.
+                Text(
+                    text = liveContact.lxmfHash,
+                    style = MaterialTheme.typography.bodyLarge.copy(
+                        fontSize = MaterialTheme.typography.bodyLarge.fontSize * 0.55f,
+                    ),
+                    color = NomadTextDim,
+                    maxLines = 1,
+                    softWrap = false,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 2.dp),
+                )
+            }
         },
     ) { innerPadding ->
         // imePadding() — without it, edge-to-edge mode (enableEdgeToEdge()

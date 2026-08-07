@@ -14,6 +14,7 @@ import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
@@ -36,6 +37,7 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -52,6 +54,8 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
 import com.jamesm92.nomadportal.data.messaging.AnnounceStatus
 import com.jamesm92.nomadportal.data.messaging.ContactIcon
 import com.jamesm92.nomadportal.data.messaging.ICON_APPEARANCE_NAMES
@@ -553,78 +557,148 @@ private fun IconAppearanceEditor(
         )
 
         if (expandedSection == EditorSection.ICON) {
-            SearchField(
+            FullScreenIconPicker(
                 query = searchQuery,
                 onQueryChange = { searchQuery = it },
-                placeholder = "Search icons",
-                modifier = Modifier.fillMaxWidth(),
+                names = filteredNames,
+                selectedGlyph = selectedGlyph,
+                selectedBg = selectedBg,
+                selectedFg = selectedFg,
+                listState = listState,
+                onSelect = { selectedGlyph = it },
+                onSave = { onSave(selectedGlyph, selectedFg, selectedBg) },
+                onDismiss = { expandedSection = null },
             )
-            // Bounded height — this list nests inside HomeScreen's own
-            // verticalScroll Column, so an unbounded LazyColumn here
-            // would conflict with that outer scroll's own height
-            // constraints (same reasoning as NodeListScreen's bounded
-            // Favorites pane).
-            LazyColumn(state = listState, modifier = Modifier.fillMaxWidth().heightIn(max = 320.dp)) {
-                items(filteredNames, key = { it }) { name ->
-                    val vector = materialIconFor(name)
-                    if (vector != null) {
-                        val isSelected = name == selectedGlyph
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .clickable { selectedGlyph = name }
-                                .background(
-                                    if (isSelected) {
-                                        MaterialTheme.colorScheme.secondary.copy(alpha = 0.15f)
-                                    } else {
-                                        Color.Transparent
-                                    },
-                                )
-                                .padding(vertical = 6.dp, horizontal = 4.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(12.dp),
-                        ) {
-                            // Live-updates with the colors selected
-                            // above — free from Compose's own
-                            // recomposition since this reads the same
-                            // selectedBg/selectedFg state.
-                            Box(
+        }
+    }
+}
+
+/**
+ * Takes over the entire screen — per explicit direction — while picking
+ * an icon, rather than expanding inline within [IconAppearanceEditor]'s
+ * bordered box (which was itself already nested inside Home's own
+ * scrollable column, capping the list to a fixed 320dp regardless of
+ * actual screen size). A real full-screen [Dialog] renders in its own
+ * window above everything else, so the list can use `weight(1f)` to
+ * claim all remaining vertical space instead of a bounded height guess,
+ * and Save sits in a real fixed footer row at the true bottom of the
+ * screen, not just below a capped-height list nested several sections
+ * deep.
+ */
+@Composable
+private fun FullScreenIconPicker(
+    query: String,
+    onQueryChange: (String) -> Unit,
+    names: List<String>,
+    selectedGlyph: String,
+    selectedBg: Color,
+    selectedFg: Color,
+    listState: LazyListState,
+    onSelect: (String) -> Unit,
+    onSave: () -> Unit,
+    onDismiss: () -> Unit,
+) {
+    Dialog(
+        onDismissRequest = onDismiss,
+        properties = DialogProperties(usePlatformDefaultWidth = false),
+    ) {
+        Surface(modifier = Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
+            Column(
+                modifier = Modifier
+                    .fillMaxSize()
+                    // Same reasoning as every other imePadding() fix in
+                    // this app — a Dialog is its own window, so it needs
+                    // this independently of whatever HomeScreen itself does.
+                    .imePadding()
+                    .padding(16.dp),
+            ) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                ) {
+                    Text(text = "Choose an icon", style = MaterialTheme.typography.titleLarge)
+                    IconButton(onClick = onDismiss) {
+                        Icon(Icons.Filled.Close, contentDescription = "Close")
+                    }
+                }
+
+                SearchField(
+                    query = query,
+                    onQueryChange = onQueryChange,
+                    placeholder = "Search icons",
+                    modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
+                )
+
+                LazyColumn(
+                    state = listState,
+                    modifier = Modifier.fillMaxWidth().weight(1f).padding(top = 8.dp),
+                ) {
+                    items(names, key = { it }) { name ->
+                        val vector = materialIconFor(name)
+                        if (vector != null) {
+                            val isSelected = name == selectedGlyph
+                            Row(
                                 modifier = Modifier
-                                    .size(36.dp)
-                                    .clip(CircleShape)
-                                    .background(selectedBg),
-                                contentAlignment = Alignment.Center,
+                                    .fillMaxWidth()
+                                    .clickable { onSelect(name) }
+                                    .background(
+                                        if (isSelected) {
+                                            MaterialTheme.colorScheme.secondary.copy(alpha = 0.15f)
+                                        } else {
+                                            Color.Transparent
+                                        },
+                                    )
+                                    .padding(vertical = 6.dp, horizontal = 4.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(12.dp),
                             ) {
-                                Icon(
-                                    imageVector = vector,
-                                    contentDescription = null,
-                                    tint = selectedFg,
-                                    modifier = Modifier.size(20.dp),
+                                // Live-updates with the colors selected
+                                // in the collapsed editor behind this —
+                                // free from Compose's own recomposition
+                                // since this reads the same selectedBg/
+                                // selectedFg state passed in.
+                                Box(
+                                    modifier = Modifier
+                                        .size(36.dp)
+                                        .clip(CircleShape)
+                                        .background(selectedBg),
+                                    contentAlignment = Alignment.Center,
+                                ) {
+                                    Icon(
+                                        imageVector = vector,
+                                        contentDescription = null,
+                                        tint = selectedFg,
+                                        modifier = Modifier.size(20.dp),
+                                    )
+                                }
+                                Text(
+                                    text = name.replace('_', ' '),
+                                    style = MaterialTheme.typography.bodyLarge.copy(
+                                        fontSize = MaterialTheme.typography.bodyLarge.fontSize * 0.85f,
+                                    ),
+                                    modifier = Modifier.weight(1f),
                                 )
-                            }
-                            Text(
-                                text = name.replace('_', ' '),
-                                style = MaterialTheme.typography.bodyLarge.copy(
-                                    fontSize = MaterialTheme.typography.bodyLarge.fontSize * 0.85f,
-                                ),
-                                modifier = Modifier.weight(1f),
-                            )
-                            if (isSelected) {
-                                Icon(
-                                    imageVector = Icons.Filled.Check,
-                                    contentDescription = "Selected",
-                                    tint = MaterialTheme.colorScheme.secondary,
-                                )
+                                if (isSelected) {
+                                    Icon(
+                                        imageVector = Icons.Filled.Check,
+                                        contentDescription = "Selected",
+                                        tint = MaterialTheme.colorScheme.secondary,
+                                    )
+                                }
                             }
                         }
                     }
                 }
-            }
-            // Save lives right here, directly below the list — per
-            // explicit direction — never below anything else, since the
-            // color sections are always collapsed while this one's open.
-            Row(horizontalArrangement = Arrangement.End, modifier = Modifier.fillMaxWidth()) {
-                Button(onClick = { onSave(selectedGlyph, selectedFg, selectedBg) }) { Text("Save") }
+
+                // A real fixed footer row — per explicit direction — not
+                // just "below the list" within a longer scrolling page.
+                Row(
+                    horizontalArrangement = Arrangement.End,
+                    modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
+                ) {
+                    Button(onClick = onSave) { Text("Save") }
+                }
             }
         }
     }
