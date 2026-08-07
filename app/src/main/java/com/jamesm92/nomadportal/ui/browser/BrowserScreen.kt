@@ -27,11 +27,9 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.ArrowForward
 import androidx.compose.material.icons.filled.Code
-import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.filled.FavoriteBorder
 import androidx.compose.material.icons.filled.Fingerprint
-import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
@@ -42,7 +40,6 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -55,9 +52,6 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.SolidColor
-import android.content.ClipData
-import androidx.compose.ui.platform.ClipEntry
-import androidx.compose.ui.platform.LocalClipboard
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
@@ -125,7 +119,6 @@ fun BrowserScreen(
     val context = LocalContext.current
     val focusManager = LocalFocusManager.current
     val keyboardController = LocalSoftwareKeyboardController.current
-    val clipboard = LocalClipboard.current
     // Node list's displayName (announce-derived, same source NodeListScreen
     // shows) — used for the top bar title instead of the raw hash. Falls
     // back to a truncated hash if this node hasn't been discovered via an
@@ -148,7 +141,15 @@ fun BrowserScreen(
     // unrendered .mu text, already fetched into `rawSource` below either
     // way, so this is purely a view toggle, no extra fetch.
     var showRawView by remember { mutableStateOf(false) }
-    var showFingerprintDialog by remember { mutableStateOf(false) }
+    // "Identify to this node" — porting-notes.md §4's real "fingerprint"
+    // feature (a previous build of this icon misread that as a hash-
+    // viewer popup instead; see IdentifySession's own doc comment for
+    // the actual spec and why this is session-scoped, not persisted).
+    // Re-read per node so switching nodes reflects that node's own
+    // remembered on/off state, not whatever the last-viewed node had.
+    var identified by remember(currentAddress.nodeHash) {
+        mutableStateOf(IdentifySession.isIdentified(currentAddress.nodeHash))
+    }
     val currentNodeFavorited = nodes.find { it.hash == currentAddress.nodeHash }?.isFavorite ?: false
 
     fun navigateTo(address: PageAddress) {
@@ -197,12 +198,15 @@ fun BrowserScreen(
         }
     }
 
-    LaunchedEffect(currentAddress) {
+    // Also keyed on `identified` — toggling it mid-view re-fetches so the
+    // change actually takes effect on the next request, not just next
+    // navigation.
+    LaunchedEffect(currentAddress, identified) {
         loadError = null
         result = null
         rawSource = null
         try {
-            val source = repository.fetchPage(currentAddress)
+            val source = repository.fetchPage(currentAddress, identify = identified)
             rawSource = source
             result = converter.convert(source, nodeHash = currentAddress.nodeHash, basePath = currentAddress.path)
         } catch (e: Exception) {
@@ -225,37 +229,6 @@ fun BrowserScreen(
                 pendingWarning = null
             },
             onDismiss = { pendingWarning = null },
-        )
-    }
-
-    if (showFingerprintDialog) {
-        AlertDialog(
-            onDismissRequest = { showFingerprintDialog = false },
-            title = { Text("Node fingerprint") },
-            text = {
-                Text(
-                    text = currentAddress.nodeHash,
-                    fontFamily = NomadMono,
-                    style = MaterialTheme.typography.bodyLarge,
-                )
-            },
-            confirmButton = {
-                TextButton(onClick = {
-                    scope.launch {
-                        clipboard.setClipEntry(
-                            ClipEntry(ClipData.newPlainText("Node fingerprint", currentAddress.nodeHash)),
-                        )
-                    }
-                    showFingerprintDialog = false
-                }) {
-                    Icon(Icons.Filled.ContentCopy, contentDescription = null, modifier = Modifier.size(16.dp))
-                    Spacer(modifier = Modifier.width(6.dp))
-                    Text("Copy")
-                }
-            },
-            dismissButton = {
-                TextButton(onClick = { showFingerprintDialog = false }) { Text("Close") }
-            },
         )
     }
 
@@ -387,21 +360,29 @@ fun BrowserScreen(
                                 modifier = Modifier.size(16.dp),
                             )
                         }
-                        // Fingerprint — the rightmost icon in the
-                        // reference app's own address bar. Shows the
-                        // currently-viewed node's full destination hash
-                        // for manual verification (the actual security-
-                        // relevant use of "fingerprint" here — a short
-                        // display name can collide/be spoofed, the full
-                        // hash can't), with a one-tap copy.
+                        // "Identify to this node" — the rightmost icon in
+                        // the reference app's own address bar. Per
+                        // porting-notes.md §4, this is a *toggle*: on
+                        // sends this device's own RNS identity along with
+                        // page requests to this specific node (identify()
+                        // over the fetch Link), off browses anonymously
+                        // — not a hash-viewer popup (a previous build of
+                        // this icon misread the spec that way).
                         IconButton(
-                            onClick = { showFingerprintDialog = true },
+                            onClick = {
+                                identified = !identified
+                                IdentifySession.setIdentified(currentAddress.nodeHash, identified)
+                            },
                             modifier = Modifier.size(24.dp),
                         ) {
                             Icon(
                                 imageVector = Icons.Filled.Fingerprint,
-                                contentDescription = "Show node fingerprint",
-                                tint = NomadTextDim,
+                                contentDescription = if (identified) {
+                                    "Identifying to this node — tap to browse anonymously"
+                                } else {
+                                    "Browsing anonymously — tap to identify to this node"
+                                },
+                                tint = if (identified) MaterialTheme.colorScheme.primary else NomadTextDim,
                                 modifier = Modifier.size(16.dp),
                             )
                         }

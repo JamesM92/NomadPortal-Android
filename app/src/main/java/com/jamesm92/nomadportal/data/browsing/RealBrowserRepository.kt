@@ -62,9 +62,9 @@ class RealBrowserRepository : BrowserRepository {
         }
     }
 
-    override suspend fun fetchPage(address: PageAddress): String = withContext(Dispatchers.IO) {
+    override suspend fun fetchPage(address: PageAddress, identify: Boolean): String = withContext(Dispatchers.IO) {
         try {
-            orchestrator.callAttr("fetch_page_text", address.nodeHash, address.path).toString()
+            orchestrator.callAttr("fetch_page_text", address.nodeHash, address.path, identify).toString()
         } catch (e: PyException) {
             // Rewrapped as IOException (not left as a raw PyException) to
             // match what StubBrowserRepository already throws and what

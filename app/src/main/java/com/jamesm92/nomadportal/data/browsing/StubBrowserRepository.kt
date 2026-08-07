@@ -70,7 +70,7 @@ class StubBrowserRepository : BrowserRepository {
 
     override fun discoveredNodes(): StateFlow<List<NodeInfo>> = nodes.asStateFlow()
 
-    override suspend fun fetchPage(address: PageAddress): String {
+    override suspend fun fetchPage(address: PageAddress, identify: Boolean): String {
         delay(400) // simulates real link-establishment latency (porting-notes.md §2)
         val nodePages = pages[address.nodeHash]
             ?: throw IOException("No path to ${address.nodeHash} (simulated — edge-cache is deliberately unreachable in this stub)")

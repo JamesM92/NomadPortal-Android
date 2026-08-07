@@ -101,6 +101,8 @@ class StubMessagingRepository(private val scope: CoroutineScope) : MessagingRepo
             autoAnnounceMasterEnabled = true,
             lastAnnounceAtMillis = System.currentTimeMillis(),
             lxmfAddress = "stub0000000000000000000000000000",
+            identityHash = "stubidentity000000000000000000000",
+            hostedNodeHash = null,
             displayName = "Stub User",
             iconAppearance = ContactIcon.Appearance("hiking", Color(0xFF7EC8A0), Color.White),
             sendBlocked = false,

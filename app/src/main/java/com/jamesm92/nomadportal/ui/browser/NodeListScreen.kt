@@ -15,7 +15,6 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material.icons.automirrored.filled.Message
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.ExpandLess
 import androidx.compose.material.icons.filled.ExpandMore
@@ -43,9 +42,11 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.jamesm92.nomadportal.data.browsing.BrowserRepository
 import com.jamesm92.nomadportal.data.browsing.NodeInfo
+import com.jamesm92.nomadportal.data.messaging.MessagingRepository
 import com.jamesm92.nomadportal.panicwipe.PanicWipe
 import com.jamesm92.nomadportal.ui.components.AddByAddressDialog
 import com.jamesm92.nomadportal.ui.components.AdaptiveTopAppBar
+import com.jamesm92.nomadportal.ui.components.MessagesIconWithBadge
 import com.jamesm92.nomadportal.ui.components.PanicWipeLogo
 import com.jamesm92.nomadportal.ui.components.SearchField
 import com.jamesm92.nomadportal.ui.components.SortDropdown
@@ -83,11 +84,16 @@ private const val FAVORITES_AUTO_EXPAND_THRESHOLD = 7
 @Composable
 fun NodeListScreen(
     repository: BrowserRepository,
+    messagingRepository: MessagingRepository,
     onOpenNode: (nodeHash: String) -> Unit,
     onBack: () -> Unit,
     onOpenMessages: () -> Unit,
 ) {
     val nodes by repository.discoveredNodes().collectAsState(initial = emptyList())
+    // Powers the Messages cross-nav icon's unread badge — same source
+    // ConversationListScreen itself reads, just summed here.
+    val conversations by messagingRepository.conversations().collectAsState(initial = emptyList())
+    val totalUnread = conversations.sumOf { it.unreadCount }
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
     var searchQuery by remember { mutableStateOf("") }
@@ -166,9 +172,7 @@ fun NodeListScreen(
                     // Settings is deliberately NOT here either — per
                     // explicit request, only reachable from the main
                     // menu (Home).
-                    IconButton(onClick = onOpenMessages) {
-                        Icon(Icons.AutoMirrored.Filled.Message, contentDescription = "Messages")
-                    }
+                    MessagesIconWithBadge(unreadCount = totalUnread, onClick = onOpenMessages)
                     PanicWipeLogo(
                         modifier = Modifier.padding(end = 8.dp),
                         onTripleTap = {

@@ -600,16 +600,34 @@ def get_nodes_json() -> str:
     return json.dumps(_browser.get_nodes(user_sub=""))
 
 
-def fetch_page_text(destination_hash_hex: str, path: str) -> str:
+def fetch_page_text(destination_hash_hex: str, path: str, identify: bool = False) -> str:
     """Raises RuntimeError with browser.py's own error string on failure
     (path not found, link closed, timeout, etc.) — matches
     BrowserRepository.fetchPage's documented "throws on failure"
     contract. Blocking on real network I/O, can legitimately take
     minutes (browser.py's PAGE_HARD_CAP=600s) — callers must run this on
-    Dispatchers.IO with no artificial coroutine timeout."""
+    Dispatchers.IO with no artificial coroutine timeout.
+
+    identify: when True, identifies this device's own RNS identity to
+    the node over the fetch Link (browser.py's identify_with param,
+    which calls RNS.Link.identify() before the page request) — porting-
+    notes.md §4's "address bar with a 'fingerprint' (persistent
+    identify-to-this-node) toggle separate from anonymous browsing."
+    Resolves to this device's own LXMF/messaging identity (loaded the
+    same way messaging.py's _init_user_router does) rather than a
+    separate browsing-only identity — there's only one identity per
+    install here. Silently falls back to anonymous (identify_with=None)
+    if that identity can't be resolved for any reason, since a browse
+    should never hard-fail just because the optional identify step
+    couldn't be set up."""
     if _browser is None:
         raise RuntimeError("Browser not initialized yet")
-    content, error = _browser.fetch_page(destination_hash_hex, path)
+    identify_with = None
+    if identify and _identity_store is not None:
+        entry = _identity_store.get_for_user("")
+        if entry is not None:
+            identify_with = _identity_store.load_rns_identity(entry["id"])
+    content, error = _browser.fetch_page(destination_hash_hex, path, identify_with=identify_with)
     if error is not None:
         raise RuntimeError(error)
     return content.decode("utf-8", errors="replace")
@@ -997,10 +1015,18 @@ def get_announce_status_json() -> str:
     means disabled for that interface, there's no separate enabled
     flag), last_announce_at (unix seconds, nullable), lxmf_address
     (nullable — null before the delivery router exists, e.g. RNS still
-    starting up), send_blocked + send_blocked_reason (a read-only
-    preview of what _check_send_allowed() would currently decide — lets
-    the UI show a warning before the user even tries to send, not just
-    react to a failed send afterward)."""
+    starting up), identity_hash (nullable — the raw RNS Identity hash,
+    a genuinely different value from lxmf_address: that's the "lxmf.
+    delivery" *destination* hash derived from this identity, not the
+    identity's own hash), hosted_node_hash (nullable — null unless a
+    real SiteServer has actually set browser.py's _hosted_hash; there is
+    none yet, see that field's own "set externally after SiteServer
+    starts" comment, so this is always null today, honestly, rather than
+    fabricating a value — matches this app's "authoritative toggle"
+    convention elsewhere), send_blocked + send_blocked_reason (a
+    read-only preview of what _check_send_allowed() would currently
+    decide — lets the UI show a warning before the user even tries to
+    send, not just react to a failed send afterward)."""
     import json
     lxmf_address = None
     last_announce_at = None
@@ -1009,6 +1035,7 @@ def get_announce_status_json() -> str:
         lxmf_address = status.get("lxmf_address")
         last_announce_at = status.get("last_announce_at")
     display_name = None
+    identity_hash = None
     icon_glyph = None
     icon_fg = None
     icon_bg = None
@@ -1016,11 +1043,15 @@ def get_announce_status_json() -> str:
         entry = _identity_store.get_for_user("")
         if entry is not None:
             display_name = entry.get("name")
+            identity_hash = entry.get("id")
         icon = _identity_store.get_icon_appearance_for_user("")
         if icon is not None:
             icon_glyph = icon.get("glyph")
             icon_fg = icon.get("fg")
             icon_bg = icon.get("bg")
+    hosted_node_hash = None
+    if _browser is not None and getattr(_browser, "_hosted_hash", ""):
+        hosted_node_hash = _browser._hosted_hash
 
     # Preview only — never triggers an announce itself (unlike the real
     # _check_send_allowed() call send_message() makes), so polling this
@@ -1046,6 +1077,8 @@ def get_announce_status_json() -> str:
         "auto_announce_master_enabled": _auto_announce_master_enabled,
         "last_announce_at": last_announce_at,
         "lxmf_address": lxmf_address,
+        "identity_hash": identity_hash,
+        "hosted_node_hash": hosted_node_hash,
         "display_name": display_name,
         "icon_glyph": icon_glyph,
         "icon_fg": icon_fg,

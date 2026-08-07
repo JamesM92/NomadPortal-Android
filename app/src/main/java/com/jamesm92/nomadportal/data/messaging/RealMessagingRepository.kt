@@ -143,6 +143,8 @@ class RealMessagingRepository : MessagingRepository {
                 (obj.optDouble("last_announce_at", 0.0) * 1000).toLong()
             },
             lxmfAddress = if (obj.isNull("lxmf_address")) null else obj.optString("lxmf_address"),
+            identityHash = obj.optStringOrNull("identity_hash"),
+            hostedNodeHash = obj.optStringOrNull("hosted_node_hash"),
             displayName = if (obj.isNull("display_name")) null else obj.optString("display_name"),
             iconAppearance = if (obj.isNull("icon_glyph")) {
                 null

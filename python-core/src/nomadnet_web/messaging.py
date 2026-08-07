@@ -35,13 +35,27 @@ def _channel_to_255(v) -> int:
 def _rgba_to_hex(value) -> str:
     """FIELD_ICON_APPEARANCE color channel -> '#rrggbb'.
 
-    Accepts the real LXMF/Sideband shape — a [r,g,b] or [r,g,b,a] sequence
-    of 0-1 floats, confirmed directly against Sideband's own
-    DEFAULT_APPEARANCE = ["account", [0,0,0,1], [1,1,1,1]] (Sideband is
-    LXMF's own reference client, by the same author as the LXMF library
-    itself) — plus a legacy 3-byte (0-255 int) tuple, for back-compat with
-    an earlier build of this app that sent that shape. Falls back to grey
-    for anything else.
+    **Two incompatible real-world conventions exist for this channel's
+    shape**, confirmed directly against both clients' actual source (not
+    guessed):
+    - Sideband (LXMF's own reference client, by the LXMF library's own
+      author): a [r,g,b] or [r,g,b,a] sequence of 0-1 floats — see its
+      own DEFAULT_APPEARANCE = ["account", [0,0,0,1], [1,1,1,1]].
+    - MeshChat (github.com/liamcottle/reticulum-meshchat, meshchat.py):
+      a raw 3-byte RGB `bytes` object, no alpha — sent via
+      `ColourUtils.hex_colour_to_byte_array()` (`bytes.fromhex(hex)`)
+      and read back via `icon_appearance[1].hex()`, which would raise on
+      a list of floats. Confirmed by a real interop failure: this app's
+      icon rendered as a flat grey circle in MeshChat once this function
+      switched to Sideband's float shape, and MeshChat's own icons
+      stopped resolving here too — MeshChat is the more prevalent
+      client of the two for this specific feature, and the one this app
+      is actually tested against.
+    This function accepts *both* shapes when reading an inbound
+    icon (a bytes/bytearray triplet, or a float/int sequence) — see
+    _hex_to_icon_bytes below for which shape this app itself *sends*,
+    now MeshChat's, with Sideband no longer producible from this app.
+    Falls back to grey for anything unrecognized.
     """
     if isinstance(value, (bytes, bytearray)) and len(value) >= 3:
         return "#%02x%02x%02x" % (value[0], value[1], value[2])
@@ -51,20 +65,21 @@ def _rgba_to_hex(value) -> str:
     return "#888888"
 
 
-def _hex_to_rgba(value, alpha: float = 1.0) -> list:
-    """'#rrggbb' -> [r,g,b,a] with 0-1 float channels — the real LXMF/
-    Sideband FIELD_ICON_APPEARANCE color shape (see _rgba_to_hex). Falls
-    back to mid-grey for anything unparseable."""
-    if not isinstance(value, str):
-        return [0.5, 0.5, 0.5, alpha]
-    s = value.lstrip("#")
-    if len(s) != 6:
-        return [0.5, 0.5, 0.5, alpha]
-    try:
-        r, g, b = bytes.fromhex(s)
-    except ValueError:
-        return [0.5, 0.5, 0.5, alpha]
-    return [r / 255.0, g / 255.0, b / 255.0, alpha]
+def _hex_to_icon_bytes(value) -> bytes:
+    """'#rrggbb' -> a raw 3-byte RGB `bytes` object — MeshChat's
+    FIELD_ICON_APPEARANCE color shape (see _rgba_to_hex's own doc
+    comment for why this app sends MeshChat's convention specifically,
+    not Sideband's 0-1-float one: a real, confirmed interop failure
+    against MeshChat when this used to send floats). Falls back to
+    mid-grey for anything unparseable."""
+    if isinstance(value, str):
+        s = value.lstrip("#")
+        if len(s) == 6:
+            try:
+                return bytes.fromhex(s)
+            except ValueError:
+                pass
+    return bytes((128, 128, 128))
 
 
 def _detect_image_mime(data: bytes) -> str:
@@ -555,8 +570,8 @@ class MessagingService:
                     if icon:
                         fields[0x04] = [
                             icon.get("glyph", "?"),
-                            _hex_to_rgba(icon.get("fg", "#ffffff")),
-                            _hex_to_rgba(icon.get("bg", "#5ba3c9")),
+                            _hex_to_icon_bytes(icon.get("fg", "#ffffff")),
+                            _hex_to_icon_bytes(icon.get("bg", "#5ba3c9")),
                         ]
 
                 # Prefer OPPORTUNISTIC (single encrypted packet, no link needed).

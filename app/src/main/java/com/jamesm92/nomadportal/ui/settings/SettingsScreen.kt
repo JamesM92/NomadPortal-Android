@@ -1,5 +1,6 @@
 package com.jamesm92.nomadportal.ui.settings
 
+import android.content.ClipData
 import android.content.res.Configuration
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -26,6 +27,7 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.PowerSettingsNew
 import androidx.compose.material3.Checkbox
@@ -56,6 +58,8 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.platform.ClipEntry
+import androidx.compose.ui.platform.LocalClipboard
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalFocusManager
@@ -80,6 +84,7 @@ import com.jamesm92.nomadportal.ui.components.AdaptiveTopAppBar
 import com.jamesm92.nomadportal.ui.components.CompactTextField
 import com.jamesm92.nomadportal.ui.components.PanicWipeLogo
 import com.jamesm92.nomadportal.ui.components.VerticalScrollIndicator
+import com.jamesm92.nomadportal.ui.theme.NomadMono
 import com.jamesm92.nomadportal.ui.theme.NomadTextDim
 import kotlin.math.roundToInt
 import kotlinx.coroutines.launch
@@ -291,6 +296,24 @@ fun SettingsScreen(
                                 onCheckedChange = {
                                     scope.launch { messagingRepository.setAutoAnnounceMaster(it) }
                                 },
+                            )
+                        }
+                    }
+
+                    item { HorizontalDivider() }
+                    item { SectionHeader("Addresses") }
+                    announceStatus?.let { status ->
+                        item {
+                            AddressRow(label = "LXMF address", value = status.lxmfAddress)
+                        }
+                        item {
+                            AddressRow(label = "Identity hash", value = status.identityHash)
+                        }
+                        item {
+                            AddressRow(
+                                label = "Node address",
+                                value = status.hostedNodeHash,
+                                placeholder = "Not currently hosting a node",
                             )
                         }
                     }
@@ -588,6 +611,54 @@ private fun ToggleRow(
     ) {
         Text(text = label, style = MaterialTheme.typography.bodyLarge)
         Switch(checked = checked, onCheckedChange = onCheckedChange)
+    }
+}
+
+/** One of this device's own addresses/hashes — full, untruncated
+ * (unlike Home's identity summary, which deliberately shows only a
+ * truncated LXMF address), with a one-tap copy. [value] null renders
+ * [placeholder] instead in a dimmed/italic-equivalent style, rather
+ * than an empty row — most relevantly "Node address" before any real
+ * SiteServer exists to host one (see [AnnounceStatus.hostedNodeHash]'s
+ * own doc comment). */
+@Composable
+private fun AddressRow(label: String, value: String?, placeholder: String = "Not available yet") {
+    val scope = rememberCoroutineScope()
+    val clipboard = LocalClipboard.current
+    Column(modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp)) {
+        Text(
+            text = label,
+            style = MaterialTheme.typography.bodyLarge.copy(
+                fontSize = MaterialTheme.typography.bodyLarge.fontSize * 0.8f,
+            ),
+            color = NomadTextDim,
+        )
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text(
+                text = value ?: placeholder,
+                fontFamily = if (value != null) NomadMono else null,
+                style = MaterialTheme.typography.bodyLarge.copy(
+                    fontSize = MaterialTheme.typography.bodyLarge.fontSize * 0.85f,
+                ),
+                color = if (value != null) MaterialTheme.colorScheme.onSurface else NomadTextDim,
+                modifier = Modifier.weight(1f),
+            )
+            if (value != null) {
+                // Plain default IconButton sizing here (no compact-field
+                // treatment) — per explicit direction, Main tab's own
+                // sizing stays as it already was; only the sub-tabs got
+                // shrunk.
+                IconButton(
+                    onClick = {
+                        scope.launch {
+                            clipboard.setClipEntry(ClipEntry(ClipData.newPlainText(label, value)))
+                        }
+                    },
+                ) {
+                    Icon(Icons.Filled.ContentCopy, contentDescription = "Copy $label")
+                }
+            }
+        }
     }
 }
 

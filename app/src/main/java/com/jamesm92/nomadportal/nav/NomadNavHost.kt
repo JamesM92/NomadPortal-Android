@@ -87,6 +87,7 @@ fun NomadNavHost(
         composable(Routes.NODES) {
             NodeListScreen(
                 repository = browserRepository,
+                messagingRepository = messagingRepository,
                 onOpenNode = { hash -> navController.navigate(Routes.browser(hash)) },
                 // Same "back means home, not previous" as Messages above.
                 onBack = { navController.popBackStack(Routes.HOME, inclusive = false) },

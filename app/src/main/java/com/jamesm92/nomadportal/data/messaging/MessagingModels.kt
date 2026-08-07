@@ -142,6 +142,18 @@ data class AnnounceStatus(
     val lastAnnounceAtMillis: Long?,
     /** Null before the delivery router exists (e.g. RNS still starting up). */
     val lxmfAddress: String?,
+    /** The raw RNS Identity hash — a genuinely different value from
+     * [lxmfAddress] (that's the "lxmf.delivery" *destination* hash
+     * derived from this identity, not the identity's own hash). Null
+     * only if the identity itself doesn't exist yet. */
+    val identityHash: String?,
+    /** This device's hosted-node destination hash. Always null today —
+     * there is no real SiteServer behind node hosting yet (see
+     * [com.jamesm92.nomadportal.connectivity.RealInterfaceController]'s
+     * own doc comment), so this stays honestly null rather than
+     * fabricating a value, matching this app's "authoritative toggle"
+     * philosophy elsewhere. */
+    val hostedNodeHash: String?,
     /** This device's own LXMF display name — editable via
      * [MessagingRepository.setDisplayName]. Null only if the identity
      * itself doesn't exist yet (shouldn't normally happen — one is

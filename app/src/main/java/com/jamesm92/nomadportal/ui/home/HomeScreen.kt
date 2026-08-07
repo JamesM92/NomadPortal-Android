@@ -19,7 +19,6 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.Message
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Edit
@@ -57,6 +56,7 @@ import com.jamesm92.nomadportal.data.messaging.materialIconFor
 import com.jamesm92.nomadportal.panicwipe.PanicWipe
 import com.jamesm92.nomadportal.ui.components.AdaptiveTopAppBar
 import com.jamesm92.nomadportal.ui.components.AppLogo
+import com.jamesm92.nomadportal.ui.components.MessagesIconWithBadge
 import com.jamesm92.nomadportal.ui.theme.NomadAccent
 import com.jamesm92.nomadportal.ui.theme.NomadAccent2
 import com.jamesm92.nomadportal.ui.theme.NomadBg3
@@ -97,6 +97,8 @@ fun HomeScreen(
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val announceStatus by messagingRepository.announceStatus().collectAsState(initial = null)
+    val conversations by messagingRepository.conversations().collectAsState(initial = emptyList())
+    val totalUnread = conversations.sumOf { it.unreadCount }
 
     Scaffold(
         topBar = {
@@ -113,9 +115,7 @@ fun HomeScreen(
                     IconButton(onClick = onOpenNodes) {
                         Icon(Icons.Filled.Explore, contentDescription = "Browse nodes")
                     }
-                    IconButton(onClick = onOpenMessages) {
-                        Icon(Icons.AutoMirrored.Filled.Message, contentDescription = "Messages")
-                    }
+                    MessagesIconWithBadge(unreadCount = totalUnread, onClick = onOpenMessages)
                     IconButton(onClick = onOpenSettings) {
                         Icon(Icons.Filled.Settings, contentDescription = "Settings")
                     }
