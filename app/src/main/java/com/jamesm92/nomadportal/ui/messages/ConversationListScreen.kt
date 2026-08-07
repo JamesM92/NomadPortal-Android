@@ -19,6 +19,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.ExpandLess
 import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material.icons.filled.Explore
@@ -56,6 +57,7 @@ import com.jamesm92.nomadportal.data.messaging.ConversationSummary
 import com.jamesm92.nomadportal.data.messaging.Message
 import com.jamesm92.nomadportal.data.messaging.MessagingRepository
 import com.jamesm92.nomadportal.panicwipe.PanicWipe
+import com.jamesm92.nomadportal.ui.components.AddByAddressDialog
 import com.jamesm92.nomadportal.ui.components.AdaptiveTopAppBar
 import com.jamesm92.nomadportal.ui.components.ContactAvatar
 import com.jamesm92.nomadportal.ui.components.PanicWipeLogo
@@ -63,6 +65,7 @@ import com.jamesm92.nomadportal.ui.components.SearchField
 import com.jamesm92.nomadportal.ui.components.SortDropdown
 import com.jamesm92.nomadportal.ui.components.SortOption
 import com.jamesm92.nomadportal.ui.components.dismissKeyboardOnTap
+import com.jamesm92.nomadportal.ui.components.rememberStableOrder
 import com.jamesm92.nomadportal.ui.theme.NomadTextDim
 import kotlinx.coroutines.launch
 
@@ -100,6 +103,7 @@ fun ConversationListScreen(
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
     var searchQuery by remember { mutableStateOf("") }
+    var showAddByAddress by remember { mutableStateOf(false) }
     var selectedTab by remember { mutableIntStateOf(0) }
     var sortOption by remember { mutableStateOf(SortOption.RECENT) }
 
@@ -135,9 +139,19 @@ fun ConversationListScreen(
     // Favoriting adds a copy to Favorites, it doesn't move the contact
     // out of General messages/Users — these aren't mutually-exclusive
     // partitions (matches NodeListScreen's identical convention).
-    val favorites = sortedConversations.filter { it.contact.isFavorite }
-    val generalMessages = sortedConversations.filter { it.lastMessage != null }
-    val allUsers = sortedConversations
+    // rememberStableOrder freezes each row's screen position against a
+    // live-updating sort key reordering between polls — see
+    // NodeListScreen's identical usage/that function's own doc comment
+    // for the real mis-tap repro this fixes.
+    val favorites = rememberStableOrder(
+        sortedConversations.filter { it.contact.isFavorite },
+        key = { it.contact.lxmfHash },
+    )
+    val generalMessages = rememberStableOrder(
+        sortedConversations.filter { it.lastMessage != null },
+        key = { it.contact.lxmfHash },
+    )
+    val allUsers = rememberStableOrder(sortedConversations, key = { it.contact.lxmfHash })
 
     var favoritesExpanded by remember { mutableStateOf(true) }
     var generalExpanded by remember { mutableStateOf(true) }
@@ -248,6 +262,13 @@ fun ConversationListScreen(
                     placeholder = if (selectedTab == 0) "Search chats" else "Search users",
                     modifier = Modifier.weight(1f),
                 )
+                // Search only finds already-known contacts (message
+                // history or a live announce heard) — this is the
+                // companion entry point for an address you already know
+                // but have neither messaged nor heard announce from yet.
+                IconButton(onClick = { showAddByAddress = true }) {
+                    Icon(Icons.Filled.Add, contentDescription = "Message address")
+                }
                 SortDropdown(selected = sortOption, onSelect = { sortOption = it })
             }
 
@@ -332,6 +353,17 @@ fun ConversationListScreen(
                 }
             }
         }
+    }
+
+    if (showAddByAddress) {
+        AddByAddressDialog(
+            title = "Message an address",
+            onDismiss = { showAddByAddress = false },
+            onConfirm = { hash ->
+                showAddByAddress = false
+                onOpenConversation(hash)
+            },
+        )
     }
 }
 

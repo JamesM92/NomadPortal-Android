@@ -267,11 +267,16 @@ class MessagingService:
         takes effect on next app start regardless), and best-effort
         applied to the *live* router's destination immediately so an
         announce made right after doesn't still carry the old name.
-        set_default_app_data isn't guarded by a version check anywhere
-        else in this file the way e.g. PROCESSING_INTERVAL is, but the
-        same defensive try/except shape applies here: a failure to
-        update live app_data must never block the persisted rename from
-        succeeding, since that's the part that actually matters long-term.
+
+        `Destination.set_default_app_data(app_data)` is a real, verified
+        RNS API (confirmed directly against RNS/Destination.py:
+        `def set_default_app_data(self, app_data=None): self.default_app_data
+        = app_data` — accepts bytes-like or a callable, consumed by
+        announce() whenever no explicit app_data is passed to that call,
+        which is exactly how do_announce() above calls it). Still wrapped
+        in try/except regardless: a failure to update live app_data must
+        never block the persisted rename from succeeding, since that's
+        the part that actually matters long-term.
         """
         if self._identity_store is None:
             return False

@@ -13,9 +13,9 @@ import org.json.JSONObject
  * One user-configured TCP connection — replaces the old design's single
  * hardcoded hub (see [RealInterfaceController]'s `setTcpEnabled` doc
  * comment for that history). [id] is a stable server-assigned uuid, not
- * derived from host:port, so a connection survives being edited (not
- * exposed yet — add/remove/enable only) without losing its identity,
- * and two entries can coexist at the same host:port.
+ * derived from host:port, so a connection survives being edited
+ * ([updateConnection]) without losing its identity, and two entries can
+ * coexist at the same host:port.
  */
 data class TcpConnection(
     val id: String,
@@ -39,6 +39,12 @@ interface TcpConnectionsRepository {
     suspend fun addConnection(name: String, host: String, port: Int)
     suspend fun removeConnection(id: String)
     suspend fun setConnectionEnabled(id: String, enabled: Boolean)
+
+    /** Edits an existing connection's name/host/port in place — no
+     * longer remove-and-re-add-only. Returns true on success (false if
+     * [id] doesn't exist, [host] is blank, or [port] is out of
+     * `1..65535`). */
+    suspend fun updateConnection(id: String, name: String, host: String, port: Int): Boolean
 }
 
 class RealTcpConnectionsRepository : TcpConnectionsRepository {
@@ -70,6 +76,11 @@ class RealTcpConnectionsRepository : TcpConnectionsRepository {
             orchestrator.callAttr("set_tcp_connection_enabled", id, enabled)
         }
     }
+
+    override suspend fun updateConnection(id: String, name: String, host: String, port: Int): Boolean =
+        withContext(Dispatchers.IO) {
+            orchestrator.callAttr("update_tcp_connection", id, name, host, port).toBoolean()
+        }
 
     private fun fetchConnections(): List<TcpConnection> {
         val obj = JSONObject(orchestrator.callAttr("get_tcp_connections_json").toString())

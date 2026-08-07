@@ -25,14 +25,15 @@ import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.PowerSettingsNew
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.LocalMinimumInteractiveComponentSize
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SecondaryTabRow
@@ -41,6 +42,7 @@ import androidx.compose.material3.Switch
 import androidx.compose.material3.Tab
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -74,6 +76,7 @@ import com.jamesm92.nomadportal.panicwipe.PanicWipe
 import com.jamesm92.nomadportal.permissions.BLUETOOTH_PERMISSIONS
 import com.jamesm92.nomadportal.permissions.hasBluetoothPermissions
 import com.jamesm92.nomadportal.ui.components.AdaptiveTopAppBar
+import com.jamesm92.nomadportal.ui.components.CompactTextField
 import com.jamesm92.nomadportal.ui.components.PanicWipeLogo
 import com.jamesm92.nomadportal.ui.components.VerticalScrollIndicator
 import com.jamesm92.nomadportal.ui.theme.NomadTextDim
@@ -325,9 +328,15 @@ fun SettingsScreen(
                     }
                     item { HorizontalDivider() }
                     item { SectionHeader("Connections") }
+                    item { TcpConnectionsTableHeader() }
                     items(tcpConnections, key = { it.id }) { connection ->
-                        TcpConnectionRow(
+                        TcpConnectionEditRow(
                             connection = connection,
+                            onUpdate = { name, host, port ->
+                                scope.launch {
+                                    tcpConnectionsRepository.updateConnection(connection.id, name, host, port)
+                                }
+                            },
                             onToggle = {
                                 scope.launch { tcpConnectionsRepository.setConnectionEnabled(connection.id, it) }
                             },
@@ -337,7 +346,7 @@ fun SettingsScreen(
                         )
                     }
                     item {
-                        AddTcpConnectionForm(
+                        TcpConnectionAddRow(
                             onAdd = { name, host, port ->
                                 scope.launch { tcpConnectionsRepository.addConnection(name, host, port) }
                             },
@@ -582,99 +591,158 @@ private fun ToggleRow(
 }
 
 /** One configured TCP connection: name/host:port, its own enable
- * switch, and a delete button. No edit affordance yet — remove and
- * re-add is the only way to change host/port for now. */
+ * switch, and a delete button — a compact editable table, per explicit
+ * request ("tcp connections should be more like a editable table" /
+ * "the tcp setup needs to be in 1 or 2 lines of fields"), replacing the
+ * original remove-and-re-add-only row + separate add form. Each cell
+ * commits on focus loss (same convention as [MinutesField]); [Switch]/
+ * [IconButton] are shrunk via the shared zeroed
+ * [LocalMinimumInteractiveComponentSize] wrapper around the whole table
+ * (see [TcpConnectionsTable]... actually applied at the call site in
+ * [SettingsScreen] around every `item` in this section) so a 3-field +
+ * switch + delete row actually fits on one line at normal device widths.
+ */
 @Composable
-private fun TcpConnectionRow(
+private fun TcpConnectionsTableHeader() {
+    val labelStyle = MaterialTheme.typography.bodyLarge.copy(
+        fontSize = MaterialTheme.typography.bodyLarge.fontSize * 0.7f,
+    )
+    Row(
+        modifier = Modifier.fillMaxWidth().padding(start = 16.dp, end = 16.dp, top = 4.dp),
+        horizontalArrangement = Arrangement.spacedBy(4.dp),
+    ) {
+        Text("Name", style = labelStyle, color = NomadTextDim, modifier = Modifier.weight(0.8f))
+        Text("Host", style = labelStyle, color = NomadTextDim, modifier = Modifier.weight(1.1f))
+        Text("Port", style = labelStyle, color = NomadTextDim, modifier = Modifier.width(52.dp), textAlign = TextAlign.Center)
+        Spacer(modifier = Modifier.width(76.dp))
+    }
+}
+
+@Composable
+private fun TcpConnectionEditRow(
     connection: TcpConnection,
+    onUpdate: (name: String, host: String, port: Int) -> Unit,
     onToggle: (Boolean) -> Unit,
     onRemove: () -> Unit,
 ) {
-    Row(
-        modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.SpaceBetween,
-    ) {
-        Column(modifier = Modifier.weight(1f)) {
-            Text(
-                text = connection.name,
-                style = MaterialTheme.typography.bodyLarge.copy(
-                    fontSize = MaterialTheme.typography.bodyLarge.fontSize * 0.85f,
-                ),
-            )
-            Text(
-                text = "${connection.host}:${connection.port}",
-                style = MaterialTheme.typography.bodyLarge.copy(
-                    fontSize = MaterialTheme.typography.bodyLarge.fontSize * 0.7f,
-                ),
-                color = NomadTextDim,
-            )
+    // Keyed on connection.id only (not the whole connection) so this
+    // local draft survives a poll tick without fighting the user's own
+    // in-progress edit or losing focus — the id is what stays stable
+    // across edits, per TcpConnection's own doc comment.
+    var name by remember(connection.id) { mutableStateOf(connection.name) }
+    var host by remember(connection.id) { mutableStateOf(connection.host) }
+    var portText by remember(connection.id) { mutableStateOf(connection.port.toString()) }
+
+    fun commit() {
+        val port = portText.toIntOrNull()
+        if (host.isNotBlank() && port != null && port in 1..65535) {
+            onUpdate(name.trim(), host.trim(), port)
+        } else {
+            // Invalid edit on blur — revert to last-known-good rather
+            // than silently committing garbage or leaving the field
+            // stuck showing something that was never saved.
+            name = connection.name
+            host = connection.host
+            portText = connection.port.toString()
         }
-        Switch(checked = connection.enabled, onCheckedChange = onToggle)
-        IconButton(onClick = onRemove) {
-            Icon(
-                imageVector = Icons.Filled.Delete,
-                contentDescription = "Remove ${connection.name}",
-                tint = MaterialTheme.colorScheme.error,
+    }
+
+    // Zeroed so Switch/IconButton don't each reserve a 48dp accessibility
+    // touch target — same fix as SearchField's own icon slots (see the
+    // android-compose-compact-fields skill); without it these two alone
+    // would blow a 3-field row well past one line on most device widths.
+    CompositionLocalProvider(LocalMinimumInteractiveComponentSize provides 0.dp) {
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 2.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(4.dp),
+        ) {
+            CompactTextField(
+                value = name,
+                onValueChange = { name = it },
+                modifier = Modifier.weight(0.8f).onFocusChanged { if (!it.isFocused) commit() },
             )
+            CompactTextField(
+                value = host,
+                onValueChange = { host = it },
+                modifier = Modifier.weight(1.1f).onFocusChanged { if (!it.isFocused) commit() },
+            )
+            CompactTextField(
+                value = portText,
+                onValueChange = { new -> if (new.length <= 5 && new.all { it.isDigit() }) portText = new },
+                modifier = Modifier.width(52.dp).onFocusChanged { if (!it.isFocused) commit() },
+                textAlign = TextAlign.Center,
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+            )
+            // No explicit Modifier.size here — Switch's track/thumb are
+            // fixed-dp M3 tokens, not proportional to an outer size
+            // constraint, so forcing it smaller than its own drawn track
+            // would just clip it. LocalMinimumInteractiveComponentSize=0
+            // above still removes its extra touch-target padding.
+            Switch(checked = connection.enabled, onCheckedChange = onToggle)
+            IconButton(onClick = onRemove, modifier = Modifier.size(24.dp)) {
+                Icon(
+                    imageVector = Icons.Filled.Delete,
+                    contentDescription = "Remove ${connection.name}",
+                    tint = MaterialTheme.colorScheme.error,
+                    modifier = Modifier.size(16.dp),
+                )
+            }
         }
     }
 }
 
-/** Inline add-connection form — plain [OutlinedTextField]s (not the
- * compact BasicTextField+DecorationBox construction used elsewhere in
- * this file) since nothing here is height-constrained the way a table
- * cell or a tab-row label is; the convenience composable's default
- * sizing is fine. Name is optional (falls back to "host:port" server-
- * side — see orchestrator.py's add_tcp_connection); host and a valid
- * port [1, 65535] are required before Add does anything. */
+/** Trailing row of the same table — same 3 compact fields, an Add
+ * button in place of the switch+delete pair. Name is optional (falls
+ * back to "host:port" server-side — see orchestrator.py's
+ * add_tcp_connection); host and a valid port [1, 65535] are required
+ * before Add does anything. */
 @Composable
-private fun AddTcpConnectionForm(onAdd: (name: String, host: String, port: Int) -> Unit) {
+private fun TcpConnectionAddRow(onAdd: (name: String, host: String, port: Int) -> Unit) {
     var name by remember { mutableStateOf("") }
     var host by remember { mutableStateOf("") }
     var portText by remember { mutableStateOf("4965") }
 
-    Column(modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp)) {
-        Text(
-            "Add connection",
-            style = MaterialTheme.typography.bodyLarge.copy(fontSize = MaterialTheme.typography.bodyLarge.fontSize * 0.85f),
-            color = NomadTextDim,
-        )
-        OutlinedTextField(
-            value = name,
-            onValueChange = { name = it },
-            placeholder = { Text("Name (optional)") },
-            singleLine = true,
-            modifier = Modifier.fillMaxWidth().padding(top = 6.dp),
-        )
-        OutlinedTextField(
-            value = host,
-            onValueChange = { host = it },
-            placeholder = { Text("Host") },
-            singleLine = true,
-            modifier = Modifier.fillMaxWidth().padding(top = 6.dp),
-        )
-        OutlinedTextField(
-            value = portText,
-            onValueChange = { new -> if (new.length <= 5 && new.all { it.isDigit() }) portText = new },
-            placeholder = { Text("Port") },
-            singleLine = true,
-            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-            modifier = Modifier.fillMaxWidth().padding(top = 6.dp),
-        )
-        TextButton(
-            onClick = {
-                val port = portText.toIntOrNull()
-                if (host.isNotBlank() && port != null && port in 1..65535) {
-                    onAdd(name.trim(), host.trim(), port)
-                    name = ""
-                    host = ""
-                    portText = "4965"
-                }
-            },
-            modifier = Modifier.padding(top = 4.dp),
+    CompositionLocalProvider(LocalMinimumInteractiveComponentSize provides 0.dp) {
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(4.dp),
         ) {
-            Text("Add")
+            CompactTextField(
+                value = name,
+                onValueChange = { name = it },
+                placeholder = "Name",
+                modifier = Modifier.weight(0.8f),
+            )
+            CompactTextField(
+                value = host,
+                onValueChange = { host = it },
+                placeholder = "Host",
+                modifier = Modifier.weight(1.1f),
+            )
+            CompactTextField(
+                value = portText,
+                onValueChange = { new -> if (new.length <= 5 && new.all { it.isDigit() }) portText = new },
+                modifier = Modifier.width(52.dp),
+                textAlign = TextAlign.Center,
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+            )
+            IconButton(
+                onClick = {
+                    val port = portText.toIntOrNull()
+                    if (host.isNotBlank() && port != null && port in 1..65535) {
+                        onAdd(name.trim(), host.trim(), port)
+                        name = ""
+                        host = ""
+                        portText = "4965"
+                    }
+                },
+                modifier = Modifier.size(24.dp),
+            ) {
+                Icon(Icons.Filled.Add, contentDescription = "Add connection", modifier = Modifier.size(18.dp))
+            }
+            Spacer(modifier = Modifier.width(24.dp))
         }
     }
 }
@@ -693,10 +761,15 @@ private fun InterfaceAnnounceTab(
     onAnnounceMaxChange: (seconds: Int) -> Unit,
     onAutoAnnounceIntervalChange: (seconds: Int) -> Unit,
 ) {
-    val labelStyle = MaterialTheme.typography.bodyLarge.copy(fontSize = MaterialTheme.typography.bodyLarge.fontSize * 0.85f)
-    val hintStyle = MaterialTheme.typography.bodyLarge.copy(fontSize = MaterialTheme.typography.bodyLarge.fontSize * 0.7f)
+    // Smaller than InterfaceAnnounceTab's original 0.85f/0.7f — per
+    // explicit feedback that the settings *sub-tabs* specifically (not
+    // Main) run oversized; this composable is sub-tab-only (Main never
+    // renders per-interface fields), so it's safe to shrink further
+    // without touching Main's own text sizes.
+    val labelStyle = MaterialTheme.typography.bodyLarge.copy(fontSize = MaterialTheme.typography.bodyLarge.fontSize * 0.75f)
+    val hintStyle = MaterialTheme.typography.bodyLarge.copy(fontSize = MaterialTheme.typography.bodyLarge.fontSize * 0.65f)
 
-    Column(modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp)) {
+    Column(modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 6.dp)) {
         Text("Message (minutes)", style = labelStyle)
         Text(
             "How stale the last announce can get before a send needs a fresh one first.",
@@ -707,10 +780,10 @@ private fun InterfaceAnnounceTab(
             seconds = config.announceMaxSeconds,
             allowZero = false,
             onCommit = onAnnounceMaxChange,
-            modifier = Modifier.width(96.dp).padding(top = 4.dp),
+            modifier = Modifier.width(64.dp).padding(top = 4.dp),
         )
 
-        Spacer(modifier = Modifier.height(20.dp))
+        Spacer(modifier = Modifier.height(14.dp))
 
         Text("Auto-announce (minutes)", style = labelStyle)
         Text(
@@ -722,7 +795,7 @@ private fun InterfaceAnnounceTab(
             seconds = config.autoAnnounceIntervalSeconds,
             allowZero = true,
             onCommit = onAutoAnnounceIntervalChange,
-            modifier = Modifier.width(96.dp).padding(top = 4.dp),
+            modifier = Modifier.width(64.dp).padding(top = 4.dp),
         )
     }
 }
@@ -766,7 +839,7 @@ private fun MinutesField(
         onValueChange = { new -> if (new.length <= 5 && new.all { it.isDigit() }) text = new },
         modifier = modifier.onFocusChanged { if (!it.isFocused) commit() },
         textStyle = MaterialTheme.typography.bodyLarge.copy(
-            fontSize = MaterialTheme.typography.bodyLarge.fontSize * 0.85f,
+            fontSize = MaterialTheme.typography.bodyLarge.fontSize * 0.75f,
             textAlign = TextAlign.Center,
             color = MaterialTheme.colorScheme.onSurface,
         ),
@@ -786,7 +859,7 @@ private fun MinutesField(
                 singleLine = true,
                 visualTransformation = VisualTransformation.None,
                 interactionSource = interactionSource,
-                contentPadding = PaddingValues(horizontal = 6.dp, vertical = 4.dp),
+                contentPadding = PaddingValues(horizontal = 6.dp, vertical = 3.dp),
                 container = {
                     OutlinedTextFieldDefaults.Container(
                         enabled = true,

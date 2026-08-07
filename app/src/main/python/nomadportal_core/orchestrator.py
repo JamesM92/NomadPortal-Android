@@ -470,6 +470,44 @@ def add_tcp_connection(name: str, host: str, port: int) -> str:
     return conn_id
 
 
+def update_tcp_connection(conn_id: str, name: str, host: str, port: int) -> bool:
+    """Edits an existing connection's name/host/port in place — the
+    editable-table UI's per-cell commit-on-blur, replacing the old
+    remove-and-re-add-only workflow. If the address actually changed,
+    any currently-attached live interface for this connection is
+    detached first so _sync_tcp_interfaces() recreates it fresh against
+    the new host/port on its next call, rather than silently keeping a
+    stale connection to the old address alive under the same id."""
+    conn = _tcp_connections.get(conn_id)
+    if conn is None:
+        return False
+    host = (host or "").strip()
+    if not host:
+        return False
+    try:
+        port = int(port)
+    except (TypeError, ValueError):
+        return False
+    if not (1 <= port <= 65535):
+        return False
+    address_changed = conn["host"] != host or conn["port"] != port
+    conn["name"] = (name or "").strip() or f"{host}:{port}"
+    conn["host"] = host
+    conn["port"] = port
+    if address_changed:
+        iface = _tcp_ifaces.pop(conn_id, None)
+        if iface is not None:
+            import RNS
+            try:
+                iface.detach()
+                RNS.Transport.remove_interface(iface)
+            except Exception as exc:
+                log.warning("Failed to detach TCP connection '%s' during edit: %s", conn.get("name"), exc)
+    _save_tcp_connections()
+    _sync_tcp_interfaces()
+    return True
+
+
 def remove_tcp_connection(conn_id: str) -> None:
     conn = _tcp_connections.pop(conn_id, None)
     if conn is None:
@@ -722,8 +760,19 @@ def get_messages_json(contact_hash: str) -> str:
 
 def get_contact_json(contact_hash: str) -> str:
     """Empty string (not null — Chaquopy/Kotlin string-nullability across
-    the bridge is simpler to just avoid) if no contact or message history
-    exists for this hash at all."""
+    the bridge is simpler to just avoid) if [contact_hash] isn't even
+    valid hex — the one real "doesn't exist" case.
+
+    A syntactically valid hash with no contact/message/announce history
+    at all still returns a synthesized minimal entry (name defaults to
+    the truncated hash, no icon, not favorited) rather than "" — this is
+    what makes the Messages screen's manual "message an address" entry
+    point work for an address never seen before: ConversationScreen just
+    needs *a* [Contact] to render, sending itself already tolerates an
+    unreachable/never-announced destination the normal way (queued,
+    fails once path discovery times out — see _send()'s own PATH_WAIT
+    handling), so there's no reason to gate opening the screen on prior
+    history existing."""
     import json
     for e in _conversation_entries():
         if e["hash"] == contact_hash:
@@ -733,7 +782,18 @@ def get_contact_json(contact_hash: str) -> str:
                 "icon_glyph": e["icon_glyph"], "icon_fg": e["icon_fg"], "icon_bg": e["icon_bg"],
                 "favorited": e["favorited"],
             })
-    return ""
+    try:
+        bytes.fromhex(contact_hash)
+    except (ValueError, TypeError):
+        return ""
+    if not contact_hash:
+        return ""
+    return json.dumps({
+        "hash": contact_hash, "name": contact_hash[:16],
+        "icon": None, "icon_mime": None,
+        "icon_glyph": None, "icon_fg": None, "icon_bg": None,
+        "favorited": False,
+    })
 
 
 def set_contact_favorite(hash_hex: str, value: bool) -> bool:

@@ -16,6 +16,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.Message
+import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.ExpandLess
 import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material.icons.filled.Favorite
@@ -43,12 +44,14 @@ import androidx.compose.ui.unit.dp
 import com.jamesm92.nomadportal.data.browsing.BrowserRepository
 import com.jamesm92.nomadportal.data.browsing.NodeInfo
 import com.jamesm92.nomadportal.panicwipe.PanicWipe
+import com.jamesm92.nomadportal.ui.components.AddByAddressDialog
 import com.jamesm92.nomadportal.ui.components.AdaptiveTopAppBar
 import com.jamesm92.nomadportal.ui.components.PanicWipeLogo
 import com.jamesm92.nomadportal.ui.components.SearchField
 import com.jamesm92.nomadportal.ui.components.SortDropdown
 import com.jamesm92.nomadportal.ui.components.SortOption
 import com.jamesm92.nomadportal.ui.components.dismissKeyboardOnTap
+import com.jamesm92.nomadportal.ui.components.rememberStableOrder
 import com.jamesm92.nomadportal.ui.theme.NomadAccent2
 import com.jamesm92.nomadportal.ui.theme.NomadError
 import com.jamesm92.nomadportal.ui.theme.NomadTextDim
@@ -88,6 +91,7 @@ fun NodeListScreen(
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
     var searchQuery by remember { mutableStateOf("") }
+    var showAddByAddress by remember { mutableStateOf(false) }
     var sortOption by remember { mutableStateOf(SortOption.RECENT) }
 
     // Filters name and hash (a user may search by either) — applied
@@ -119,8 +123,12 @@ fun NodeListScreen(
     // of Announces heard — a favorited node is still a node you've
     // heard announce, so it stays listed there too (per explicit
     // request; the two sections are not a mutually-exclusive partition).
-    val favorites = sortedNodes.filter { it.isFavorite }
-    val announcesHeard = sortedNodes
+    // rememberStableOrder freezes each row's screen position against
+    // reorders from a live-updating sort key (RECENT/ANNOUNCES) between
+    // polls — see that function's own doc comment for the real mis-tap
+    // repro this fixes.
+    val favorites = rememberStableOrder(sortedNodes.filter { it.isFavorite }, key = { it.hash })
+    val announcesHeard = rememberStableOrder(sortedNodes, key = { it.hash })
 
     var favoritesExpanded by remember { mutableStateOf(true) }
     var announcesExpanded by remember { mutableStateOf(true) }
@@ -187,6 +195,12 @@ fun NodeListScreen(
                     placeholder = "Search nodes",
                     modifier = Modifier.weight(1f),
                 )
+                // Search only finds already-discovered nodes (a live
+                // announce heard) — this is the companion entry point for
+                // a hash you already know but haven't seen announce yet.
+                IconButton(onClick = { showAddByAddress = true }) {
+                    Icon(Icons.Filled.Add, contentDescription = "Go to address")
+                }
                 SortDropdown(selected = sortOption, onSelect = { sortOption = it })
             }
 
@@ -262,6 +276,17 @@ fun NodeListScreen(
                 }
             }
         }
+    }
+
+    if (showAddByAddress) {
+        AddByAddressDialog(
+            title = "Go to node address",
+            onDismiss = { showAddByAddress = false },
+            onConfirm = { hash ->
+                showAddByAddress = false
+                onOpenNode(hash)
+            },
+        )
     }
 }
 
