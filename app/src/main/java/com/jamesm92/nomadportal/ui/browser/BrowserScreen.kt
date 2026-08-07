@@ -4,11 +4,13 @@ import android.content.res.Configuration
 import androidx.compose.foundation.ScrollState
 import androidx.compose.foundation.background
 import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxHeight
@@ -23,6 +25,7 @@ import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
@@ -41,7 +44,7 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.LocalMinimumInteractiveComponentSize
 import androidx.compose.material3.LocalTextStyle
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -56,6 +59,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.runtime.collectAsState
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.SolidColor
 import android.content.ClipData
 import androidx.compose.ui.platform.ClipEntry
 import androidx.compose.ui.platform.LocalClipboard
@@ -67,6 +71,7 @@ import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -335,26 +340,25 @@ fun BrowserScreen(
                         // the IME's own Go action is enough, and dropping
                         // the button reclaims that space for the field).
                         //
-                        // height(44.dp) matches SearchField's own compact
-                        // height, which needed that exact value (44dp, not
-                        // 40dp) to stop clipping descenders on this same
-                        // textStyle/fontSize combination — no leading/
-                        // trailing icon fighting it for space here, but
-                        // the field still wants a touch more vertical
-                        // room than 40dp gives it for a single line.
-                        OutlinedTextField(
+                        // A plain OutlinedTextField(...).height(44.dp)
+                        // still clipped the bottom of the text even at
+                        // 44dp — the convenience composable doesn't
+                        // expose its own internal content padding at all,
+                        // so no amount of outer height/padding tuning on
+                        // it can actually remove that padding, only make
+                        // the box taller/shorter around it. CompactAddressField
+                        // below is the low-level BasicTextField +
+                        // OutlinedTextFieldDefaults.DecorationBox
+                        // construction instead, which *does* expose
+                        // `contentPadding` directly — set to almost
+                        // nothing per request, and the field sizes itself
+                        // to the text's real line height instead of a
+                        // guessed fixed dp value.
+                        CompactAddressField(
                             value = addressBarText,
                             onValueChange = { addressBarText = it },
-                            modifier = Modifier
-                                .weight(1f)
-                                .padding(horizontal = 2.dp)
-                                .height(44.dp),
-                            textStyle = MaterialTheme.typography.bodyLarge.copy(
-                                fontSize = MaterialTheme.typography.bodyLarge.fontSize * 0.8f,
-                            ),
-                            singleLine = true,
-                            keyboardOptions = KeyboardOptions(imeAction = ImeAction.Go),
-                            keyboardActions = KeyboardActions(onGo = { goToAddressBarUrl() }),
+                            modifier = Modifier.weight(1f).padding(horizontal = 2.dp),
+                            onGo = { goToAddressBarUrl() },
                         )
                         IconButton(
                             onClick = {
@@ -533,6 +537,64 @@ fun BrowserScreen(
             }
         }
     }
+}
+
+/**
+ * A single-line address field built from `BasicTextField` +
+ * `OutlinedTextFieldDefaults.DecorationBox` instead of the convenience
+ * `OutlinedTextField` composable — the convenience one doesn't expose its
+ * own internal content padding at all, so no outer `.height()`/`.padding()`
+ * tuning on it can ever remove that padding, only change the box size
+ * around it (confirmed the hard way: 40dp, then 44dp, still clipped the
+ * bottom of the text either way). This construction *does* expose
+ * `contentPadding` directly, set to almost nothing per explicit request —
+ * and with no outer height constraint at all, the field sizes itself to
+ * the text's real line height instead of a guessed fixed dp value, so
+ * there's nothing left to clip against.
+ */
+@Composable
+private fun CompactAddressField(
+    value: String,
+    onValueChange: (String) -> Unit,
+    modifier: Modifier = Modifier,
+    onGo: () -> Unit,
+) {
+    val interactionSource = remember { MutableInteractionSource() }
+    val textStyle = MaterialTheme.typography.bodyLarge.copy(
+        fontSize = MaterialTheme.typography.bodyLarge.fontSize * 0.8f,
+        color = MaterialTheme.colorScheme.onSurface,
+    )
+    BasicTextField(
+        value = value,
+        onValueChange = onValueChange,
+        modifier = modifier,
+        textStyle = textStyle,
+        singleLine = true,
+        cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
+        interactionSource = interactionSource,
+        keyboardOptions = KeyboardOptions(imeAction = ImeAction.Go),
+        keyboardActions = KeyboardActions(onGo = { onGo() }),
+        decorationBox = { innerTextField ->
+            OutlinedTextFieldDefaults.DecorationBox(
+                value = value,
+                innerTextField = innerTextField,
+                enabled = true,
+                singleLine = true,
+                visualTransformation = VisualTransformation.None,
+                interactionSource = interactionSource,
+                // Almost nothing left, per explicit request — a couple dp
+                // just so the cursor/descenders never touch the outline.
+                contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp),
+                container = {
+                    OutlinedTextFieldDefaults.Container(
+                        enabled = true,
+                        isError = false,
+                        interactionSource = interactionSource,
+                    )
+                },
+            )
+        },
+    )
 }
 
 /** Thin thumb along the right edge, sized/positioned from
