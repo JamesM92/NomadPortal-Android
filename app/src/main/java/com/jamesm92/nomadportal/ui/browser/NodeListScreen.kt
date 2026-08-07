@@ -284,6 +284,14 @@ fun NodeListScreen(
             onDismiss = { showAddByAddress = false },
             onConfirm = { hash ->
                 showAddByAddress = false
+                // Per explicit request: an address entered by hand is
+                // one you already specifically care about, unlike one
+                // merely discovered via announce — auto-favorite it
+                // rather than requiring a separate follow-up tap.
+                // setFavorite upserts a node entry if one doesn't exist
+                // yet (see browser.py's own doc comment), so this is
+                // safe even for a hash never seen announce from before.
+                scope.launch { repository.setFavorite(hash, true) }
                 onOpenNode(hash)
             },
         )

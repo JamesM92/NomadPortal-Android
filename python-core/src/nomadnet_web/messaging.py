@@ -268,15 +268,28 @@ class MessagingService:
         applied to the *live* router's destination immediately so an
         announce made right after doesn't still carry the old name.
 
-        `Destination.set_default_app_data(app_data)` is a real, verified
-        RNS API (confirmed directly against RNS/Destination.py:
-        `def set_default_app_data(self, app_data=None): self.default_app_data
-        = app_data` — accepts bytes-like or a callable, consumed by
-        announce() whenever no explicit app_data is passed to that call,
-        which is exactly how do_announce() above calls it). Still wrapped
-        in try/except regardless: a failure to update live app_data must
-        never block the persisted rename from succeeding, since that's
-        the part that actually matters long-term.
+        Real bug, found via a live on-device report ("the announce is
+        sending out with the hash and not the assigned name") and fixed
+        by reading LXMRouter.py directly: LXMRouter.announce() does
+        *not* consult Destination.default_app_data at all — it always
+        calls `delivery_destination.announce(app_data=
+        self.get_announce_app_data(destination_hash), ...)` with an
+        explicit app_data argument, which unconditionally wins over
+        default_app_data regardless of what that's set to.
+        get_announce_app_data() in turn reads the plain
+        `delivery_destination.display_name` attribute (set once at
+        `register_delivery_identity(identity, display_name=...)` time —
+        see _init_user_router() above). The previous
+        `dest.set_default_app_data(...)` call here was therefore
+        complete dead code for every do_announce()-driven announce: a
+        rename persisted correctly but never actually changed what any
+        live announce carried, so peers kept seeing the identity's
+        original auto-generated name (identity_store.py's
+        `_default_identity_name()`, itself hash-derived) forever — which
+        is exactly what looked like "sending the hash." The real fix is
+        the plain attribute assignment below; `display_name` has no
+        dedicated setter, confirmed directly against
+        register_delivery_identity()'s own body.
         """
         if self._identity_store is None:
             return False
@@ -288,9 +301,9 @@ class MessagingService:
         data = self._user_routers.get(user_sub)
         if data is not None:
             try:
-                data["dest"].set_default_app_data(name.encode("utf-8"))
+                data["dest"].display_name = name
             except Exception as exc:
-                log.warning("Renamed identity but couldn't update live app_data: %s", exc)
+                log.warning("Renamed identity but couldn't update live display_name: %s", exc)
         return True
 
     def set_icon_appearance(self, glyph: str, fg_hex: str, bg_hex: str, user_sub: str = "") -> bool:

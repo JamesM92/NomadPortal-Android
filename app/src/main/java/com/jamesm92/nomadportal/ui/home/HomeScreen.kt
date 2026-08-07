@@ -13,6 +13,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -35,6 +36,7 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -171,44 +173,50 @@ private fun IdentitySection(
             color = MaterialTheme.colorScheme.secondary,
         )
 
-        Row(
-            modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        // Icon and name on separate lines, per explicit request — was a
+        // single Row before; both centered now, profile-header style.
+        Column(
+            modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
         ) {
             IdentityIconPreview(
                 appearance = status.iconAppearance,
                 onClick = { editingIcon = !editingIcon },
             )
 
-            if (editingName) {
-                OutlinedTextField(
-                    value = nameDraft,
-                    onValueChange = { nameDraft = it },
-                    singleLine = true,
-                    modifier = Modifier.weight(1f),
-                )
-                IconButton(onClick = {
-                    val trimmed = nameDraft.trim()
-                    if (trimmed.isNotEmpty()) onRename(trimmed)
-                    editingName = false
-                }) {
-                    Icon(Icons.Filled.Check, contentDescription = "Save name")
-                }
-                IconButton(onClick = {
-                    nameDraft = status.displayName ?: ""
-                    editingName = false
-                }) {
-                    Icon(Icons.Filled.Close, contentDescription = "Cancel")
-                }
-            } else {
-                Text(
-                    text = status.displayName ?: "Unnamed",
-                    style = MaterialTheme.typography.bodyLarge,
-                    modifier = Modifier.weight(1f),
-                )
-                IconButton(onClick = { editingName = true }) {
-                    Icon(Icons.Filled.Edit, contentDescription = "Rename")
+            Row(
+                modifier = Modifier.padding(top = 6.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(4.dp),
+            ) {
+                if (editingName) {
+                    OutlinedTextField(
+                        value = nameDraft,
+                        onValueChange = { nameDraft = it },
+                        singleLine = true,
+                        modifier = Modifier.weight(1f, fill = false),
+                    )
+                    IconButton(onClick = {
+                        val trimmed = nameDraft.trim()
+                        if (trimmed.isNotEmpty()) onRename(trimmed)
+                        editingName = false
+                    }) {
+                        Icon(Icons.Filled.Check, contentDescription = "Save name")
+                    }
+                    IconButton(onClick = {
+                        nameDraft = status.displayName ?: ""
+                        editingName = false
+                    }) {
+                        Icon(Icons.Filled.Close, contentDescription = "Cancel")
+                    }
+                } else {
+                    Text(
+                        text = status.displayName ?: "Unnamed",
+                        style = MaterialTheme.typography.bodyLarge,
+                    )
+                    IconButton(onClick = { editingName = true }) {
+                        Icon(Icons.Filled.Edit, contentDescription = "Rename")
+                    }
                 }
             }
         }
@@ -259,36 +267,51 @@ private fun IdentitySection(
     }
 }
 
-/** Small circular preview of this device's own icon appearance, tappable
- * to open [IconAppearanceEditor]. Renders the same way
- * [com.jamesm92.nomadportal.ui.components.ContactAvatar] renders a
- * contact's [ContactIcon.Appearance] — duplicated rather than shared
- * since that composable takes a full [com.jamesm92.nomadportal.data.messaging.Contact],
- * which this device's own identity isn't one of. */
+/** Circular preview of this device's own icon appearance, tappable to
+ * open [IconAppearanceEditor] — the whole circle is a tap target (as
+ * before), plus a small pencil badge overlaid at its bottom-right corner
+ * so the edit affordance is actually visible, matching the name row's
+ * own explicit pencil [IconButton] rather than relying on an undiscoverable
+ * "the whole circle is secretly clickable" convention. Otherwise renders
+ * the same way [com.jamesm92.nomadportal.ui.components.ContactAvatar]
+ * renders a contact's [ContactIcon.Appearance] — duplicated rather than
+ * shared since that composable takes a full
+ * [com.jamesm92.nomadportal.data.messaging.Contact], which this device's
+ * own identity isn't one of. */
 @Composable
 private fun IdentityIconPreview(appearance: ContactIcon.Appearance?, onClick: () -> Unit) {
     val vector = remember(appearance?.glyphName) { appearance?.glyphName?.let(::materialIconFor) }
-    Box(
-        modifier = Modifier
-            .size(48.dp)
-            .clip(CircleShape)
-            .background(appearance?.backgroundColor ?: NomadBg3)
-            .clickable(onClick = onClick),
-        contentAlignment = Alignment.Center,
-    ) {
-        if (vector != null && appearance != null) {
-            Icon(
-                imageVector = vector,
-                contentDescription = "Edit icon",
-                tint = appearance.foregroundColor,
-                modifier = Modifier.size(28.dp),
-            )
-        } else {
+    Box(modifier = Modifier.size(52.dp).clickable(onClick = onClick)) {
+        Box(
+            modifier = Modifier
+                .size(48.dp)
+                .clip(CircleShape)
+                .background(appearance?.backgroundColor ?: NomadBg3)
+                .align(Alignment.TopStart),
+            contentAlignment = Alignment.Center,
+        ) {
+            if (vector != null && appearance != null) {
+                Icon(
+                    imageVector = vector,
+                    contentDescription = null,
+                    tint = appearance.foregroundColor,
+                    modifier = Modifier.size(28.dp),
+                )
+            }
+        }
+        Box(
+            modifier = Modifier
+                .size(20.dp)
+                .clip(CircleShape)
+                .background(MaterialTheme.colorScheme.secondary)
+                .align(Alignment.BottomEnd),
+            contentAlignment = Alignment.Center,
+        ) {
             Icon(
                 imageVector = Icons.Filled.Edit,
-                contentDescription = "Set icon",
-                tint = NomadTextDim,
-                modifier = Modifier.size(20.dp),
+                contentDescription = "Edit icon",
+                tint = Color.White,
+                modifier = Modifier.size(12.dp),
             )
         }
     }
@@ -325,6 +348,18 @@ private fun IconAppearanceEditor(
     var selectedBg by remember(current) { mutableStateOf(current?.backgroundColor ?: NomadAccent) }
     var selectedFg by remember(current) { mutableStateOf(current?.foregroundColor ?: Color.White) }
 
+    // Scrolls to whatever's already selected every time this editor is
+    // (re)opened — per explicit request — rather than always starting
+    // back at the front of the list, which previously meant re-finding
+    // your own icon by scrolling every single time.
+    val listState = rememberLazyListState()
+    LaunchedEffect(Unit) {
+        val index = ICON_APPEARANCE_NAMES.indexOf(selectedGlyph)
+        if (index >= 0) {
+            listState.scrollToItem(index)
+        }
+    }
+
     Column(
         modifier = Modifier
             .fillMaxWidth()
@@ -334,7 +369,7 @@ private fun IconAppearanceEditor(
         verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
         Text(text = "Choose an icon", style = MaterialTheme.typography.bodyLarge)
-        LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        LazyRow(state = listState, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             items(ICON_APPEARANCE_NAMES) { name ->
                 val vector = materialIconFor(name)
                 if (vector != null) {

@@ -361,6 +361,12 @@ fun ConversationListScreen(
             onDismiss = { showAddByAddress = false },
             onConfirm = { hash ->
                 showAddByAddress = false
+                // See NodeListScreen's identical comment: an address
+                // entered by hand is one you already specifically care
+                // about, so auto-favorite it rather than requiring a
+                // separate follow-up tap. setFavorite upserts a contact
+                // entry if one doesn't exist yet.
+                scope.launch { repository.setFavorite(hash, true) }
                 onOpenConversation(hash)
             },
         )

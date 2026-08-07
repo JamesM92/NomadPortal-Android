@@ -28,6 +28,7 @@ import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.PowerSettingsNew
+import androidx.compose.material3.Checkbox
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
@@ -674,12 +675,14 @@ private fun TcpConnectionEditRow(
                 textAlign = TextAlign.Center,
                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
             )
-            // No explicit Modifier.size here — Switch's track/thumb are
-            // fixed-dp M3 tokens, not proportional to an outer size
-            // constraint, so forcing it smaller than its own drawn track
-            // would just clip it. LocalMinimumInteractiveComponentSize=0
-            // above still removes its extra touch-target padding.
-            Switch(checked = connection.enabled, onCheckedChange = onToggle)
+            // Checkbox instead of Switch, per explicit request — also
+            // meaningfully more compact in a dense table row (no fixed
+            // ~52dp track the way Switch has).
+            Checkbox(
+                checked = connection.enabled,
+                onCheckedChange = onToggle,
+                modifier = Modifier.size(24.dp),
+            )
             IconButton(onClick = onRemove, modifier = Modifier.size(24.dp)) {
                 Icon(
                     imageVector = Icons.Filled.Delete,
