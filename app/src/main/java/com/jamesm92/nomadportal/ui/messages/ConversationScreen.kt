@@ -16,6 +16,9 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.Send
+import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -35,13 +38,16 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.jamesm92.nomadportal.data.messaging.Contact
 import com.jamesm92.nomadportal.data.messaging.MessagingRepository
 import com.jamesm92.nomadportal.panicwipe.PanicWipe
 import com.jamesm92.nomadportal.ui.components.AdaptiveTopAppBar
+import com.jamesm92.nomadportal.ui.components.ContactAvatar
 import com.jamesm92.nomadportal.ui.components.PanicWipeLogo
 import com.jamesm92.nomadportal.ui.components.dismissKeyboardOnTap
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
 /**
@@ -81,6 +87,21 @@ fun ConversationScreen(
     var draft by remember { mutableStateOf("") }
     var sendError by remember { mutableStateOf<String?>(null) }
 
+    // The Contact passed in is a one-shot snapshot from nav time — polled
+    // here (same 4s convention as every other repository poll in this
+    // app) so a rename or an icon that arrives while this screen is
+    // already open actually shows up without needing to back out and
+    // reopen the conversation.
+    var liveContact by remember(contact.lxmfHash) { mutableStateOf(contact) }
+    LaunchedEffect(contact.lxmfHash) {
+        while (true) {
+            repository.contact(contact.lxmfHash)?.let { liveContact = it }
+            delay(4000)
+        }
+    }
+    var editingName by remember { mutableStateOf(false) }
+    var nameDraft by remember(liveContact.displayName) { mutableStateOf(liveContact.displayName) }
+
     LaunchedEffect(contact.lxmfHash) {
         repository.markRead(contact.lxmfHash)
     }
@@ -102,7 +123,52 @@ fun ConversationScreen(
     Scaffold(
         topBar = {
             AdaptiveTopAppBar(
-                title = { Text(contact.displayName) },
+                title = {
+                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        // Falls back to the initial-letter circle when
+                        // there's no icon data — per explicit request,
+                        // this should always show *something* here, not
+                        // just when a real icon happens to be set. Fixed
+                        // 40dp, same as everywhere else ContactAvatar is
+                        // used (it always applies its own .size(40.dp)
+                        // last in the modifier chain regardless of what's
+                        // passed in, so there's no smaller variant to ask
+                        // for here).
+                        ContactAvatar(liveContact)
+                        if (editingName) {
+                            OutlinedTextField(
+                                value = nameDraft,
+                                onValueChange = { nameDraft = it },
+                                singleLine = true,
+                                modifier = Modifier.weight(1f, fill = false),
+                            )
+                            IconButton(onClick = {
+                                val trimmed = nameDraft.trim()
+                                if (trimmed.isNotEmpty()) {
+                                    scope.launch {
+                                        if (repository.setContactName(contact.lxmfHash, trimmed)) {
+                                            liveContact = liveContact.copy(displayName = trimmed)
+                                        }
+                                    }
+                                }
+                                editingName = false
+                            }) {
+                                Icon(Icons.Filled.Check, contentDescription = "Save name")
+                            }
+                            IconButton(onClick = {
+                                nameDraft = liveContact.displayName
+                                editingName = false
+                            }) {
+                                Icon(Icons.Filled.Close, contentDescription = "Cancel")
+                            }
+                        } else {
+                            Text(liveContact.displayName, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                            IconButton(onClick = { editingName = true }) {
+                                Icon(Icons.Filled.Edit, contentDescription = "Rename")
+                            }
+                        }
+                    }
+                },
                 navigationIcon = {
                     IconButton(onClick = onBack) {
                         Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")

@@ -60,6 +60,38 @@ class ContactStore:
         self._persist(snapshot)
         return entry
 
+    def set_custom_name(self, hash_hex: str, name: str) -> bool:
+        """Explicitly, permanently rename a contact — sets `custom_name`
+        so orchestrator.py's `_conversation_entries()` knows to stop
+        preferring the live LXMF-peer-announced name for this hash from
+        now on (see that function's own doc comment). Distinct from the
+        plain `name` an entry gets auto-created with (upsert()/set_icon()/
+        set_icon_appearance() all fall back to the hash prefix), which is
+        just a placeholder meant to keep tracking the peer's own
+        announced name until the user actually renames them."""
+        name = (name or "").strip()
+        if not name:
+            return False
+        with self._lock:
+            entry = self._data.get(hash_hex)
+            if entry is None:
+                entry = {
+                    "hash":      hash_hex,
+                    "name":      name,
+                    "note":      "",
+                    "favorited": False,
+                    "created":   time.time(),
+                    "updated":   time.time(),
+                }
+                self._data[hash_hex] = entry
+                log.info("Added contact (custom name) %s", hash_hex[:16])
+            entry["name"] = name
+            entry["custom_name"] = True
+            entry["updated"] = time.time()
+            snapshot = dict(self._data)
+        self._persist(snapshot)
+        return True
+
     def delete(self, hash_hex: str) -> bool:
         with self._lock:
             if hash_hex not in self._data:

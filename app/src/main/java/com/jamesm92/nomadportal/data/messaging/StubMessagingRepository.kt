@@ -87,6 +87,19 @@ class StubMessagingRepository(private val scope: CoroutineScope) : MessagingRepo
         }
     }
 
+    override suspend fun setContactName(contactHash: String, name: String): Boolean {
+        val trimmed = name.trim()
+        if (trimmed.isEmpty()) return false
+        contacts.value = contacts.value.map {
+            if (it.lxmfHash == contactHash) it.copy(displayName = trimmed) else it
+        }
+        return true
+    }
+
+    override suspend fun deleteConversation(contactHash: String) {
+        contacts.value = contacts.value.filterNot { it.lxmfHash == contactHash }
+    }
+
     override fun contact(contactHash: String): Contact? =
         contacts.value.find { it.lxmfHash == contactHash }
 

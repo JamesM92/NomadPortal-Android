@@ -407,6 +407,16 @@ class MessagingService:
         if self._msg_store:
             self._msg_store.mark_read(msg_id, owner=owner)
 
+    def delete_conversation(self, hash_hex: str, user_sub: str = "") -> int:
+        """Removes all sent+received messages with this counterparty for
+        this user — the message-history half of "delete this chat"; the
+        contact_store entry (name/icon/favorite) is a separate concern,
+        deleted by orchestrator.delete_conversation() alongside this.
+        Returns how many messages were actually removed."""
+        if self._msg_store:
+            return self._msg_store.delete_conversation(hash_hex, owner=user_sub)
+        return 0
+
     # ------------------------------------------------------------------
     # Internal
     # ------------------------------------------------------------------

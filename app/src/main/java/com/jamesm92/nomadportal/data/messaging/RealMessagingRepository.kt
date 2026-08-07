@@ -74,6 +74,17 @@ class RealMessagingRepository : MessagingRepository {
         }
     }
 
+    override suspend fun setContactName(contactHash: String, name: String): Boolean =
+        withContext(Dispatchers.IO) {
+            orchestrator.callAttr("set_contact_name", contactHash, name).toBoolean()
+        }
+
+    override suspend fun deleteConversation(contactHash: String) {
+        withContext(Dispatchers.IO) {
+            orchestrator.callAttr("delete_conversation", contactHash)
+        }
+    }
+
     override fun announceStatus(): Flow<AnnounceStatus> = flow {
         while (true) {
             emit(fetchAnnounceStatus())

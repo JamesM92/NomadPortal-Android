@@ -20,11 +20,13 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.ExpandLess
 import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material.icons.filled.Explore
 import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.filled.FavoriteBorder
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
@@ -34,6 +36,7 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SecondaryTabRow
 import androidx.compose.material3.Tab
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -169,6 +172,11 @@ fun ConversationListScreen(
         scope.launch { repository.setFavorite(summary.contact.lxmfHash, !summary.contact.isFavorite) }
     }
 
+    // Confirmed before actually deleting — hard to reverse (message
+    // history is gone for good), per this app's own standing convention
+    // for destructive actions elsewhere (panic wipe, etc.).
+    var pendingDelete by remember { mutableStateOf<Contact?>(null) }
+
     val isLandscape = LocalConfiguration.current.orientation == Configuration.ORIENTATION_LANDSCAPE
 
     Scaffold(
@@ -301,6 +309,7 @@ fun ConversationListScreen(
                                 summary = summary,
                                 onClick = { onOpenConversation(summary.contact.lxmfHash) },
                                 onToggleFavorite = { toggleFavorite(summary) },
+                                onDelete = { pendingDelete = summary.contact },
                             )
                             HorizontalDivider()
                         }
@@ -325,6 +334,7 @@ fun ConversationListScreen(
                                 summary = summary,
                                 onClick = { onOpenConversation(summary.contact.lxmfHash) },
                                 onToggleFavorite = { toggleFavorite(summary) },
+                                onDelete = { pendingDelete = summary.contact },
                             )
                             HorizontalDivider()
                         }
@@ -353,6 +363,31 @@ fun ConversationListScreen(
                 }
             }
         }
+    }
+
+    pendingDelete?.let { contact ->
+        AlertDialog(
+            onDismissRequest = { pendingDelete = null },
+            title = { Text("Delete chat?") },
+            text = {
+                Text(
+                    "This removes all message history with ${contact.displayName} from this " +
+                        "device, along with their saved name/icon/favorite state. They can still " +
+                        "show up again under Users if they're actively announcing on the mesh.",
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    scope.launch { repository.deleteConversation(contact.lxmfHash) }
+                    pendingDelete = null
+                }) {
+                    Text("Delete", color = MaterialTheme.colorScheme.error)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { pendingDelete = null }) { Text("Cancel") }
+            },
+        )
     }
 
     if (showAddByAddress) {
@@ -422,6 +457,10 @@ private fun ConversationRow(
     summary: ConversationSummary,
     onClick: () -> Unit,
     onToggleFavorite: () -> Unit,
+    // Null on the Users tab — deleting a "chat" only makes sense where
+    // there's actual history/state to clear, per explicit request
+    // ("delete chats from our chats tab").
+    onDelete: (() -> Unit)? = null,
 ) {
     Row(
         modifier = Modifier
@@ -475,6 +514,15 @@ private fun ConversationRow(
                 contentDescription = if (summary.contact.isFavorite) "Unfavorite" else "Favorite",
                 tint = if (summary.contact.isFavorite) MaterialTheme.colorScheme.primary else NomadTextDim,
             )
+        }
+        if (onDelete != null) {
+            IconButton(onClick = onDelete) {
+                Icon(
+                    imageVector = Icons.Filled.Delete,
+                    contentDescription = "Delete chat",
+                    tint = NomadTextDim,
+                )
+            }
         }
     }
 }

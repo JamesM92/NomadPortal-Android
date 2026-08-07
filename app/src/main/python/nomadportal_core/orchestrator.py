@@ -668,7 +668,23 @@ def _conversation_entries() -> list:
     and heard-but-never-messaged peers. Powers the same three-section
     split ConversationListScreen.kt uses (Favorites/Messaged/Announces
     heard), mirroring NodeListScreen's Favorites/Announces-heard —
-    `favorited`/`last_seen`/`hops` are included for exactly that."""
+    `favorited`/`last_seen`/`hops` are included for exactly that.
+
+    Name resolution, per explicit design direction ("give custom names
+    to users... but for any we havent renamed to be renamed if they get
+    a new announce"): a contact explicitly renamed via set_contact_name()
+    (contact.custom_name == True) always keeps that name. Everyone else
+    tracks the live LXMF-peer-tracker name, live-updating on every new
+    announce, even once a ContactStore entry exists — a contact's `name`
+    field gets auto-populated with a hash-prefix placeholder the moment
+    an entry is created for any other reason (upsert()/set_icon()/
+    set_icon_appearance() all do this), and that placeholder must never
+    permanently block the real announced name from ever showing, which
+    is exactly what a plain `contact["name"] or peer["name"]` priority
+    chain used to do (a real reported bug once already, for the
+    favoriting path specifically — see set_contact_favorite()'s own doc
+    comment for that history; this generalizes the same fix to every
+    entry-creation path, not just that one)."""
     if _messaging is None:
         return []
     sent = _messaging.sent_messages()
@@ -702,7 +718,10 @@ def _conversation_entries() -> list:
             for m in received if m["source"] == h
         ]
         all_msgs = sorted(my_sent + my_received, key=lambda m: m["ts"])
-        name = (contact["name"] if contact else None) or (peer.get("name") if peer else None) or h[:16]
+        if contact and contact.get("custom_name"):
+            name = contact["name"]
+        else:
+            name = (peer.get("name") if peer else None) or (contact["name"] if contact else None) or h[:16]
         entries.append({
             "hash": h,
             "name": name,
@@ -845,6 +864,33 @@ def set_contact_favorite(hash_hex: str, value: bool) -> bool:
                 best_name = peer.get("name") or ""
         store.upsert(hash_hex, name=best_name)
     return store.set_favorite(hash_hex, value)
+
+
+def set_contact_name(hash_hex: str, name: str) -> bool:
+    """Explicitly, permanently rename a contact — see
+    _conversation_entries()'s own doc comment for how this interacts
+    with the live LXMF-peer-announced name once set. False if name is
+    blank."""
+    if _contact_store is None:
+        return False
+    return _contact_store.for_user("").set_custom_name(hash_hex, name)
+
+
+def delete_conversation(hash_hex: str) -> bool:
+    """Deletes a chat: all sent/received message history with this
+    counterparty, plus the ContactStore entry itself (name/icon/
+    favorite/custom_name all go with it). If this contact is still
+    actively announcing on the mesh, they'll still show up again under
+    Users/Announces-heard (a live LXMF peer announce is a separate data
+    source _conversation_entries() unions in — see that function's own
+    doc comment) — this only clears *this device's own* saved history/
+    metadata about them, not "block" or "forget they exist on the
+    network," which isn't a real operation LXMF supports anyway."""
+    if _messaging is not None:
+        _messaging.delete_conversation(hash_hex, user_sub="")
+    if _contact_store is not None:
+        _contact_store.for_user("").delete(hash_hex)
+    return True
 
 
 # ---------------------------------------------------------------------------

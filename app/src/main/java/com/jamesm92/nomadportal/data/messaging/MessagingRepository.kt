@@ -33,6 +33,18 @@ interface MessagingRepository {
     suspend fun markRead(contactHash: String)
     suspend fun setFavorite(contactHash: String, favorite: Boolean)
 
+    /** Explicitly, permanently renames a contact — once set, this name
+     * stops tracking their live LXMF-announced name (see orchestrator.py's
+     * `_conversation_entries()` own doc comment). Blank names are
+     * rejected (returns false). */
+    suspend fun setContactName(contactHash: String, name: String): Boolean
+
+    /** Deletes this chat: all message history with this contact plus
+     * their saved name/icon/favorite state. They can still reappear
+     * under Users/Announces-heard if actively announcing — this only
+     * clears this device's own saved data about them. */
+    suspend fun deleteConversation(contactHash: String)
+
     /** Synchronous lookup — contact display data (name/icon) for a known hash, or null if not found. */
     fun contact(contactHash: String): Contact?
 
