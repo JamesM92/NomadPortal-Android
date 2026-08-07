@@ -6,6 +6,7 @@ import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -81,7 +82,13 @@ fun ConversationScreen(
             )
         },
     ) { innerPadding ->
-        Column(modifier = Modifier.padding(innerPadding)) {
+        // imePadding() — without it, edge-to-edge mode (enableEdgeToEdge()
+        // in MainActivity) leaves the compose box sitting wherever it was
+        // laid out, right underneath the soft keyboard when it opens,
+        // instead of being pushed up above it (confirmed: a real on-device
+        // send test showed the input field invisible behind the keyboard,
+        // only the suggestion bar visible above it).
+        Column(modifier = Modifier.padding(innerPadding).imePadding()) {
             LazyColumn(
                 modifier = Modifier
                     .fillMaxSize()

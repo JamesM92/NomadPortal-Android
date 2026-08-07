@@ -7,10 +7,10 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
@@ -23,6 +23,7 @@ import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.filled.FavoriteBorder
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -52,18 +53,19 @@ import kotlinx.coroutines.launch
 
 /**
  * Every known LXMF contact — not just active conversations. Split into
- * three collapsible sections, mirroring
+ * three sections, mirroring
  * [com.jamesm92.nomadportal.ui.browser.NodeListScreen]'s Favorites/
  * Announces-heard pattern:
- * - **Favorites** — pinned (sticky header, always reachable) even for a
- *   contact never actually messaged. Favorites is conceptually a
- *   sub-grouping of "people worth seeing here," not a category
- *   independent of messaging — a favorited-but-unmessaged contact still
- *   belongs on this screen, just called out first.
- * - **Messaged** — real message history, not favorited.
+ * - **Favorites** — a fixed pane above the rest, always visible (its own
+ *   bounded/independently-scrolling list, not part of the LazyColumn
+ *   below — see that screen's doc comment for why not
+ *   `LazyColumn.stickyHeader`), even for a contact never actually
+ *   messaged. Favoriting adds a copy here; it doesn't remove the contact
+ *   from Messaged/Announces heard below.
+ * - **Messaged** — real message history.
  * - **Announces heard** — LXMF peers heard via announce (see
- *   `nomadnet_web.lxmf_tracker`) but never favorited or messaged —
- *   surfaces the LXMF address/hop-count/last-heard data
+ *   `nomadnet_web.lxmf_tracker`) but never messaged — surfaces the LXMF
+ *   address/hop-count/last-heard data
  *   [Contact.lastAnnounceMillis]/[Contact.hopCount] carry for exactly
  *   this case, same fields [com.jamesm92.nomadportal.data.browsing.NodeInfo]
  *   uses for RNS node announces.
@@ -82,9 +84,12 @@ fun ConversationListScreen(
     val conversations by repository.conversations().collectAsState(initial = emptyList())
     val scope = rememberCoroutineScope()
 
+    // Favoriting adds a copy to Favorites, it doesn't move the contact
+    // out of Messaged/Announces heard — per explicit request, these
+    // sections aren't a mutually-exclusive partition.
     val favorites = conversations.filter { it.contact.isFavorite }
-    val messaged = conversations.filter { !it.contact.isFavorite && it.lastMessage != null }
-    val announcesHeard = conversations.filter { !it.contact.isFavorite && it.lastMessage == null }
+    val messaged = conversations.filter { it.lastMessage != null }
+    val announcesHeard = conversations.filter { it.lastMessage == null }
 
     var favoritesExpanded by remember { mutableStateOf(true) }
     var messagedExpanded by remember { mutableStateOf(true) }
@@ -106,62 +111,71 @@ fun ConversationListScreen(
             )
         },
     ) { innerPadding ->
-        LazyColumn(
-            modifier = Modifier.fillMaxSize(),
-            contentPadding = PaddingValues(top = innerPadding.calculateTopPadding()),
-        ) {
-            stickyHeader {
-                SectionHeader(
-                    title = "Favorites",
-                    count = favorites.size,
-                    expanded = favoritesExpanded,
-                    onToggle = { favoritesExpanded = !favoritesExpanded },
-                    modifier = Modifier.background(MaterialTheme.colorScheme.background),
-                )
-            }
-            if (favoritesExpanded) {
-                items(favorites, key = { it.contact.lxmfHash }) { summary ->
-                    ConversationRow(
-                        summary = summary,
-                        onClick = { onOpenConversation(summary.contact.lxmfHash) },
-                        onToggleFavorite = { toggleFavorite(summary) },
-                    )
+        Column(modifier = Modifier.fillMaxSize().padding(top = innerPadding.calculateTopPadding())) {
+            // Fixed pane — always visible regardless of how far
+            // Messaged/Announces heard is scrolled.
+            SectionHeader(
+                title = "Favorites",
+                count = favorites.size,
+                expanded = favoritesExpanded,
+                onToggle = { favoritesExpanded = !favoritesExpanded },
+            )
+            if (favoritesExpanded && favorites.isNotEmpty()) {
+                LazyColumn(modifier = Modifier.heightIn(max = 280.dp)) {
+                    items(favorites, key = { it.contact.lxmfHash }) { summary ->
+                        ConversationRow(
+                            summary = summary,
+                            onClick = { onOpenConversation(summary.contact.lxmfHash) },
+                            onToggleFavorite = { toggleFavorite(summary) },
+                        )
+                    }
                 }
             }
 
-            item {
-                SectionHeader(
-                    title = "Messaged",
-                    count = messaged.size,
-                    expanded = messagedExpanded,
-                    onToggle = { messagedExpanded = !messagedExpanded },
-                )
-            }
-            if (messagedExpanded) {
-                items(messaged, key = { it.contact.lxmfHash }) { summary ->
-                    ConversationRow(
-                        summary = summary,
-                        onClick = { onOpenConversation(summary.contact.lxmfHash) },
-                        onToggleFavorite = { toggleFavorite(summary) },
+            HorizontalDivider()
+
+            LazyColumn(modifier = Modifier.weight(1f)) {
+                // Both are stickyHeader (not one item{} + one
+                // stickyHeader) so pinning correctly hands off from
+                // "Messaged" to "Announces heard" once you scroll past
+                // the Messaged section, rather than only the first one
+                // ever pinning.
+                stickyHeader {
+                    SectionHeader(
+                        title = "Messaged",
+                        count = messaged.size,
+                        expanded = messagedExpanded,
+                        onToggle = { messagedExpanded = !messagedExpanded },
+                        modifier = Modifier.background(MaterialTheme.colorScheme.background),
                     )
                 }
-            }
+                if (messagedExpanded) {
+                    items(messaged, key = { it.contact.lxmfHash }) { summary ->
+                        ConversationRow(
+                            summary = summary,
+                            onClick = { onOpenConversation(summary.contact.lxmfHash) },
+                            onToggleFavorite = { toggleFavorite(summary) },
+                        )
+                    }
+                }
 
-            item {
-                SectionHeader(
-                    title = "Announces heard",
-                    count = announcesHeard.size,
-                    expanded = announcesExpanded,
-                    onToggle = { announcesExpanded = !announcesExpanded },
-                )
-            }
-            if (announcesExpanded) {
-                items(announcesHeard, key = { it.contact.lxmfHash }) { summary ->
-                    ConversationRow(
-                        summary = summary,
-                        onClick = { onOpenConversation(summary.contact.lxmfHash) },
-                        onToggleFavorite = { toggleFavorite(summary) },
+                stickyHeader {
+                    SectionHeader(
+                        title = "Announces heard",
+                        count = announcesHeard.size,
+                        expanded = announcesExpanded,
+                        onToggle = { announcesExpanded = !announcesExpanded },
+                        modifier = Modifier.background(MaterialTheme.colorScheme.background),
                     )
+                }
+                if (announcesExpanded) {
+                    items(announcesHeard, key = { it.contact.lxmfHash }) { summary ->
+                        ConversationRow(
+                            summary = summary,
+                            onClick = { onOpenConversation(summary.contact.lxmfHash) },
+                            onToggleFavorite = { toggleFavorite(summary) },
+                        )
+                    }
                 }
             }
         }

@@ -7,9 +7,10 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
@@ -21,6 +22,7 @@ import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.filled.FavoriteBorder
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -50,12 +52,16 @@ import kotlinx.coroutines.launch
  * indicator, favorites, time since last announce. Real RNS
  * announce-listening as of Aug 2026 — see
  * [com.jamesm92.nomadportal.data.browsing.RealBrowserRepository]. Split
- * into two collapsible sections — favorited nodes first, then everything
- * else heard on the mesh — so a busy hub's announce volume doesn't bury
- * the handful of nodes someone actually cares about. The Favorites header
- * is pinned (`stickyHeader`) so it's always reachable to re-collapse/
- * re-expand without scrolling back up, even with a long "Announces heard"
- * list beneath it.
+ * into two sections — favorited nodes first, then everything heard on
+ * the mesh (favoriting adds a copy here, it doesn't remove the node from
+ * "Announces heard") — so a busy hub's announce volume doesn't bury the
+ * handful of nodes someone actually cares about. Favorites is a fixed
+ * pane above its own bounded/independently-scrolling list, not part of
+ * the "Announces heard" LazyColumn below — always visible, never
+ * scrolled away, without needing `LazyColumn.stickyHeader` (tried first;
+ * real device testing showed it not actually staying pinned once
+ * scrolled past — this sidesteps whatever was wrong there instead of
+ * chasing it further).
  */
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
 @Composable
@@ -67,8 +73,12 @@ fun NodeListScreen(
     val nodes by repository.discoveredNodes().collectAsState(initial = emptyList())
     val scope = rememberCoroutineScope()
 
+    // Favoriting adds a copy to Favorites, it doesn't move the node out
+    // of Announces heard — a favorited node is still a node you've
+    // heard announce, so it stays listed there too (per explicit
+    // request; the two sections are not a mutually-exclusive partition).
     val favorites = nodes.filter { it.isFavorite }
-    val announcesHeard = nodes.filter { !it.isFavorite }
+    val announcesHeard = nodes
 
     var favoritesExpanded by remember { mutableStateOf(true) }
     var announcesExpanded by remember { mutableStateOf(true) }
@@ -85,49 +95,58 @@ fun NodeListScreen(
             )
         },
     ) { innerPadding ->
-        LazyColumn(contentPadding = PaddingValues(top = innerPadding.calculateTopPadding())) {
-            stickyHeader {
-                SectionHeader(
-                    title = "Favorites",
-                    count = favorites.size,
-                    expanded = favoritesExpanded,
-                    onToggle = { favoritesExpanded = !favoritesExpanded },
-                    // Opaque background — a sticky header sits above
-                    // scrolled-past content, not composited with it, so
-                    // without this the "Announces heard" rows underneath
-                    // would show through as the list scrolls.
-                    modifier = Modifier.background(MaterialTheme.colorScheme.background),
-                )
-            }
-            if (favoritesExpanded) {
-                items(favorites, key = { it.hash }) { node ->
-                    NodeRow(
-                        node = node,
-                        onClick = { onOpenNode(node.hash) },
-                        onToggleFavorite = {
-                            scope.launch { repository.setFavorite(node.hash, !node.isFavorite) }
-                        },
-                    )
+        Column(modifier = Modifier.fillMaxSize().padding(top = innerPadding.calculateTopPadding())) {
+            // Fixed pane — not inside the LazyColumn below, so it's
+            // always visible regardless of how far "Announces heard" is
+            // scrolled. Bounded height + its own LazyColumn (not a plain
+            // Column) so a large favorites list scrolls within itself
+            // instead of pushing "Announces heard" off-screen entirely.
+            SectionHeader(
+                title = "Favorites",
+                count = favorites.size,
+                expanded = favoritesExpanded,
+                onToggle = { favoritesExpanded = !favoritesExpanded },
+            )
+            if (favoritesExpanded && favorites.isNotEmpty()) {
+                LazyColumn(modifier = Modifier.heightIn(max = 280.dp)) {
+                    items(favorites, key = { it.hash }) { node ->
+                        NodeRow(
+                            node = node,
+                            onClick = { onOpenNode(node.hash) },
+                            onToggleFavorite = {
+                                scope.launch { repository.setFavorite(node.hash, !node.isFavorite) }
+                            },
+                        )
+                    }
                 }
             }
 
-            item {
-                SectionHeader(
-                    title = "Announces heard",
-                    count = announcesHeard.size,
-                    expanded = announcesExpanded,
-                    onToggle = { announcesExpanded = !announcesExpanded },
-                )
-            }
-            if (announcesExpanded) {
-                items(announcesHeard, key = { it.hash }) { node ->
-                    NodeRow(
-                        node = node,
-                        onClick = { onOpenNode(node.hash) },
-                        onToggleFavorite = {
-                            scope.launch { repository.setFavorite(node.hash, !node.isFavorite) }
-                        },
+            HorizontalDivider()
+
+            LazyColumn(modifier = Modifier.weight(1f)) {
+                // The only header in this LazyColumn (unlike the earlier,
+                // abandoned attempt at one shared stickyHeader spanning
+                // both Favorites and this section) — stays pinned while
+                // scrolling this section's own items, per request.
+                stickyHeader {
+                    SectionHeader(
+                        title = "Announces heard",
+                        count = announcesHeard.size,
+                        expanded = announcesExpanded,
+                        onToggle = { announcesExpanded = !announcesExpanded },
+                        modifier = Modifier.background(MaterialTheme.colorScheme.background),
                     )
+                }
+                if (announcesExpanded) {
+                    items(announcesHeard, key = { it.hash }) { node ->
+                        NodeRow(
+                            node = node,
+                            onClick = { onOpenNode(node.hash) },
+                            onToggleFavorite = {
+                                scope.launch { repository.setFavorite(node.hash, !node.isFavorite) }
+                            },
+                        )
+                    }
                 }
             }
         }
