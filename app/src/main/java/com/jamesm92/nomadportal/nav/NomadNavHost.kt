@@ -6,6 +6,7 @@ import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
 import com.jamesm92.nomadportal.connectivity.InterfaceController
+import com.jamesm92.nomadportal.data.SettingsRepository
 import com.jamesm92.nomadportal.data.browsing.BrowserRepository
 import com.jamesm92.nomadportal.data.browsing.PageAddress
 import com.jamesm92.nomadportal.data.messaging.MessagingRepository
@@ -32,6 +33,7 @@ fun NomadNavHost(
     interfaceController: InterfaceController,
     messagingRepository: MessagingRepository,
     browserRepository: BrowserRepository,
+    settingsRepository: SettingsRepository,
     navController: NavHostController = rememberNavController(),
 ) {
     NavHost(navController = navController, startDestination = Routes.HOME) {
@@ -45,6 +47,7 @@ fun NomadNavHost(
         composable(Routes.SETTINGS) {
             SettingsScreen(
                 interfaceController = interfaceController,
+                settingsRepository = settingsRepository,
                 onBack = { navController.popBackStack() },
             )
         }

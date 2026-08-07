@@ -16,6 +16,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Slider
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
@@ -31,8 +32,10 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import com.jamesm92.nomadportal.connectivity.InterfaceController
+import com.jamesm92.nomadportal.data.SettingsRepository
 import com.jamesm92.nomadportal.permissions.BLUETOOTH_PERMISSIONS
 import com.jamesm92.nomadportal.permissions.hasBluetoothPermissions
+import kotlin.math.roundToInt
 import kotlinx.coroutines.launch
 
 /**
@@ -47,9 +50,15 @@ import kotlinx.coroutines.launch
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun SettingsScreen(interfaceController: InterfaceController, onBack: () -> Unit) {
+fun SettingsScreen(
+    interfaceController: InterfaceController,
+    settingsRepository: SettingsRepository,
+    onBack: () -> Unit,
+) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
+
+    val textScale by settingsRepository.textScale.collectAsState(initial = SettingsRepository.DEFAULT_TEXT_SCALE)
 
     val tcpEnabled by interfaceController.tcpEnabled.collectAsState()
     val bluetoothMeshEnabled by interfaceController.bluetoothMeshEnabled.collectAsState()
@@ -87,7 +96,6 @@ fun SettingsScreen(interfaceController: InterfaceController, onBack: () -> Unit)
             item {
                 ToggleRow(
                     label = "TCP",
-                    description = "Internet-based RNS interfaces (client + server).",
                     checked = tcpEnabled,
                     onCheckedChange = { scope.launch { interfaceController.setTcpEnabled(it) } },
                 )
@@ -95,11 +103,6 @@ fun SettingsScreen(interfaceController: InterfaceController, onBack: () -> Unit)
             item {
                 ToggleRow(
                     label = "Bluetooth mesh",
-                    description = if (bluetoothGranted) {
-                        "Local BLE mesh interface."
-                    } else {
-                        "Local BLE mesh interface. Requires Bluetooth permission — declining just keeps this off, nothing else in the app is affected."
-                    },
                     checked = bluetoothMeshEnabled,
                     onCheckedChange = { turningOn ->
                         if (turningOn && !bluetoothGranted) {
@@ -113,7 +116,6 @@ fun SettingsScreen(interfaceController: InterfaceController, onBack: () -> Unit)
             item {
                 ToggleRow(
                     label = "RNode",
-                    description = "RNode interface, over USB or Bluetooth. Independent of the Bluetooth mesh toggle above — this does not affect it, and vice versa.",
                     checked = rNodeEnabled,
                     onCheckedChange = { scope.launch { interfaceController.setRNodeEnabled(it) } },
                 )
@@ -121,7 +123,6 @@ fun SettingsScreen(interfaceController: InterfaceController, onBack: () -> Unit)
             item {
                 ToggleRow(
                     label = "Local network discovery",
-                    description = "Auto-discover other RNS nodes on the same Wi-Fi/LAN via multicast. Off by default — this announces this device's presence to whichever network you're on.",
                     checked = wifiDiscoveryEnabled,
                     onCheckedChange = { scope.launch { interfaceController.setWifiDiscoveryEnabled(it) } },
                 )
@@ -132,9 +133,17 @@ fun SettingsScreen(interfaceController: InterfaceController, onBack: () -> Unit)
             item {
                 ToggleRow(
                     label = "Host a NomadNet node",
-                    description = "Serve pages/files to other peers over whichever interfaces above are on. Independent of browsing — off here doesn't stop you from browsing the mesh.",
                     checked = nodeHostingEnabled,
                     onCheckedChange = { scope.launch { interfaceController.setNodeHostingEnabled(it) } },
+                )
+            }
+
+            item { HorizontalDivider() }
+            item { SectionHeader("Appearance") }
+            item {
+                TextScaleRow(
+                    scale = textScale,
+                    onScaleChange = { scope.launch { settingsRepository.setTextScale(it) } },
                 )
             }
 
@@ -153,6 +162,30 @@ fun SettingsScreen(interfaceController: InterfaceController, onBack: () -> Unit)
     }
 }
 
+/**
+ * Live-previews while dragging (local [sliderValue] drives the label and
+ * the slider's own position immediately) but only persists via
+ * [onScaleChange] on release ([Slider.onValueChangeFinished]) — writing
+ * to DataStore on every intermediate drag tick would mean dozens of
+ * writes per gesture for no benefit, since only the final value matters.
+ */
+@Composable
+private fun TextScaleRow(scale: Float, onScaleChange: (Float) -> Unit) {
+    var sliderValue by remember(scale) { mutableStateOf(scale) }
+    Column(modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)) {
+        Text(
+            text = "Text size — ${(sliderValue * 100).roundToInt()}%",
+            style = MaterialTheme.typography.bodyLarge,
+        )
+        Slider(
+            value = sliderValue,
+            onValueChange = { sliderValue = it },
+            onValueChangeFinished = { onScaleChange(sliderValue) },
+            valueRange = SettingsRepository.MIN_TEXT_SCALE..SettingsRepository.MAX_TEXT_SCALE,
+        )
+    }
+}
+
 @Composable
 private fun SectionHeader(title: String) {
     Text(
@@ -163,28 +196,27 @@ private fun SectionHeader(title: String) {
     )
 }
 
+/**
+ * Deliberately just a label + switch, no description line — what each
+ * toggle actually does/requires (Bluetooth permission behavior, RNode/
+ * Bluetooth-mesh independence, etc.) is still documented in this
+ * screen's own call-site comments and the connectivity design docs, just
+ * not rendered inline anymore.
+ */
 @Composable
 private fun ToggleRow(
     label: String,
-    description: String,
     checked: Boolean,
     onCheckedChange: (Boolean) -> Unit,
 ) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(horizontal = 16.dp, vertical = 8.dp),
+            .padding(horizontal = 16.dp, vertical = 4.dp),
         horizontalArrangement = Arrangement.SpaceBetween,
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Column(modifier = Modifier.padding(end = 16.dp)) {
-            Text(text = label, style = MaterialTheme.typography.bodyLarge)
-            Text(
-                text = description,
-                style = MaterialTheme.typography.bodyLarge,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-        }
+        Text(text = label, style = MaterialTheme.typography.bodyLarge)
         Switch(checked = checked, onCheckedChange = onCheckedChange)
     }
 }

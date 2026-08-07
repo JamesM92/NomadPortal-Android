@@ -7,7 +7,10 @@ import androidx.activity.enableEdgeToEdge
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
+import com.jamesm92.nomadportal.data.SettingsRepository
 import com.jamesm92.nomadportal.nav.NomadNavHost
 import com.jamesm92.nomadportal.ui.theme.NomadPortalTheme
 
@@ -18,7 +21,9 @@ class MainActivity : ComponentActivity() {
 
         val app = application as NomadPortalApp
         setContent {
-            NomadPortalTheme {
+            val textScale by app.settingsRepository.textScale
+                .collectAsState(initial = SettingsRepository.DEFAULT_TEXT_SCALE)
+            NomadPortalTheme(textScale = textScale) {
                 Surface(
                     modifier = Modifier.fillMaxSize(),
                     color = MaterialTheme.colorScheme.background,
@@ -27,6 +32,7 @@ class MainActivity : ComponentActivity() {
                         interfaceController = app.interfaceController,
                         messagingRepository = app.messagingRepository,
                         browserRepository = app.browserRepository,
+                        settingsRepository = app.settingsRepository,
                     )
                 }
             }

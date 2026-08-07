@@ -176,6 +176,16 @@ def start(base_dir: str) -> None:
     _browser = NodeBrowser(config_dir=rns_dir)
 
     _identity_store = IdentityStore(rns_dir)
+    # Single local user (user_sub=""), no auth — the only value every
+    # method across browser.py/messaging.py/contact_store.py actually
+    # defaults to, and the only one anything here ever passes. Must
+    # happen before setup_delivery() below: LXMRouter registration is
+    # per-identity, and without an identity existing yet,
+    # list_identities() is empty and zero routers get created, silently
+    # breaking send/receive until something happens to call this later.
+    # Pure local keypair generation — no RNS.Reticulum()/network
+    # dependency, safe to do here rather than gating on wait_ready().
+    _identity_store.ensure_for_user("")
     _message_store = MessageStore(base_dir)
     _contact_store = ContactStoreManager(base_dir)
     _messaging = MessagingService(
@@ -345,3 +355,224 @@ def _make_auto_interface():
     import RNS
     config = {"name": "Auto Interface"}
     return AutoInterface(RNS.Transport, config)
+
+
+# ---------------------------------------------------------------------------
+# Browsing bridge — backs RealBrowserRepository.kt. Every method here
+# returns a JSON string (not a raw PyObject) deliberately: NodeBrowser's
+# get_nodes()/etc. return plain dicts, and hand-walking those field-by-field
+# via Chaquopy's PyObject accessors from Kotlin (None-handling, int-vs-float,
+# nested structures) is far more failure-prone than letting Python's own
+# json.dumps do it and parsing on the Kotlin side with org.json. Nothing
+# here is push-based (see the orchestration-design memory) — Kotlin polls
+# these on an interval.
+# ---------------------------------------------------------------------------
+
+def get_nodes_json() -> str:
+    """[NodeInfo] shape: hash, name, hops (nullable), last_load_ok
+    (nullable), favorited, last_seen (unix seconds — Kotlin multiplies by
+    1000). See browser.py's get_nodes() for the full dict shape; unused
+    keys are just ignored on the Kotlin side rather than filtered here."""
+    import json
+    if _browser is None:
+        return "[]"
+    return json.dumps(_browser.get_nodes(user_sub=""))
+
+
+def fetch_page_text(destination_hash_hex: str, path: str) -> str:
+    """Raises RuntimeError with browser.py's own error string on failure
+    (path not found, link closed, timeout, etc.) — matches
+    BrowserRepository.fetchPage's documented "throws on failure"
+    contract. Blocking on real network I/O, can legitimately take
+    minutes (browser.py's PAGE_HARD_CAP=600s) — callers must run this on
+    Dispatchers.IO with no artificial coroutine timeout."""
+    if _browser is None:
+        raise RuntimeError("Browser not initialized yet")
+    content, error = _browser.fetch_page(destination_hash_hex, path)
+    if error is not None:
+        raise RuntimeError(error)
+    return content.decode("utf-8", errors="replace")
+
+
+def set_node_favorite(hash_hex: str, value: bool) -> bool:
+    """False (not an exception) means browser.py declined the change —
+    e.g. the node hasn't been discovered yet. See BrowserRepository's
+    setFavorite — currently swallowed as a no-op rather than surfaced,
+    since there's no error-toast mechanism in the Settings/Browser UI
+    yet; revisit if that gap starts mattering in practice."""
+    if _browser is None:
+        return False
+    return _browser.set_favorite(hash_hex, value, user_sub="")
+
+
+# ---------------------------------------------------------------------------
+# Messaging bridge — backs RealMessagingRepository.kt. Same JSON-string
+# rationale as the browsing bridge above.
+#
+# Conversation/contact composition (get_conversations_json, get_messages_json)
+# is genuinely new logic, not a thin wrapper — messaging.py/contact_store.py
+# don't expose anything conversation-shaped themselves (contacts and
+# messages are two independent stores with no "conversation" concept
+# between them; see the orchestration-design memory's "contact/message
+# existence is asymmetric" finding). This is Android-UI-shaping glue,
+# which is exactly what this module is for — kept out of messaging.py
+# itself to keep that file a clean, UI-agnostic port.
+# ---------------------------------------------------------------------------
+
+def _conversation_entries() -> list:
+    """Every hash worth showing on the Messages screen: anyone this user
+    has ever exchanged a message with, has a saved contact for, or has
+    merely *heard* an LXMF peer announce from (never messaged) — a
+    ContactStore entry alone under-reports this (only created from an
+    inbound icon field or an explicit upsert, see contact_store.py), and
+    message history alone misses both saved-but-never-messaged contacts
+    and heard-but-never-messaged peers. Powers the same three-section
+    split ConversationListScreen.kt uses (Favorites/Messaged/Announces
+    heard), mirroring NodeListScreen's Favorites/Announces-heard —
+    `favorited`/`last_seen`/`hops` are included for exactly that."""
+    if _messaging is None:
+        return []
+    sent = _messaging.sent_messages()
+    received = _messaging.received_messages()
+    contacts = _contact_store.for_user("") if _contact_store else None
+    contact_list = contacts.list_contacts() if contacts else []
+    peers = _lxmf_tracker.get_peers() if _lxmf_tracker else []
+    peers_by_hash = {p["hash"]: p for p in peers}
+
+    hashes = set()
+    for m in sent:
+        hashes.add(m["dest"])
+    for m in received:
+        hashes.add(m["source"])
+    for c in contact_list:
+        hashes.add(c["hash"])
+    for p in peers:
+        hashes.add(p["hash"])
+
+    entries = []
+    for h in hashes:
+        contact = contacts.get(h) if contacts else None
+        peer = peers_by_hash.get(h)
+        my_sent = [
+            {"id": m["id"], "content": m["content"], "ts": m["sent_at"], "is_sent": True, "state": m["state"]}
+            for m in sent if m["dest"] == h
+        ]
+        my_received = [
+            {"id": m["id"], "content": m["content"], "ts": m["received_at"], "is_sent": False, "state": None,
+             "read": m.get("read", False)}
+            for m in received if m["source"] == h
+        ]
+        all_msgs = sorted(my_sent + my_received, key=lambda m: m["ts"])
+        name = (contact["name"] if contact else None) or (peer.get("name") if peer else None) or h[:16]
+        entries.append({
+            "hash": h,
+            "name": name,
+            "icon": contact.get("icon") if contact else None,
+            "icon_mime": contact.get("icon_mime") if contact else None,
+            "favorited": bool(contact.get("favorited")) if contact else False,
+            "last_seen": peer.get("last_seen") if peer else None,
+            "hops": peer.get("hops") if peer else None,
+            "messages": all_msgs,
+            "unread_count": sum(1 for m in my_received if not m["read"]),
+        })
+    return entries
+
+
+def get_conversations_json() -> str:
+    """[ConversationSummary] shape: hash, name, icon (base64, nullable),
+    icon_mime (nullable), favorited, last_seen (unix seconds, nullable —
+    last LXMF peer announce, not last message), hops (nullable),
+    last_message (last entry of messages, or None), unread_count. Full
+    per-message list is included too (Kotlin ignores it here) purely
+    because computing it separately per-conversation would mean
+    re-deriving the same sent/received union twice — cheap either way,
+    these are in-memory list reads capped at 500+500 total
+    (message_store.py's MAX_MESSAGES)."""
+    import json
+    entries = _conversation_entries()
+    summaries = [
+        {
+            "hash": e["hash"],
+            "name": e["name"],
+            "icon": e["icon"],
+            "icon_mime": e["icon_mime"],
+            "favorited": e["favorited"],
+            "last_seen": e["last_seen"],
+            "hops": e["hops"],
+            "last_message": e["messages"][-1] if e["messages"] else None,
+            "unread_count": e["unread_count"],
+        }
+        for e in entries
+    ]
+    return json.dumps(summaries)
+
+
+def get_messages_json(contact_hash: str) -> str:
+    """[Message] shape for one conversation: id, content, ts (unix
+    seconds), is_sent, state ("queued"/"delivered"/"failed", null for
+    received). Note (see orchestration-design memory): a sent message's
+    id can be rewritten by message_store.py after delivery (client UUID
+    -> real LXMF hash) — don't rely on it as a stable diffing key across
+    polls for outbound messages."""
+    import json
+    for e in _conversation_entries():
+        if e["hash"] == contact_hash:
+            return json.dumps(e["messages"])
+    return "[]"
+
+
+def get_contact_json(contact_hash: str) -> str:
+    """Empty string (not null — Chaquopy/Kotlin string-nullability across
+    the bridge is simpler to just avoid) if no contact or message history
+    exists for this hash at all."""
+    import json
+    for e in _conversation_entries():
+        if e["hash"] == contact_hash:
+            return json.dumps({
+                "hash": e["hash"], "name": e["name"],
+                "icon": e["icon"], "icon_mime": e["icon_mime"],
+                "favorited": e["favorited"],
+            })
+    return ""
+
+
+def set_contact_favorite(hash_hex: str, value: bool) -> bool:
+    """Unlike browser.py's set_favorite (node dicts always exist once
+    discovered), a hash reaching this call may have no ContactStore entry
+    yet at all — a message-history-only or announce-only contact never
+    triggers ContactStore.upsert() on its own (see the
+    orchestration-design memory's "contact/message existence is
+    asymmetric" finding). upsert() first (no-op if it already exists)
+    so set_favorite() always has a real entry to flip, rather than
+    silently no-op'ing on a contact who genuinely exists from Kotlin's
+    point of view (browsing/messaging) but not yet from ContactStore's."""
+    if _contact_store is None:
+        return False
+    store = _contact_store.for_user("")
+    store.upsert(hash_hex)
+    return store.set_favorite(hash_hex, value)
+
+
+def send_message(dest_hash_hex: str, content: str) -> None:
+    """Raises RuntimeError on failure (e.g. no delivery identity
+    registered) — matches MessagingRepository.sendMessage's `suspend
+    fun` contract of surfacing failure via exception. Fast/non-blocking
+    on the Python side (messaging.py queues and spawns its own delivery
+    thread), but still run via Dispatchers.IO for the Chaquopy/GIL
+    crossing, consistent with every other bridge call here."""
+    if _messaging is None:
+        raise RuntimeError("Messaging not initialized yet")
+    ok, result = _messaging.send_message(dest_hash_hex, content, "", "")
+    if not ok:
+        raise RuntimeError(result)
+
+
+def mark_conversation_read(contact_hash: str) -> None:
+    """message_store.py's mark_read() is per-message only — no "mark
+    conversation" batch API exists below this, so this loops one call
+    per currently-unread message in the conversation."""
+    if _messaging is None:
+        return
+    for m in _messaging.received_messages():
+        if m["source"] == contact_hash and not m.get("read", False):
+            _messaging.mark_read(m["id"])

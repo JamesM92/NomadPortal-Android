@@ -948,10 +948,23 @@ class NodeBrowser:
                             needs_persist = True
                 else:
                     node["hops"] = node.get("last_known_hops")
+            # Per-user fav_set only exists when user_sub is truthy (see
+            # above — it's built from self._favorites.get(user_sub, [])
+            # gated by `if user_sub else set()`). In anonymous/single-user
+            # mode (user_sub="" — nomadportal-android's actual usage
+            # throughout, no auth), fav_set is always empty, so this used
+            # to unconditionally clobber back to False here even right
+            # after set_favorite()'s anonymous branch (see that method's
+            # own comment: "Anonymous favorites... a debug-grade feature")
+            # had just written node["favorited"] = value directly onto
+            # this same dict — the write always succeeded, the read-back
+            # silently discarded it every time. Honor that stored value
+            # when there's no per-user set to consult instead.
+            is_favorited = (node["hash"] in fav_set) if user_sub else bool(node.get("favorited", False))
             node["favorited"] = (
                 node["is_hosted"]
                 or node["is_default"]
-                or node["hash"] in fav_set
+                or is_favorited
             )
             # Always reflect the current name for the hosted node.
             if node["is_hosted"] and self._hosted_name:

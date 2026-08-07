@@ -6,16 +6,29 @@ import androidx.compose.ui.graphics.Color
  * A contact in the LXMF address book. [icon] mirrors LXMF's two
  * appearance fields (porting-notes.md §4): the `0x04` icon-appearance
  * field (glyph name + color, the common case) and the `0x06` raw-image
- * field (an actual bitmap the peer supplied). Real LXMF delivery/parsing
- * isn't wired up yet (still core-extraction work) — [icon] is currently
- * only ever [ContactIcon.Appearance] from
+ * field (an actual bitmap the peer supplied). As of Aug 2026,
+ * [com.jamesm92.nomadportal.data.messaging.RealMessagingRepository]
+ * backs this with real LXMF data — but `messaging.py` pre-renders a
+ * `0x04` icon-appearance into a flat SVG server-side before it's ever
+ * stored, so in practice [icon] only ever comes back as
+ * [ContactIcon.RawImage] (SVG or raster) or [ContactIcon.None], never
+ * [ContactIcon.Appearance] with a live glyph/color pair — see that
+ * repository's own doc comment. [ContactIcon.Appearance] is only real for
  * [com.jamesm92.nomadportal.data.messaging.StubMessagingRepository]'s
- * fake data.
+ * fake data now.
  */
 data class Contact(
     val lxmfHash: String,
     val displayName: String,
     val icon: ContactIcon,
+    val isFavorite: Boolean = false,
+    /** Last LXMF peer announce heard for this hash, or 0 = never heard
+     * one (e.g. a contact known only from message history/manual add,
+     * matching [com.jamesm92.nomadportal.data.browsing.NodeInfo]'s same
+     * convention for RNS node announces). */
+    val lastAnnounceMillis: Long = 0L,
+    /** -1 = unknown, matching NodeInfo's sentinel — no live path yet. */
+    val hopCount: Int = -1,
 )
 
 sealed interface ContactIcon {

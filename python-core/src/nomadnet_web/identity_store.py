@@ -84,8 +84,19 @@ class IdentityStore:
             "nodes":     [],
             "created":   time.time(),
         }
-        if user_sub:
-            entry["user_sub"] = user_sub
+        # Always tag with user_sub, even "" — nomadportal-android has no
+        # auth and uses user_sub="" as its one real, meaningful user
+        # throughout (browser.py, contact_store.py, messaging.py all key
+        # off it the same way). The `if user_sub:` guard this replaced
+        # meant get_for_user("") could never find an identity created
+        # via ensure_for_user(""), since entry.get("user_sub") stayed
+        # None (key absent) forever, never equal to the "" being searched
+        # for — confirmed as the root cause of a real on-device crash:
+        # every send_message() call failed with "No delivery identity
+        # registered for this user" because _get_user_router("") always
+        # missed. Harmless for the original Flask app's real-user_sub
+        # case (unaffected — a truthy value was always stored either way).
+        entry["user_sub"] = user_sub
         self._data[identity.hexhash] = entry
         self._save()
         log.info("Created identity '%s' (%s)", name, identity.hexhash[:16])

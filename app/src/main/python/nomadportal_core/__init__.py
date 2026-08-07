@@ -13,12 +13,18 @@ memory for the full story.
 `orchestrator.py` (this package) is the Android-specific wiring that
 connects `nomadnet_web`'s classes together — the equivalent of what the
 original Flask app's `create_app()` did — see that module's own
-docstring for the design (interfaces added/removed on a running
-`Transport`, `Reticulum()` constructed exactly once). Kotlin's
-`RealInterfaceController` calls into it; only TCP and Wi-Fi discovery are
-wired to real behavior so far. `StubMessagingRepository` and
-`StubBrowserRepository` (Kotlin side) still wait on further wiring into
-`orchestrator`'s `_messaging`/`_browser` objects.
+docstring for the design (interfaces added via the running `Reticulum`
+instance's own `_add_interface()`, `Reticulum()` constructed exactly
+once). Kotlin's `RealInterfaceController` calls into it for connectivity
+toggles (TCP and Wi-Fi discovery are wired to real behavior; RNode/
+Bluetooth-mesh/hosting remain persisted-intent-only). As of Aug 2026,
+`orchestrator.py` also exposes a browsing bridge (`get_nodes_json`,
+`fetch_page_text`, `set_node_favorite`) and a messaging bridge
+(`get_conversations_json`, `get_messages_json`, `send_message`,
+`mark_conversation_read`, `get_contact_json`), backing Kotlin's
+`RealBrowserRepository`/`RealMessagingRepository` — both poll these on an
+interval rather than reacting to a push callback, since neither
+`NodeBrowser` nor `MessagingService` expose one.
 """
 
 

@@ -3,6 +3,7 @@ package com.jamesm92.nomadportal.data
 import android.content.Context
 import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.edit
+import androidx.datastore.preferences.core.floatPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
@@ -37,11 +38,26 @@ class SettingsRepository(context: Context) {
     val wifiDiscoveryEnabled: Flow<Boolean> = boolFlow(KEY_WIFI_DISCOVERY, default = false)
     val nodeHostingEnabled: Flow<Boolean> = boolFlow(KEY_NODE_HOSTING, default = false)
 
+    // User-adjustable app-wide text scale, applied by NomadPortalTheme to
+    // NomadTypography (see Theme.kt) — a multiplier, not an absolute size,
+    // so it scales consistently with whatever base sizes the theme
+    // defines rather than needing every screen to know an absolute sp
+    // value. 1.0 = the theme's own defaults; clamped to [MIN_TEXT_SCALE,
+    // MAX_TEXT_SCALE] on write so a bad persisted value (or a future
+    // migration bug) can't leave text unreadably tiny or absurdly large.
+    val textScale: Flow<Float> = dataStore.data.map {
+        (it[KEY_TEXT_SCALE] ?: DEFAULT_TEXT_SCALE).coerceIn(MIN_TEXT_SCALE, MAX_TEXT_SCALE)
+    }
+
     suspend fun setTcpEnabled(enabled: Boolean) = setBool(KEY_TCP, enabled)
     suspend fun setBluetoothMeshEnabled(enabled: Boolean) = setBool(KEY_BLUETOOTH_MESH, enabled)
     suspend fun setRNodeEnabled(enabled: Boolean) = setBool(KEY_RNODE, enabled)
     suspend fun setWifiDiscoveryEnabled(enabled: Boolean) = setBool(KEY_WIFI_DISCOVERY, enabled)
     suspend fun setNodeHostingEnabled(enabled: Boolean) = setBool(KEY_NODE_HOSTING, enabled)
+
+    suspend fun setTextScale(scale: Float) {
+        dataStore.edit { it[KEY_TEXT_SCALE] = scale.coerceIn(MIN_TEXT_SCALE, MAX_TEXT_SCALE) }
+    }
 
     private fun boolFlow(key: androidx.datastore.preferences.core.Preferences.Key<Boolean>, default: Boolean): Flow<Boolean> =
         dataStore.data.map { it[key] ?: default }
@@ -50,11 +66,16 @@ class SettingsRepository(context: Context) {
         dataStore.edit { it[key] = value }
     }
 
-    private companion object {
-        val KEY_TCP = booleanPreferencesKey("tcp_enabled")
-        val KEY_BLUETOOTH_MESH = booleanPreferencesKey("bluetooth_mesh_enabled")
-        val KEY_RNODE = booleanPreferencesKey("rnode_enabled")
-        val KEY_WIFI_DISCOVERY = booleanPreferencesKey("wifi_discovery_enabled")
-        val KEY_NODE_HOSTING = booleanPreferencesKey("node_hosting_enabled")
+    companion object {
+        const val DEFAULT_TEXT_SCALE = 1.0f
+        const val MIN_TEXT_SCALE = 0.75f
+        const val MAX_TEXT_SCALE = 1.75f
+
+        private val KEY_TCP = booleanPreferencesKey("tcp_enabled")
+        private val KEY_BLUETOOTH_MESH = booleanPreferencesKey("bluetooth_mesh_enabled")
+        private val KEY_RNODE = booleanPreferencesKey("rnode_enabled")
+        private val KEY_WIFI_DISCOVERY = booleanPreferencesKey("wifi_discovery_enabled")
+        private val KEY_NODE_HOSTING = booleanPreferencesKey("node_hosting_enabled")
+        private val KEY_TEXT_SCALE = floatPreferencesKey("text_scale")
     }
 }

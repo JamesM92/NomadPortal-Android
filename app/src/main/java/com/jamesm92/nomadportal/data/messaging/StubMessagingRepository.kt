@@ -17,10 +17,15 @@ import kotlinx.coroutines.launch
  * why this is a real implementation to build against, not throwaway.
  */
 class StubMessagingRepository(private val scope: CoroutineScope) : MessagingRepository {
-    private val contacts = listOf(
-        Contact("a3f1", "Anselm", ContactIcon.Appearance("mesh", Color(0xFF7EC8A0))),
-        Contact("b7d2", "quinn_relay", ContactIcon.Appearance("router", Color(0xFF5BA3C9))),
-        Contact("c9e4", "nyx", ContactIcon.None),
+    // Mutable (not a plain List) so setFavorite has somewhere real to
+    // write — matches the pattern StubBrowserRepository already uses for
+    // its own NodeInfo.isFavorite.
+    private val contacts = MutableStateFlow(
+        listOf(
+            Contact("a3f1", "Anselm", ContactIcon.Appearance("mesh", Color(0xFF7EC8A0))),
+            Contact("b7d2", "quinn_relay", ContactIcon.Appearance("router", Color(0xFF5BA3C9))),
+            Contact("c9e4", "nyx", ContactIcon.None),
+        )
     )
 
     private val messagesByContact: Map<String, MutableStateFlow<List<Message>>> = mapOf(
@@ -32,16 +37,19 @@ class StubMessagingRepository(private val scope: CoroutineScope) : MessagingRepo
     private val unreadCounts = MutableStateFlow(mapOf("a3f1" to 2, "b7d2" to 0, "c9e4" to 0))
 
     override fun conversations(): Flow<List<ConversationSummary>> {
-        val messageFlows: List<Flow<List<Message>>> = contacts.map { messagesByContact.getValue(it.lxmfHash) }
-        return combine(messageFlows) { it.toList() }.combine(unreadCounts) { messageLists, unread ->
-            contacts.mapIndexed { index, contact ->
-                ConversationSummary(
-                    contact = contact,
-                    lastMessage = messageLists[index].lastOrNull(),
-                    unreadCount = unread[contact.lxmfHash] ?: 0,
-                )
+        val messageFlows: List<Flow<List<Message>>> = messagesByContact.values.toList()
+        return combine(messageFlows) { lists ->
+            messagesByContact.keys.zip(lists).toMap()
+        }.combine(unreadCounts) { messagesById, unread -> messagesById to unread }
+            .combine(contacts) { (messagesById, unread), currentContacts ->
+                currentContacts.map { contact ->
+                    ConversationSummary(
+                        contact = contact,
+                        lastMessage = messagesById[contact.lxmfHash]?.lastOrNull(),
+                        unreadCount = unread[contact.lxmfHash] ?: 0,
+                    )
+                }
             }
-        }
     }
 
     override fun messages(contactHash: String): StateFlow<List<Message>> =
@@ -73,8 +81,14 @@ class StubMessagingRepository(private val scope: CoroutineScope) : MessagingRepo
         unreadCounts.value = unreadCounts.value + (contactHash to 0)
     }
 
+    override suspend fun setFavorite(contactHash: String, favorite: Boolean) {
+        contacts.value = contacts.value.map {
+            if (it.lxmfHash == contactHash) it.copy(isFavorite = favorite) else it
+        }
+    }
+
     override fun contact(contactHash: String): Contact? =
-        contacts.find { it.lxmfHash == contactHash }
+        contacts.value.find { it.lxmfHash == contactHash }
 
     private fun seedThread(firstIsSent: Boolean): List<Message> {
         val now = System.currentTimeMillis()

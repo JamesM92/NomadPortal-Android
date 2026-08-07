@@ -3,9 +3,10 @@ package com.jamesm92.nomadportal.data.browsing
 /**
  * A node discovered on the mesh (porting-notes.md §4: "discovered-node
  * list, sortable by recency/name/hop-count/announce-frequency, per-node
- * hop count + last-fetch-ok/fail indicator, favorites"). No real RNS
- * announce-listening exists yet — this is populated by
- * [StubBrowserRepository]'s fake data until the core extraction lands.
+ * hop count + last-fetch-ok/fail indicator, favorites"). Populated from
+ * real RNS announce-listening via [RealBrowserRepository]/`NodeBrowser`
+ * as of Aug 2026 — [StubBrowserRepository]'s fake data is the reference/
+ * test fallback now, not the primary path.
  */
 data class NodeInfo(
     val hash: String,

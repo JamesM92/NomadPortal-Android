@@ -19,17 +19,31 @@ import com.jamesm92.nomadportal.R
 // sans" family to distinguish it from.
 val NomadMono = FontFamily(Font(R.font.roboto_mono_nerd_font))
 
-val NomadTypography = Typography(
+/**
+ * [scale] is a user-adjustable multiplier (Settings → text size, backed
+ * by [com.jamesm92.nomadportal.data.SettingsRepository.textScale]) —
+ * `1.0` reproduces the original fixed sizes below exactly. Every screen
+ * that wants proportionally smaller/larger text (e.g. NodeListScreen's
+ * two-line rows, BrowserScreen's Micron body text) derives its own size
+ * as a fraction of `MaterialTheme.typography.bodyLarge.fontSize` rather
+ * than a hardcoded sp value, so it scales along with this setting
+ * instead of needing its own separate adjustable size.
+ */
+fun nomadTypography(scale: Float = 1f): Typography = Typography(
     bodyLarge = TextStyle(
         fontFamily = NomadMono,
         fontWeight = FontWeight.Normal,
-        fontSize = 16.sp,
-        lineHeight = 24.sp,
+        fontSize = 16.sp * scale,
+        lineHeight = 24.sp * scale,
     ),
     titleLarge = TextStyle(
         fontFamily = NomadMono,
         fontWeight = FontWeight.Bold,
-        fontSize = 22.sp,
-        lineHeight = 28.sp,
+        fontSize = 22.sp * scale,
+        lineHeight = 28.sp * scale,
     ),
 )
+
+/** `scale = 1.0` convenience default — most call sites want
+ * [NomadPortalTheme]'s own `textScale` param instead of this directly. */
+val NomadTypography = nomadTypography()

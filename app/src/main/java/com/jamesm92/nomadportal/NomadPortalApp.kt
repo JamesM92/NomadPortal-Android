@@ -7,9 +7,9 @@ import com.jamesm92.nomadportal.connectivity.InterfaceController
 import com.jamesm92.nomadportal.connectivity.RealInterfaceController
 import com.jamesm92.nomadportal.data.SettingsRepository
 import com.jamesm92.nomadportal.data.browsing.BrowserRepository
-import com.jamesm92.nomadportal.data.browsing.StubBrowserRepository
+import com.jamesm92.nomadportal.data.browsing.RealBrowserRepository
 import com.jamesm92.nomadportal.data.messaging.MessagingRepository
-import com.jamesm92.nomadportal.data.messaging.StubMessagingRepository
+import com.jamesm92.nomadportal.data.messaging.RealMessagingRepository
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -86,12 +86,17 @@ class NomadPortalApp : Application() {
             }
         }
 
-        // Same pattern as interfaceController: StubMessagingRepository is
-        // fake/in-memory until real LXMF delivery exists — see its own doc
-        // comment. Swapping this line is the entire integration point.
-        messagingRepository = StubMessagingRepository(appScope)
-        // Same pattern again: StubBrowserRepository is fake nodes/pages
-        // until a real RNS Link/path layer exists.
-        browserRepository = StubBrowserRepository()
+        // Real, orchestrator-backed repositories (Aug 2026) — replaced
+        // Stub{Browser,Messaging}Repository now that orchestrator.py
+        // exposes real browsing/messaging bridge functions. Both poll
+        // Python on an interval rather than reacting to a push callback
+        // (neither NodeBrowser nor MessagingService expose one — see
+        // RealBrowserRepository/RealMessagingRepository's own doc
+        // comments) — safe to construct before orchestrator.start()
+        // finishes, since every bridge function degrades to an empty
+        // result rather than erroring while _browser/_messaging are
+        // still None.
+        messagingRepository = RealMessagingRepository()
+        browserRepository = RealBrowserRepository()
     }
 }

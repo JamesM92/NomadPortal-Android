@@ -19,11 +19,13 @@ private val NomadColorScheme = darkColorScheme(
     error = NomadError,
 )
 
+/** @param textScale User-adjustable multiplier (Settings → text size) —
+ * see [nomadTypography]/[com.jamesm92.nomadportal.data.SettingsRepository.textScale]. */
 @Composable
-fun NomadPortalTheme(content: @Composable () -> Unit) {
+fun NomadPortalTheme(textScale: Float = 1f, content: @Composable () -> Unit) {
     MaterialTheme(
         colorScheme = NomadColorScheme,
-        typography = NomadTypography,
+        typography = nomadTypography(textScale),
         content = content,
     )
 }

@@ -112,8 +112,18 @@ class MessagingService:
         identity_id = entry["id"]
         user_sub    = entry.get("user_sub", "")
 
+        # `if user_sub and ...` (here and the store below) used to gate
+        # both on user_sub being truthy — meaning a router created for
+        # the anonymous/no-auth user_sub="" (nomadportal-android's only
+        # real usage — see identity_store.py's create() for the full
+        # story) was silently discarded right after creation, never
+        # reachable through _get_user_router("") again. Confirmed as a
+        # real on-device crash: every single send_message() call raised
+        # "No delivery identity registered for this user". An empty
+        # string is still a legitimate dict key — no need to special-case
+        # it.
         with self._lock:
-            if user_sub and user_sub in self._user_routers:
+            if user_sub in self._user_routers:
                 return self._user_routers[user_sub]
 
         if self._identity_store is None:
@@ -153,8 +163,7 @@ class MessagingService:
 
             data = {"router": router, "dest": registered, "identity": identity}
             with self._lock:
-                if user_sub:
-                    self._user_routers[user_sub] = data
+                self._user_routers[user_sub] = data
             log.info(
                 "Registered delivery identity %s → LXMF addr %s (user %s)",
                 identity_id[:16], registered.hexhash[:16],
@@ -173,7 +182,7 @@ class MessagingService:
         if data is not None:
             return data
 
-        if not user_sub or self._identity_store is None:
+        if self._identity_store is None:
             return None
 
         entry = self._identity_store.get_for_user(user_sub)
