@@ -20,7 +20,6 @@ import androidx.compose.material.icons.filled.ExpandLess
 import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.filled.FavoriteBorder
-import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
@@ -84,7 +83,6 @@ fun NodeListScreen(
     onOpenNode: (nodeHash: String) -> Unit,
     onBack: () -> Unit,
     onOpenMessages: () -> Unit,
-    onOpenSettings: () -> Unit,
 ) {
     val nodes by repository.discoveredNodes().collectAsState(initial = emptyList())
     val scope = rememberCoroutineScope()
@@ -151,18 +149,17 @@ fun NodeListScreen(
                     }
                 },
                 actions = {
-                    // Cross-nav to the other list screen + Settings —
-                    // per explicit request, present here (a list/hub
-                    // screen) but deliberately NOT on BrowserScreen
-                    // (viewing one specific node's page): that screen
-                    // already has its own back arrow to return here, and
-                    // its address bar row is busy enough without more
-                    // icons crowding it.
+                    // Cross-nav to the other list screen — per explicit
+                    // request, present here (a list/hub screen) but
+                    // deliberately NOT on BrowserScreen (viewing one
+                    // specific node's page): that screen already has its
+                    // own back arrow to return here, and its address bar
+                    // row is busy enough without more icons crowding it.
+                    // Settings is deliberately NOT here either — per
+                    // explicit request, only reachable from the main
+                    // menu (Home).
                     IconButton(onClick = onOpenMessages) {
                         Icon(Icons.AutoMirrored.Filled.Message, contentDescription = "Messages")
-                    }
-                    IconButton(onClick = onOpenSettings) {
-                        Icon(Icons.Filled.Settings, contentDescription = "Settings")
                     }
                     PanicWipeLogo(
                         modifier = Modifier.padding(end = 8.dp),

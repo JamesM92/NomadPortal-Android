@@ -24,7 +24,6 @@ import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material.icons.filled.Explore
 import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.filled.FavoriteBorder
-import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
@@ -96,7 +95,6 @@ fun ConversationListScreen(
     onOpenConversation: (contactHash: String) -> Unit,
     onBack: () -> Unit,
     onOpenNodes: () -> Unit,
-    onOpenSettings: () -> Unit,
 ) {
     val conversations by repository.conversations().collectAsState(initial = emptyList())
     val scope = rememberCoroutineScope()
@@ -171,13 +169,12 @@ fun ConversationListScreen(
                     },
                     actions = {
                         // See NodeListScreen's identical comment: cross-nav
-                        // to the other list screen + Settings, present
-                        // here but not on an individual ConversationScreen.
+                        // to the other list screen, present here but not
+                        // on an individual ConversationScreen. Settings is
+                        // deliberately NOT here — per explicit request,
+                        // only reachable from the main menu (Home).
                         IconButton(onClick = onOpenNodes) {
                             Icon(Icons.Filled.Explore, contentDescription = "Nodes")
-                        }
-                        IconButton(onClick = onOpenSettings) {
-                            Icon(Icons.Filled.Settings, contentDescription = "Settings")
                         }
                         PanicWipeLogo(
                             modifier = Modifier.padding(end = 8.dp),

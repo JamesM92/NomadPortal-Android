@@ -60,9 +60,12 @@ fun NomadNavHost(
             ConversationListScreen(
                 repository = messagingRepository,
                 onOpenConversation = { hash -> navController.navigate(Routes.conversation(hash)) },
-                onBack = { navController.popBackStack() },
+                // Always back to the main menu, not whatever screen was
+                // previously visited (e.g. Nodes, reached via its own
+                // cross-nav link) — explicit user direction: the back
+                // arrow here is "home", not "previous".
+                onBack = { navController.popBackStack(Routes.HOME, inclusive = false) },
                 onOpenNodes = { navController.navigate(Routes.NODES) },
-                onOpenSettings = { navController.navigate(Routes.SETTINGS) },
             )
         }
         composable(Routes.CONVERSATION) { backStackEntry ->
@@ -85,9 +88,9 @@ fun NomadNavHost(
             NodeListScreen(
                 repository = browserRepository,
                 onOpenNode = { hash -> navController.navigate(Routes.browser(hash)) },
-                onBack = { navController.popBackStack() },
+                // Same "back means home, not previous" as Messages above.
+                onBack = { navController.popBackStack(Routes.HOME, inclusive = false) },
                 onOpenMessages = { navController.navigate(Routes.MESSAGES) },
-                onOpenSettings = { navController.navigate(Routes.SETTINGS) },
             )
         }
         composable(Routes.BROWSER) { backStackEntry ->
