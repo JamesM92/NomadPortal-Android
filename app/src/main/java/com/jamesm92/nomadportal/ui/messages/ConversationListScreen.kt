@@ -11,7 +11,6 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
@@ -93,9 +92,6 @@ import kotlinx.coroutines.launch
  * since last announce when there's no message to preview — the normal
  * case for anyone in the Users tab who's never been messaged.
  */
-/** See [com.jamesm92.nomadportal.ui.browser.NodeListScreen]'s identical constant. */
-private const val FAVORITES_AUTO_EXPAND_THRESHOLD = 7
-
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun ConversationListScreen(
@@ -158,17 +154,14 @@ fun ConversationListScreen(
     )
     val allUsers = rememberStableOrder(sortedConversations, key = { it.contact.lxmfHash })
 
-    var favoritesExpanded by remember { mutableStateOf(true) }
-    var generalExpanded by remember { mutableStateOf(true) }
-    // See NodeListScreen's identical `favoritesDominant` comment for the
-    // full rationale — same item-count-based approximation of "when a
-    // section is big enough to need the whole screen it auto collapses
-    // the other sections".
-    val favoritesDominant = favorites.size > FAVORITES_AUTO_EXPAND_THRESHOLD
-    // A default, not a lock — see NodeListScreen's identical comment.
-    LaunchedEffect(favoritesDominant) {
-        if (favoritesDominant) generalExpanded = false
-    }
+    // Exactly one of Favorites/General messages is ever open — per
+    // explicit direction: opening one always closes the other, closing
+    // one always opens the other (there's no "both closed"/"both open"
+    // state). A single boolean is enough to model that exhaustively:
+    // both headers just flip it, since with only two sections "flip"
+    // and "swap which one's open" are the same operation regardless of
+    // which header triggered it.
+    var favoritesOpen by remember { mutableStateOf(true) }
 
     fun toggleFavorite(summary: ConversationSummary) {
         scope.launch { repository.setFavorite(summary.contact.lxmfHash, !summary.contact.isFavorite) }
@@ -284,28 +277,19 @@ fun ConversationListScreen(
 
             if (selectedTab == 0) {
                 // Headers always outside any LazyColumn — always visible,
-                // always tappable, regardless of dominance state (see
-                // NodeListScreen's identical structure/comment).
-                // See NodeListScreen's identical comment: while Favorites
-                // is dominant, expanding either section collapses the
-                // other, not just at the initial default.
+                // always tappable. Exactly one section is ever expanded
+                // (see favoritesOpen's own doc comment above), so the
+                // expanded one always gets the full remaining space —
+                // no more count-based heuristic for how tall its list
+                // should be.
                 SectionHeader(
                     title = "Favorites",
                     count = favorites.size,
-                    expanded = favoritesExpanded,
-                    onToggle = {
-                        favoritesExpanded = !favoritesExpanded
-                        if (favoritesExpanded && favoritesDominant) generalExpanded = false
-                    },
+                    expanded = favoritesOpen,
+                    onToggle = { favoritesOpen = !favoritesOpen },
                 )
-                if (favoritesExpanded && favorites.isNotEmpty()) {
-                    LazyColumn(
-                        modifier = if (favoritesDominant) {
-                            Modifier.weight(1f)
-                        } else {
-                            Modifier.heightIn(max = 280.dp)
-                        },
-                    ) {
+                if (favoritesOpen) {
+                    LazyColumn(modifier = Modifier.weight(1f)) {
                         items(favorites, key = { it.contact.lxmfHash }) { summary ->
                             ConversationRow(
                                 summary = summary,
@@ -323,13 +307,10 @@ fun ConversationListScreen(
                 SectionHeader(
                     title = "General messages",
                     count = generalMessages.size,
-                    expanded = generalExpanded,
-                    onToggle = {
-                        generalExpanded = !generalExpanded
-                        if (generalExpanded && favoritesDominant) favoritesExpanded = false
-                    },
+                    expanded = !favoritesOpen,
+                    onToggle = { favoritesOpen = !favoritesOpen },
                 )
-                if (generalExpanded) {
+                if (!favoritesOpen) {
                     LazyColumn(modifier = Modifier.weight(1f)) {
                         items(generalMessages, key = { it.contact.lxmfHash }) { summary ->
                             ConversationRow(
