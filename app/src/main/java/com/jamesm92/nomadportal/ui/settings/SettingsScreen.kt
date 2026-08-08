@@ -4,6 +4,7 @@ import android.content.ClipData
 import android.content.res.Configuration
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -26,6 +27,8 @@ import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.PowerSettingsNew
+import androidx.compose.material3.Badge
+import androidx.compose.material3.BadgedBox
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
@@ -52,6 +55,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.ClipEntry
 import androidx.compose.ui.platform.LocalClipboard
 import androidx.compose.ui.platform.LocalConfiguration
@@ -78,6 +82,7 @@ import com.jamesm92.nomadportal.ui.components.PanicWipeLogo
 import com.jamesm92.nomadportal.ui.components.VerticalScrollIndicator
 import com.jamesm92.nomadportal.ui.theme.NomadMono
 import com.jamesm92.nomadportal.ui.theme.NomadTextDim
+import com.jamesm92.nomadportal.ui.theme.NomadWarn
 import kotlin.math.roundToInt
 import kotlinx.coroutines.launch
 
@@ -349,6 +354,12 @@ fun SettingsScreen(
                     items(tcpConnections, key = { it.id }) { connection ->
                         TcpConnectionEditRow(
                             connection = connection,
+                            // Only actually "down" if TCP itself is on and
+                            // this connection is individually enabled too --
+                            // an intentionally-off connection isn't a
+                            // problem to flag, same reasoning as
+                            // InterfaceController.hasDownTcpConnection.
+                            isDown = tcpEnabled && connection.enabled && !connection.online,
                             onUpdate = { name, host, port ->
                                 scope.launch {
                                     tcpConnectionsRepository.updateConnection(connection.id, name, host, port)
@@ -700,6 +711,14 @@ private fun TcpConnectionsTableHeader() {
 @Composable
 private fun TcpConnectionEditRow(
     connection: TcpConnection,
+    /** True when this connection is enabled, TCP itself is on, and the
+     * real RNS interface isn't actually connected right now — a
+     * transient-but-real state (RNS itself keeps retrying underneath;
+     * see orchestrator.py's own TCPClientInterface reconnect-loop
+     * notes), surfaced here rather than silently retried with a
+     * different server — no automatic re-shuffling after initial setup,
+     * per explicit direction. */
+    isDown: Boolean,
     onUpdate: (name: String, host: String, port: Int) -> Unit,
     onToggle: (Boolean) -> Unit,
     onRemove: () -> Unit,
@@ -732,7 +751,15 @@ private fun TcpConnectionEditRow(
     // would blow a 3-field row well past one line on most device widths.
     CompositionLocalProvider(LocalMinimumInteractiveComponentSize provides 0.dp) {
         Row(
-            modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 2.dp),
+            modifier = Modifier
+                .fillMaxWidth()
+                // Zero width cost, unlike adding a new column would be —
+                // this table is already at "1 or 2 lines of fields" per
+                // explicit request, no room to spare for a dedicated
+                // status column. The delete button's own badge (below)
+                // is the more explicit signal; this is just reinforcement.
+                .background(if (isDown) NomadWarn.copy(alpha = 0.12f) else Color.Transparent)
+                .padding(horizontal = 16.dp, vertical = 2.dp),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(4.dp),
         ) {
@@ -761,13 +788,30 @@ private fun TcpConnectionEditRow(
                 onCheckedChange = onToggle,
                 modifier = Modifier.size(24.dp),
             )
-            IconButton(onClick = onRemove, modifier = Modifier.size(24.dp)) {
-                Icon(
-                    imageVector = Icons.Filled.Delete,
-                    contentDescription = "Remove ${connection.name}",
-                    tint = MaterialTheme.colorScheme.error,
-                    modifier = Modifier.size(16.dp),
-                )
+            BadgedBox(
+                badge = {
+                    if (isDown) {
+                        Badge(containerColor = NomadWarn) {
+                            // Tiny "!" rather than an empty dot -- still
+                            // fits a 24dp row, and reads as "problem" at
+                            // a glance without needing a legend.
+                            Text("!")
+                        }
+                    }
+                },
+            ) {
+                IconButton(onClick = onRemove, modifier = Modifier.size(24.dp)) {
+                    Icon(
+                        imageVector = Icons.Filled.Delete,
+                        contentDescription = if (isDown) {
+                            "Remove ${connection.name} (not connected)"
+                        } else {
+                            "Remove ${connection.name}"
+                        },
+                        tint = MaterialTheme.colorScheme.error,
+                        modifier = Modifier.size(16.dp),
+                    )
+                }
             }
         }
     }

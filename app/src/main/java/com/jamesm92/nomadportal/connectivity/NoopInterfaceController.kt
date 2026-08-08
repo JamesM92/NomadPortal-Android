@@ -5,6 +5,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 
@@ -85,4 +86,8 @@ class NoopInterfaceController(
     override suspend fun setHostedNodeName(name: String): Boolean = false
     override suspend fun setHostedNodeAnnounceInterval(seconds: Int): Boolean = false
     override suspend fun announceHostedNodeNow(): Boolean = false
+
+    // No real TCP connections tracked here — persisted-intent-only,
+    // matching this class's own convention throughout.
+    override fun hasDownTcpConnection(): Flow<Boolean> = flowOf(false)
 }

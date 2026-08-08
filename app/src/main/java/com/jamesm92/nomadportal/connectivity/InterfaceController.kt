@@ -106,4 +106,25 @@ interface InterfaceController {
     /** Manual "Announce now" for the hosted node. Returns true on success
      * (false if hosting is currently off). */
     suspend fun announceHostedNodeNow(): Boolean
+
+    /**
+     * True whenever TCP is enabled (the master switch) and at least one
+     * individually-enabled [com.jamesm92.nomadportal.connectivity.TcpConnection]
+     * isn't actually connected right now — surfaced as a visible flag
+     * (Settings gear badge, per-row indicator in the TCP connections
+     * table) rather than silently retried, per explicit direction: a
+     * down server after initial setup should be *noticed*, not
+     * automatically replaced with a new pick from the directory pool
+     * (see [nomadportal_core.orchestrator]'s default-TCP-seeding doc
+     * comment for why that's deliberately a one-time thing, not an
+     * ongoing policy).
+     *
+     * False whenever TCP itself is off — an intentionally-off master
+     * switch isn't a problem to flag, and every connection is correctly
+     * "not connected" in that state regardless of whether the server on
+     * the other end is actually up. Also false if there simply aren't
+     * any enabled connections to be down in the first place (an empty
+     * list, or every connection individually disabled).
+     */
+    fun hasDownTcpConnection(): Flow<Boolean>
 }

@@ -23,6 +23,14 @@ data class TcpConnection(
     val host: String,
     val port: Int,
     val enabled: Boolean,
+    /** Live status, not a persisted setting — the real RNS interface's
+     * own connected/disconnected state, polled fresh each time (see
+     * [RealTcpConnectionsRepository.fetchConnections]). Always false
+     * for a connection that isn't currently attached at all (its own
+     * [enabled] is off, or the TCP master switch is off) — matches
+     * [InterfaceController.hasDownTcpConnection]'s own reasoning for
+     * why that's the correct reading rather than a distinct "unknown". */
+    val online: Boolean,
 )
 
 /**
@@ -93,6 +101,7 @@ class RealTcpConnectionsRepository : TcpConnectionsRepository {
                 host = c.getString("host"),
                 port = c.getInt("port"),
                 enabled = c.optBoolean("enabled", true),
+                online = c.optBoolean("online", false),
             )
         }
     }

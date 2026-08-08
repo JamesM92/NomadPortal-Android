@@ -757,11 +757,27 @@ def _sync_tcp_interfaces() -> None:
 
 def get_tcp_connections_json() -> str:
     """[TcpConnectionsStatus] shape: master_enabled, connections (list of
-    {id, name, host, port, enabled})."""
+    {id, name, host, port, enabled, online}).
+
+    "online" is live status, not persisted config — the real RNS
+    `Interface.online` flag for whichever connections are currently
+    attached (see _sync_tcp_interfaces), read fresh on every call.
+    Always False for a connection that isn't attached at all right now
+    (master off, or its own enabled flag off) — the correct/intuitive
+    reading either way, not a distinct "unknown" state. Built as fresh
+    dict copies rather than mutating the stored connection dicts
+    themselves, so this never accidentally persists live status into
+    tcp_connections.json on the next save.
+    """
     import json
+    connections = []
+    for conn_id, conn in _tcp_connections.items():
+        iface = _tcp_ifaces.get(conn_id)
+        online = bool(iface is not None and getattr(iface, "online", False))
+        connections.append({**conn, "online": online})
     return json.dumps({
         "master_enabled": _tcp_master_enabled,
-        "connections": list(_tcp_connections.values()),
+        "connections": connections,
     })
 
 

@@ -149,6 +149,24 @@ class RealInterfaceController(
         orchestrator.callAttr("announce_site_now").toBoolean()
     }
 
+    override fun hasDownTcpConnection(): Flow<Boolean> = flow {
+        while (true) {
+            emit(fetchHasDownTcpConnection())
+            delay(POLL_INTERVAL_MS)
+        }
+    }.flowOn(Dispatchers.IO)
+
+    private fun fetchHasDownTcpConnection(): Boolean {
+        val obj = JSONObject(orchestrator.callAttr("get_tcp_connections_json").toString())
+        if (!obj.optBoolean("master_enabled", true)) return false
+        val array = obj.getJSONArray("connections")
+        for (i in 0 until array.length()) {
+            val c = array.getJSONObject(i)
+            if (c.optBoolean("enabled", true) && !c.optBoolean("online", false)) return true
+        }
+        return false
+    }
+
     private companion object {
         const val POLL_INTERVAL_MS = 4000L
     }

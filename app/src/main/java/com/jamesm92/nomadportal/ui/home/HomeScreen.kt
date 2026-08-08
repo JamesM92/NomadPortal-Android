@@ -30,6 +30,8 @@ import androidx.compose.material.icons.filled.ExpandLess
 import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material.icons.filled.Explore
 import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material3.Badge
+import androidx.compose.material3.BadgedBox
 import androidx.compose.material3.Button
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
@@ -117,6 +119,7 @@ fun HomeScreen(
     val conversations by messagingRepository.conversations().collectAsState(initial = emptyList())
     val totalUnread = conversations.sumOf { it.unreadCount }
     val hostedNodeStatus by interfaceController.hostedNodeStatus().collectAsState(initial = null)
+    val hasDownTcpConnection by interfaceController.hasDownTcpConnection().collectAsState(initial = false)
 
     Scaffold(
         topBar = {
@@ -134,9 +137,7 @@ fun HomeScreen(
                         Icon(Icons.Filled.Explore, contentDescription = "Browse nodes")
                     }
                     MessagesIconWithBadge(unreadCount = totalUnread, onClick = onOpenMessages)
-                    IconButton(onClick = onOpenSettings) {
-                        Icon(Icons.Filled.Settings, contentDescription = "Settings")
-                    }
+                    SettingsIconWithBadge(hasWarning = hasDownTcpConnection, onClick = onOpenSettings)
                 },
             )
         },
@@ -207,6 +208,30 @@ fun HomeScreen(
  * flip/configure from either place, same underlying state, same
  * convention every other interface's Settings tab already follows.
  */
+/** The Settings top-bar icon, with a plain warning-colored dot (no
+ * count — this is a yes/no flag, not something to tally) when
+ * [hasWarning] — currently only driven by
+ * [InterfaceController.hasDownTcpConnection], but kept as a generic
+ * "something in Settings needs attention" signal rather than a TCP-
+ * specific one, so a future second reason to flag Settings doesn't
+ * need its own separate badge. Single-use (Home only) — not promoted
+ * to `ui/components` alongside [MessagesIconWithBadge], which earned
+ * that promotion by actually appearing on two different screens. */
+@Composable
+private fun SettingsIconWithBadge(hasWarning: Boolean, onClick: () -> Unit) {
+    IconButton(onClick = onClick) {
+        BadgedBox(
+            badge = {
+                if (hasWarning) {
+                    Badge(containerColor = NomadWarn)
+                }
+            },
+        ) {
+            Icon(Icons.Filled.Settings, contentDescription = "Settings")
+        }
+    }
+}
+
 @Composable
 private fun HostedNodeSection(
     status: HostedNodeStatus,
