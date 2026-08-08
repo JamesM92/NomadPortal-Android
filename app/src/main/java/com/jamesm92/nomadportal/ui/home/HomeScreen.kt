@@ -13,6 +13,7 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.items
@@ -59,11 +60,15 @@ import androidx.compose.ui.window.DialogProperties
 import com.jamesm92.nomadportal.data.messaging.AnnounceStatus
 import com.jamesm92.nomadportal.data.messaging.ContactIcon
 import com.jamesm92.nomadportal.data.messaging.ICON_APPEARANCE_NAMES
+import com.jamesm92.nomadportal.data.messaging.MdiIconRepository
 import com.jamesm92.nomadportal.data.messaging.MessagingRepository
 import com.jamesm92.nomadportal.data.messaging.materialIconFor
+import com.jamesm92.nomadportal.data.messaging.parseHexColor
+import com.jamesm92.nomadportal.data.messaging.toHexString
 import com.jamesm92.nomadportal.panicwipe.PanicWipe
 import com.jamesm92.nomadportal.ui.components.AdaptiveTopAppBar
 import com.jamesm92.nomadportal.ui.components.AppLogo
+import com.jamesm92.nomadportal.ui.components.CompactTextField
 import com.jamesm92.nomadportal.ui.components.MessagesIconWithBadge
 import com.jamesm92.nomadportal.ui.components.SearchField
 import com.jamesm92.nomadportal.ui.theme.NomadAccent
@@ -438,8 +443,11 @@ private fun CompactIconRow(
  * understated aesthetic. Any '#rrggbb' is valid over LXMF regardless —
  * this is just what the editor itself offers to tap. */
 private val ICON_COLOR_SWATCHES = listOf(
-    Color.White, Color.Black, NomadAccent, NomadAccent2, NomadWarn, NomadError,
-    Color(0xFF9575CD), Color(0xFF4DB6AC),
+    Color.White, Color.Black,
+    Color(0xFFE53935), Color(0xFFFB8C00), Color(0xFFFDD835), Color(0xFF43A047),
+    Color(0xFF00897B), Color(0xFF00ACC1), Color(0xFF1E88E5), Color(0xFF3949AB),
+    Color(0xFF8E24AA), Color(0xFFD81B60), Color(0xFF6D4C41), Color(0xFF757575),
+    NomadAccent, NomadAccent2,
 )
 
 /**
@@ -476,9 +484,25 @@ private fun IconAppearanceEditor(
     // once — see this function's own doc comment.
     var expandedSection by remember { mutableStateOf<EditorSection?>(null) }
 
-    val filteredNames = remember(searchQuery) {
-        val q = searchQuery.trim().lowercase().replace(' ', '_')
-        if (q.isBlank()) ICON_APPEARANCE_NAMES else ICON_APPEARANCE_NAMES.filter { it.contains(q) }
+    // Sourced from the real full MDI catalog (~7400 names, matching
+    // exactly what a real MeshChat/Sideband contact can pick from), not
+    // just ICON_APPEARANCE_MAP's curated ~180-entry subset — per
+    // explicit on-device report ("still not seeing the icon match what
+    // I have on MeshChat"): the curated list alone couldn't offer every
+    // icon a contact might already be using in another client. Falls
+    // back to the curated names only in the brief startup window before
+    // MdiIconRepository's background load finishes (isLoaded() false),
+    // so the picker is never empty.
+    val allNames = remember {
+        MdiIconRepository.names().ifEmpty { ICON_APPEARANCE_NAMES }
+    }
+    val filteredNames = remember(searchQuery, allNames) {
+        val q = searchQuery.trim().lowercase().replace(' ', '_').replace('-', '_')
+        if (q.isBlank()) {
+            allNames
+        } else {
+            allNames.filter { it.replace('-', '_').contains(q) }
+        }
     }
 
     // Scrolls to whatever's already selected every time the icon
@@ -490,7 +514,7 @@ private fun IconAppearanceEditor(
     val listState = rememberLazyListState()
     LaunchedEffect(expandedSection) {
         if (expandedSection == EditorSection.ICON) {
-            val index = ICON_APPEARANCE_NAMES.indexOf(selectedGlyph)
+            val index = allNames.indexOf(selectedGlyph)
             if (index >= 0) {
                 listState.scrollToItem(index)
             }
@@ -505,11 +529,16 @@ private fun IconAppearanceEditor(
             .padding(12.dp),
         verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
+        // Save lives here too, not just inside the icon section's own
+        // full-screen picker — per explicit direction, changing only
+        // the colors (never opening the icon picker at all) needs its
+        // own way to commit and close, not just Cancel.
         Row(
             modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.End,
+            horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.End),
         ) {
             TextButton(onClick = onCancel) { Text("Cancel") }
+            Button(onClick = { onSave(selectedGlyph, selectedFg, selectedBg) }) { Text("Save") }
         }
 
         CompactColorRow(
@@ -673,7 +702,7 @@ private fun FullScreenIconPicker(
                                     )
                                 }
                                 Text(
-                                    text = name.replace('_', ' '),
+                                    text = name.replace('_', ' ').replace('-', ' '),
                                     style = MaterialTheme.typography.bodyLarge.copy(
                                         fontSize = MaterialTheme.typography.bodyLarge.fontSize * 0.85f,
                                     ),
@@ -704,22 +733,59 @@ private fun FullScreenIconPicker(
     }
 }
 
+/**
+ * "Micron compatible" per explicit direction: real NomadNet Micron
+ * markup's own color model (confirmed directly against
+ * `nomadnet/ui/textui/MicronParser.py`) is plain hex — a full 6-digit
+ * `` `Fxxxxxx`` or a 3-digit shorthand `` `Fxyz`` (each digit doubled,
+ * same convention CSS's own hex shorthand uses — already how this
+ * app's deterministic-identity color generation works, see
+ * identity_store.py's `_hex_shorthand_to_rgb`) — not a fixed named
+ * palette (there is no such thing in real Micron). So this offers 16
+ * common colors as fast quick-picks, plus a free-entry hex field for
+ * anything else — any 6-digit hex is valid Micron regardless of
+ * whether it's one of the 16.
+ */
 @Composable
 private fun ColorSwatchRow(selected: Color, onSelect: (Color) -> Unit, modifier: Modifier = Modifier) {
-    Row(modifier = modifier, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-        ICON_COLOR_SWATCHES.forEach { swatch ->
-            Box(
-                modifier = Modifier
-                    .size(32.dp)
-                    .clip(CircleShape)
-                    .background(swatch)
-                    .border(
-                        width = if (swatch == selected) 2.dp else 1.dp,
-                        color = if (swatch == selected) MaterialTheme.colorScheme.secondary else NomadBg3,
-                        shape = CircleShape,
+    var hexDraft by remember(selected) { mutableStateOf(selected.toHexString()) }
+
+    Column(modifier = modifier) {
+        ICON_COLOR_SWATCHES.chunked(8).forEach { row ->
+            Row(
+                modifier = Modifier.padding(top = 4.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                row.forEach { swatch ->
+                    Box(
+                        modifier = Modifier
+                            .size(32.dp)
+                            .clip(CircleShape)
+                            .background(swatch)
+                            .border(
+                                width = if (swatch == selected) 2.dp else 1.dp,
+                                color = if (swatch == selected) MaterialTheme.colorScheme.secondary else NomadBg3,
+                                shape = CircleShape,
+                            )
+                            .clickable { onSelect(swatch) },
                     )
-                    .clickable { onSelect(swatch) },
+                }
+            }
+        }
+        Row(
+            modifier = Modifier.padding(top = 8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            CompactTextField(
+                value = hexDraft,
+                onValueChange = { hexDraft = it },
+                placeholder = "#rrggbb",
+                modifier = Modifier.width(110.dp),
             )
+            TextButton(onClick = { onSelect(parseHexColor(hexDraft, selected)) }) {
+                Text("Use")
+            }
         }
     }
 }

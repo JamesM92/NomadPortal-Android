@@ -215,7 +215,9 @@ fun ConversationScreen(
                 Text(
                     text = liveContact.lxmfHash,
                     style = MaterialTheme.typography.bodyLarge.copy(
-                        fontSize = MaterialTheme.typography.bodyLarge.fontSize * 0.55f,
+                        // ~50% larger than the original 0.55x — per
+                        // explicit on-device feedback.
+                        fontSize = MaterialTheme.typography.bodyLarge.fontSize * 0.825f,
                     ),
                     color = NomadTextDim,
                     maxLines = 1,

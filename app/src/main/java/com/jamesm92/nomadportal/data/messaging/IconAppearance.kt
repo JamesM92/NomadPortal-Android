@@ -156,27 +156,47 @@ import androidx.compose.ui.graphics.vector.ImageVector
  * build.gradle.kts). MeshChat in particular offers its users the
  * *entire* `@mdi/js` package as a picker (confirmed directly against its
  * source, `src/frontend/components/profile/ProfileIconPage.vue`) —
- * several thousand icons — so this app can never resolve every possible
- * inbound name; the two catalogs overlap substantially in *meaning*
- * even where naming differs, so this remains a curated best-effort map,
- * not an exhaustive or automatic translation. An unmapped name falls
- * back to an initial-letter glyph, never a blank/broken icon (see
- * [com.jamesm92.nomadportal.ui.components.ContactAvatar]).
+ * several thousand icons.
  *
- * Backs both directions: *reading* an inbound contact's icon name (so
- * more of what real MeshChat/Sideband users have actually picked
- * renders as a real glyph here, not a letter) and, via
- * [ICON_APPEARANCE_NAMES], *picking* this device's own icon — the
- * picker was originally a small curated subset of this map, widened to
- * the full map once the picker grew a search bar (see that property's
- * own doc comment) made browsing every entry practical.
+ * This map alone is a curated best-effort subset — but [MdiIconRepository]
+ * backs it with the *actual, full* real MDI catalog (~7400 icons,
+ * bundled as data, Apache-2.0 licensed) as a fallback below it, so an
+ * inbound name this map doesn't recognize still resolves to the correct
+ * real icon rather than only ever falling back to a letter — this map
+ * stays purely a fast, zero-parsing path for common names (real
+ * Compose ImageVectors, compile-time constants), not the only path.
+ *
+ * Backs both directions: *reading* an inbound contact's icon name (now
+ * effectively complete — real MDI names all resolve, via the fallback
+ * below, to the real icon) and, via [ICON_APPEARANCE_NAMES], *picking*
+ * this device's own icon — the picker intentionally still offers only
+ * this map's curated subset, not the full 7400-icon catalog (a
+ * separate, much bigger UX question from "can we render what arrives").
  *
  * Extending this table is always safe and non-breaking: an added entry
- * only ever upgrades an existing letter-glyph contact to a real icon.
+ * only ever upgrades an existing letter-glyph contact to a real icon
+ * one step earlier (skipping the MdiIconRepository parse/cache step).
  */
 fun materialIconFor(glyphName: String): ImageVector? {
-    val key = glyphName.trim().lowercase().replace(' ', '_').replace('-', '_')
-    return ICON_APPEARANCE_MAP[key]
+    val trimmed = glyphName.trim().lowercase()
+    // Real MDI data first, not the curated map — per explicit on-device
+    // report ("still not seeing the icon match what I have on
+    // MeshChat"): most of this map's ~180 keys *are* real MDI names,
+    // so before this reordering they were resolving to Google's
+    // Material Icons Extended lookalike shape instead of MDI's actual
+    // path data, which never looks pixel-identical to what a real
+    // MeshChat/Sideband contact renders for the same name even though
+    // the name/colors matched correctly. MdiIconRepository's own keys
+    // are real MDI kebab-case (hyphens) — re-derived from the original
+    // input, not chained off underscoreKey below, to avoid
+    // double-mangling.
+    val kebabKey = trimmed.replace(' ', '-').replace('_', '-')
+    MdiIconRepository.get(kebabKey)?.let { return it }
+    // Falls back to the curated map only for names MdiIconRepository
+    // doesn't (yet, or ever) have — e.g. before its background load
+    // finishes at startup, or a genuinely made-up/non-MDI name.
+    val underscoreKey = trimmed.replace(' ', '_').replace('-', '_')
+    return ICON_APPEARANCE_MAP[underscoreKey]
 }
 
 /**

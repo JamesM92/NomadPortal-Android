@@ -10,6 +10,7 @@ import com.jamesm92.nomadportal.connectivity.TcpConnectionsRepository
 import com.jamesm92.nomadportal.data.SettingsRepository
 import com.jamesm92.nomadportal.data.browsing.BrowserRepository
 import com.jamesm92.nomadportal.data.browsing.RealBrowserRepository
+import com.jamesm92.nomadportal.data.messaging.MdiIconRepository
 import com.jamesm92.nomadportal.data.messaging.MessagingRepository
 import com.jamesm92.nomadportal.data.messaging.RealMessagingRepository
 import kotlinx.coroutines.CoroutineScope
@@ -44,6 +45,13 @@ class NomadPortalApp : Application() {
         if (!Python.isStarted()) {
             Python.start(AndroidPlatform(this))
         }
+
+        // Pre-warms the real ~7400-icon MDI catalog in the background
+        // (see MdiIconRepository's own doc comment) so it's likely
+        // already loaded by the time a contact icon actually needs it —
+        // get() is safe to call before this finishes regardless, it
+        // just returns null (same as any unresolved name) until ready.
+        MdiIconRepository.initialize(this, appScope)
 
         settingsRepository = SettingsRepository(this)
         // RealInterfaceController, backed by nomadportal_core.orchestrator
