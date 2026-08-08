@@ -11,6 +11,22 @@ Sub-directories are supported; they are served at their relative path.
 
 The node identity is persisted to <identity_file> so the destination hash
 stays constant across restarts.
+
+**NomadPortal-Android-specific hardening**: the original (Docker/desktop)
+version of this module let an executable page file run as a subprocess
+and served its stdout as the response — real NomadNet server behavior,
+useful for dynamic pages on a machine the operator controls directly.
+That capability has been removed entirely here, not merely left unused —
+per explicit product direction, hosting from this app is deliberately
+restricted to plain `.mu` markup only, no Python/executables. A phone is
+a very different trust boundary than an operator's own server: the
+site's content is authored (and potentially imported) through this app's
+own editor, on a device the user carries around and may hand to others,
+so "a page file can execute arbitrary code with this process's
+permissions" is a real risk here in a way it wasn't for the original
+desktop tool. Enforced at the serving layer (this file), not only in the
+authoring UI, so it holds regardless of how a page file ended up on
+disk.
 """
 
 import logging
@@ -76,6 +92,10 @@ class SiteServer:
         self._last_announce = 0.0
         self._last_rescan   = 0.0
         self._running       = False
+        # Tracked so stop() can deregister exactly what start()/the
+        # rescan loop registered — RNS.Destination has no "deregister
+        # everything" call, only per-path deregister_request_handler().
+        self._registered_paths: set = set()
 
     def start(self) -> str:
         """Start the node server. Returns the destination hexhash."""
@@ -141,6 +161,26 @@ class SiteServer:
 
         return self._node_hash
 
+    def stop(self) -> None:
+        """Stop hosting: ends the background announce/rescan loop and
+        deregisters every page/file path this instance registered, so
+        this destination no longer answers requests. Does not (cannot,
+        in this RNS version — no API for it) fully un-create the
+        underlying `RNS.Destination`/identity; a peer who already
+        cached this node's hash could still attempt a link, it would
+        just find nothing registered to serve. Safe to call even if
+        never started (e.g. the hosting toggle was flipped on then
+        straight back off before start() finished)."""
+        self._running = False
+        if self._dest is not None:
+            for path in list(self._registered_paths):
+                try:
+                    self._dest.deregister_request_handler(path)
+                except Exception:
+                    log.debug("Deregister failed for a registered path (see exception log)")
+            self._registered_paths.clear()
+        log.info("Site node stopped")
+
     def node_hash(self) -> Optional[str]:
         return self._node_hash
 
@@ -150,26 +190,19 @@ class SiteServer:
     def files_dir(self) -> str:
         return self._files_dir
 
-    def fetch_page(
-        self,
-        path: str,
-        local_identity_hex: str = "",
-        field_data: Optional[dict] = None,
-    ) -> tuple:
+    def pages_dir(self) -> str:
+        return self._pages_dir
+
+    def fetch_page(self, path: str) -> tuple:
         """Serve a page directly from the filesystem (bypasses RNS link).
 
         Returns (content_bytes, error_str) — exactly one will be None.
         path should be the page path, e.g. '/index.mu' or '/page/index.mu'.
 
-        `local_identity_hex` (optional) is the logged-in NomadPortal user's
-        RNS identity hex. When provided, executable pages see it as
-        `remote_identity` so they can render the user's fingerprint even
-        though no Reticulum link is in play.
-
-        `field_data` (optional) is a dict of `field_*` / `var_*` values to
-        expose as env vars to executable pages. Lets local form submissions
-        round-trip without going over Reticulum.
-        """
+        No longer takes an identity/field-data pair — those only ever
+        existed to reach executable pages (a "who's viewing" fingerprint,
+        local form-submit round-tripping), which this module no longer
+        supports at all (see this file's own module doc comment)."""
         # Normalise to bare filename (strip /page/ prefix if present)
         p = path.strip("/")
         if p.startswith("page/"):
@@ -185,33 +218,6 @@ class SiteServer:
             return None, f"Page not found: {p}"
 
         try:
-            if not _is_windows() and os.access(file_path, os.X_OK):
-                import subprocess
-                # _build_env only forwards keys prefixed with `field_` /
-                # `var_` to the executable's env. Over-RNS requests come
-                # through browser.fetch_page which already prefixes; local
-                # form submits arrive with bare keys (`action`, `username`,
-                # …) so we apply the same prefix here for parity.
-                norm_data = None
-                if field_data:
-                    norm_data = {}
-                    for k, v in field_data.items():
-                        if k.startswith("field_") or k.startswith("var_"):
-                            norm_data[k] = v
-                        else:
-                            norm_data[f"field_{k}"] = v
-                result = subprocess.run(
-                    [file_path],
-                    stdout=subprocess.PIPE,
-                    stderr=subprocess.DEVNULL,
-                    env=_build_env(
-                        None,
-                        local_identity_hex or None,
-                        norm_data,
-                        node_destination=self._node_hash,
-                    ),
-                )
-                return result.stdout, None
             with open(file_path, "rb") as fh:
                 return fh.read(), None
         except Exception as exc:
@@ -227,6 +233,20 @@ class SiteServer:
             log.info("Site node announced (%s)", self._node_hash[:16] if self._node_hash else "?")
         except Exception as exc:
             log.warning("Site announce failed: %s", exc)
+
+    def set_node_name(self, name: str) -> None:
+        """Renames this hosted node — takes effect on the *next*
+        announce (this device's own name is broadcast as announce
+        app_data, not pushed proactively), same "persisted, applied
+        live where there's live state to update" shape as
+        MessagingService.set_display_name for the LXMF identity."""
+        self._node_name = name or self._node_name
+
+    def set_auto_announce(self, enabled: bool) -> None:
+        self._auto_announce = enabled
+
+    def set_announce_interval(self, seconds: int) -> None:
+        self._announce_interval = max(MIN_ANNOUNCE_INTERVAL, min(MAX_ANNOUNCE_INTERVAL, int(seconds)))
 
     # ------------------------------------------------------------------
     # Page / file registration  (mirrors NomadNet's Node.register_pages)
@@ -248,6 +268,7 @@ class SiteServer:
                 response_generator=self._serve_default_index,
                 allow=self._dest.ALLOW_ALL,
             )
+            self._registered_paths.add("/page/index.mu")
 
         for full_path in pages:
             rel = full_path[len(self._pages_dir):]
@@ -258,6 +279,7 @@ class SiteServer:
                     response_generator=self._serve_page,
                     allow=self._dest.ALLOW_ALL,
                 )
+                self._registered_paths.add(request_path)
             except Exception:
                 # CodeQL persistently flags any log line that includes a
                 # filesystem-derived ``request_path`` as
@@ -290,6 +312,7 @@ class SiteServer:
                     allow=self._dest.ALLOW_ALL,
                     auto_compress=32_000_000,
                 )
+                self._registered_paths.add(request_path)
             except Exception:
                 # Same as the pages-register loop above — CodeQL flags
                 # filesystem-derived path vars in log lines persistently.
@@ -325,16 +348,10 @@ class SiteServer:
             if not os.path.isfile(file_path):
                 return b">Page Not Found\n\nThe requested page does not exist."
 
-            # Executable pages: run as a script and return stdout
-            if not _is_windows() and os.access(file_path, os.X_OK):
-                env = _build_env(link_id, remote_identity, data,
-                                 node_destination=self._node_hash)
-                import subprocess
-                result = subprocess.run(
-                    [file_path], stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, env=env
-                )
-                return result.stdout
-
+            # Plain markup only — never executed, regardless of the
+            # file's own permission bits. See this module's own doc
+            # comment for why (a real capability removed, not merely a
+            # code path this app happens not to exercise).
             with open(file_path, "rb") as fh:
                 return fh.read()
 
@@ -410,49 +427,3 @@ class SiteServer:
 
     def auto_announce_enabled(self) -> bool:
         return self._auto_announce
-
-
-def _is_windows() -> bool:
-    import sys
-    return sys.platform == "win32"
-
-
-def _build_env(link_id, remote_identity, data, node_destination=None) -> dict:
-    """Build the env passed to executable pages.
-
-    `remote_identity` may be an RNS.Identity (for link-served requests)
-    or a hex string (for local NomadPortal users where the identity comes
-    from the logged-in account, not from link.identify()).
-    """
-    env: dict = {}
-    if "PATH" in os.environ:
-        env["PATH"] = os.environ["PATH"]
-    # Propagate PYTHONPATH so executable .mu pages can import packages
-    # from the persistent /site/lib/ directory (set by entrypoint.sh).
-    if "PYTHONPATH" in os.environ:
-        env["PYTHONPATH"] = os.environ["PYTHONPATH"]
-    if node_destination:
-        env["node_destination"] = node_destination
-    if link_id is not None:
-        import RNS
-        env["link_id"] = RNS.hexrep(link_id, delimit=False)
-    if remote_identity is not None:
-        if isinstance(remote_identity, str):
-            env["remote_identity"] = remote_identity
-        else:
-            import RNS
-            env["remote_identity"] = RNS.hexrep(remote_identity.hash, delimit=False)
-    if data and isinstance(data, dict):
-        for k, v in data.items():
-            if not isinstance(k, str):
-                continue
-            # NomadNet's convention: form submissions arrive with `field_X`
-            # keys but executable pages read them as `var_X`. We expose both
-            # forms so authors can use either prefix; the `var_` form is
-            # the documented one.
-            if k.startswith("field_"):
-                env[k] = v
-                env["var_" + k[len("field_"):]] = v
-            elif k.startswith("var_"):
-                env[k] = v
-    return env

@@ -97,6 +97,19 @@ class NomadPortalApp : Application() {
             if (settingsRepository.wifiDiscoveryEnabled.first()) {
                 interfaceController.setWifiDiscoveryEnabled(true)
             }
+            if (settingsRepository.nodeHostingEnabled.first()) {
+                // Best-effort — a failure here (e.g. a corrupt site
+                // identity file) shouldn't crash app startup; the
+                // Settings screen's toggle will visibly show it's off
+                // if this doesn't succeed, same honesty-over-silent-
+                // success convention as everywhere else in this app.
+                try {
+                    interfaceController.setNodeHostingEnabled(true)
+                } catch (e: Exception) {
+                    // Logged inside orchestrator.py already; nothing
+                    // further to do here at boot time.
+                }
+            }
         }
 
         // Real, orchestrator-backed repositories (Aug 2026) — replaced

@@ -132,6 +132,7 @@ _prop_sync = None
 _active_interfaces: dict = {}  # toggle name -> RNS.Interface currently attached
 _started = False
 _base_dir: str = ""
+_site_server = None  # nomadnet_web.site_server.SiteServer instance, only while hosting is on
 
 # Multiple, independently addressable TCP connections — replaces the
 # original single hardcoded-hub design (see RealInterfaceController.kt's
@@ -321,6 +322,129 @@ def set_wifi_discovery_enabled(enabled: bool) -> None:
     for routing even though the OS socket leaks until the process
     exits)."""
     _set_interface("wifi_discovery", enabled, _make_auto_interface)
+
+
+def set_node_hosting_enabled(enabled: bool) -> None:
+    """Starts/stops this device's own NomadNet site (`SiteServer`) —
+    unlike the interfaces `_set_interface` manages below, hosting isn't
+    an `RNS.Interface` at all, it's an `RNS.Destination` serving pages/
+    files, so it's wired independently rather than through that
+    function's attach/detach machinery.
+
+    Pages/files/identity all live under `_base_dir` (this app's own
+    never-backed-up storage root — same reasoning as everywhere else in
+    this app: nothing here should leave the device via a backup side
+    channel), in their own `site/` subdirectory, parallel to how
+    messaging's attachments/ subdirectory works.
+
+    Raises RuntimeError on failure — not swallowed — matching this
+    module's other toggle functions' "let the caller find out" contract
+    (see set_wifi_discovery_enabled's own doc comment for the same
+    convention).
+    """
+    global _site_server
+    with _lock:
+        if enabled:
+            if _site_server is not None:
+                return  # already on
+            if not is_ready():
+                raise RuntimeError("Cannot start hosting — RNS is not ready yet")
+            from nomadnet_web.site_server import SiteServer
+            site_dir = os.path.join(_base_dir, "site")
+            server = SiteServer(
+                pages_dir=os.path.join(site_dir, "pages"),
+                files_dir=os.path.join(site_dir, "files"),
+                identity_file=os.path.join(_base_dir, "reticulum", "site_identity.id"),
+            )
+            node_hash = server.start()
+            _site_server = server
+            if _browser is not None:
+                _browser.set_hosted(node_hash, server.node_name())
+            log.info("Node hosting enabled")
+        else:
+            if _site_server is None:
+                return  # already off
+            _site_server.stop()
+            _site_server = None
+            if _browser is not None:
+                _browser.clear_hosted()
+            log.info("Node hosting disabled")
+
+
+def node_hosting_enabled() -> bool:
+    return _site_server is not None
+
+
+def get_site_status_json() -> str:
+    """[SiteStatus] shape: enabled, node_hash (nullable), node_name
+    (nullable), pages_dir/files_dir (absolute on-device paths — the file
+    nav UI reads/writes these directly, same "hand Kotlin a real path"
+    convention as messaging.py's attachments), announce_interval_seconds
+    (this hosted node's own independent announce schedule — a different
+    thing from AnnounceStatus.interfaces, which governs how often this
+    device's *LXMF identity* announces; the hosted node is a separate
+    RNS destination with its own announce loop, see site_server.py — 0
+    means auto-announce disabled, same no-separate-flag convention as
+    every other announce control in this app), last_announce_at (unix
+    seconds, nullable)."""
+    import json
+    if _site_server is None:
+        return json.dumps({
+            "enabled": False, "node_hash": None, "node_name": None,
+            "pages_dir": None, "files_dir": None,
+            "announce_interval_seconds": 0, "last_announce_at": None,
+        })
+    last_announce = _site_server.last_announce_at()
+    # 0-means-disabled on the wire, same single-value convention as
+    # every other announce control in this app (see
+    # set_site_announce_interval's own doc comment) — collapses
+    # SiteServer's own two separate fields (auto_announce bool +
+    # announce_interval int) into the one Kotlin already expects,
+    # rather than exposing both and risking them disagreeing.
+    interval = _site_server.announce_interval() if _site_server.auto_announce_enabled() else 0
+    return json.dumps({
+        "enabled": True,
+        "node_hash": _site_server.node_hash(),
+        "node_name": _site_server.node_name(),
+        "pages_dir": _site_server.pages_dir(),
+        "files_dir": _site_server.files_dir(),
+        "announce_interval_seconds": interval,
+        "last_announce_at": last_announce if last_announce else None,
+    })
+
+
+def set_site_node_name(name: str) -> bool:
+    if _site_server is None:
+        return False
+    _site_server.set_node_name(name)
+    if _browser is not None:
+        _browser.set_hosted(_site_server.node_hash(), _site_server.node_name())
+    return True
+
+
+def set_site_announce_interval(seconds: int) -> bool:
+    """0 means disabled — same convention as messaging.py's
+    set_auto_announce_interval (no separate enabled flag). SiteServer
+    itself keeps auto_announce and announce_interval as two separate
+    internal fields (its own established design, unchanged here) — this
+    bridge function is what reconciles that with the single-value "0 =
+    off" convention every other announce control in this app already
+    uses, rather than exposing SiteServer's two-field shape directly to
+    Kotlin."""
+    if _site_server is None:
+        return False
+    enabled = seconds > 0
+    _site_server.set_auto_announce(enabled)
+    if enabled:
+        _site_server.set_announce_interval(seconds)
+    return True
+
+
+def announce_site_now() -> bool:
+    if _site_server is None:
+        return False
+    _site_server.announce()
+    return True
 
 
 def _set_interface(key: str, enabled: bool, factory) -> None:
@@ -1072,12 +1196,10 @@ def get_announce_status_json() -> str:
     starting up), identity_hash (nullable — the raw RNS Identity hash,
     a genuinely different value from lxmf_address: that's the "lxmf.
     delivery" *destination* hash derived from this identity, not the
-    identity's own hash), hosted_node_hash (nullable — null unless a
-    real SiteServer has actually set browser.py's _hosted_hash; there is
-    none yet, see that field's own "set externally after SiteServer
-    starts" comment, so this is always null today, honestly, rather than
-    fabricating a value — matches this app's "authoritative toggle"
-    convention elsewhere), send_blocked + send_blocked_reason (a
+    identity's own hash), hosted_node_hash (nullable — null unless
+    node hosting is actually on, set via set_node_hosting_enabled(True)
+    calling browser.py's set_hosted(); see that method's own doc
+    comment), send_blocked + send_blocked_reason (a
     read-only preview of what _check_send_allowed() would currently
     decide — lets the UI show a warning before the user even tries to
     send, not just react to a failed send afterward)."""

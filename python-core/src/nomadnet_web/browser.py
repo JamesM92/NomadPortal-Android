@@ -1844,6 +1844,24 @@ class NodeBrowser:
 
         return result["ms"], result["error"]
 
+    def set_hosted(self, hash_hex: str, name: str) -> None:
+        """Called by orchestrator.py once `SiteServer.start()` actually
+        succeeds — see `_hosted_hash`'s own "set externally after
+        SiteServer starts" doc comment at __init__. Everywhere
+        `_hosted_hash` is already consulted (own-node-always-favorited,
+        always-in-sidebar) starts working the moment this is called; no
+        separate wiring needed at each of those call sites."""
+        self._hosted_hash = (hash_hex or "").lower()
+        self._hosted_name = name or ""
+
+    def clear_hosted(self) -> None:
+        """Called when hosting is turned off — the counterpart to
+        set_hosted(), so a stopped SiteServer's hash stops being treated
+        as this device's own node (no longer force-favorited/pinned in
+        the sidebar)."""
+        self._hosted_hash = ""
+        self._hosted_name = ""
+
     def set_favorite(
         self,
         hash_hex: str,

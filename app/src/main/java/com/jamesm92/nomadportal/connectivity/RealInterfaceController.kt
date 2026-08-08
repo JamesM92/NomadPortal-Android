@@ -4,10 +4,15 @@ import com.chaquo.python.Python
 import com.jamesm92.nomadportal.data.SettingsRepository
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.flow
+import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.withContext
+import org.json.JSONObject
 
 /**
  * First real [InterfaceController] — backed by `nomadportal_core.orchestrator`
@@ -27,9 +32,10 @@ import kotlinx.coroutines.withContext
  *   integrated — that repo isn't wired in yet (see
  *   nomadportal_android_handoff.md's "Relationship to other tracks").
  *
- * Node hosting stays persisted-intent-only too — it needs `SiteServer`
- * wiring, deliberately out of scope for this orchestration pass
- * (sequencing step 5, not step 1/2's payoff).
+ * Node hosting (`SiteServer`) is real too (Aug 2026) — see
+ * `nomadnet_web.site_server`'s own module doc comment for why it's
+ * hardened to plain `.mu` markup only, no Python/executables, unlike
+ * the original desktop tool it was ported from.
  *
  * The Wi-Fi discovery toggle carries a real, documented limitation from
  * the orchestrator: turning it off then back on within the same app
@@ -99,7 +105,51 @@ class RealInterfaceController(
     }
 
     override suspend fun setNodeHostingEnabled(enabled: Boolean) {
-        // TODO(core extraction step 5, SiteServer wiring): persisted intent only.
+        // Deliberately not caught here, same reasoning as
+        // setWifiDiscoveryEnabled above — a caller needs to know a
+        // failed start (e.g. RNS not ready yet) rather than have it
+        // silently swallowed into "looks like it worked."
+        withContext(Dispatchers.IO) {
+            orchestrator.callAttr("set_node_hosting_enabled", enabled)
+        }
         settings.setNodeHostingEnabled(enabled)
+    }
+
+    override fun hostedNodeStatus(): Flow<HostedNodeStatus> = flow {
+        while (true) {
+            emit(fetchHostedNodeStatus())
+            delay(POLL_INTERVAL_MS)
+        }
+    }.flowOn(Dispatchers.IO)
+
+    private fun fetchHostedNodeStatus(): HostedNodeStatus {
+        val obj = JSONObject(orchestrator.callAttr("get_site_status_json").toString())
+        return HostedNodeStatus(
+            enabled = obj.optBoolean("enabled", false),
+            nodeHash = if (obj.isNull("node_hash")) null else obj.optString("node_hash"),
+            nodeName = if (obj.isNull("node_name")) null else obj.optString("node_name"),
+            announceIntervalSeconds = obj.optInt("announce_interval_seconds", 0),
+            lastAnnounceAtMillis = if (obj.isNull("last_announce_at")) {
+                null
+            } else {
+                (obj.optDouble("last_announce_at", 0.0) * 1000).toLong()
+            },
+        )
+    }
+
+    override suspend fun setHostedNodeName(name: String): Boolean = withContext(Dispatchers.IO) {
+        orchestrator.callAttr("set_site_node_name", name).toBoolean()
+    }
+
+    override suspend fun setHostedNodeAnnounceInterval(seconds: Int): Boolean = withContext(Dispatchers.IO) {
+        orchestrator.callAttr("set_site_announce_interval", seconds).toBoolean()
+    }
+
+    override suspend fun announceHostedNodeNow(): Boolean = withContext(Dispatchers.IO) {
+        orchestrator.callAttr("announce_site_now").toBoolean()
+    }
+
+    private companion object {
+        const val POLL_INTERVAL_MS = 4000L
     }
 }

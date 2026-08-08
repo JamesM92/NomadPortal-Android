@@ -39,6 +39,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -54,9 +55,12 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
+import com.jamesm92.nomadportal.connectivity.HostedNodeStatus
+import com.jamesm92.nomadportal.connectivity.InterfaceController
 import com.jamesm92.nomadportal.data.messaging.AnnounceStatus
 import com.jamesm92.nomadportal.data.messaging.ContactIcon
 import com.jamesm92.nomadportal.data.messaging.ICON_APPEARANCE_NAMES
@@ -70,6 +74,7 @@ import com.jamesm92.nomadportal.ui.components.AdaptiveTopAppBar
 import com.jamesm92.nomadportal.ui.components.AppLogo
 import com.jamesm92.nomadportal.ui.components.CompactTextField
 import com.jamesm92.nomadportal.ui.components.MessagesIconWithBadge
+import com.jamesm92.nomadportal.ui.components.MinutesField
 import com.jamesm92.nomadportal.ui.components.SearchField
 import com.jamesm92.nomadportal.ui.theme.NomadAccent
 import com.jamesm92.nomadportal.ui.theme.NomadAccent2
@@ -104,15 +109,18 @@ import kotlinx.coroutines.launch
 @Composable
 fun HomeScreen(
     messagingRepository: MessagingRepository,
+    interfaceController: InterfaceController,
     onOpenSettings: () -> Unit,
     onOpenMessages: () -> Unit,
     onOpenNodes: () -> Unit,
+    onOpenHostedNode: (nodeHash: String) -> Unit,
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val announceStatus by messagingRepository.announceStatus().collectAsState(initial = null)
     val conversations by messagingRepository.conversations().collectAsState(initial = emptyList())
     val totalUnread = conversations.sumOf { it.unreadCount }
+    val hostedNodeStatus by interfaceController.hostedNodeStatus().collectAsState(initial = null)
 
     Scaffold(
         topBar = {
@@ -170,7 +178,182 @@ fun HomeScreen(
                     },
                 )
             }
+
+            HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
+
+            hostedNodeStatus?.let { status ->
+                HostedNodeSection(
+                    status = status,
+                    onToggle = { scope.launch { interfaceController.setNodeHostingEnabled(it) } },
+                    onRename = { name -> scope.launch { interfaceController.setHostedNodeName(name) } },
+                    onAnnounceNow = { scope.launch { interfaceController.announceHostedNodeNow() } },
+                    onAnnounceIntervalChange = {
+                        scope.launch { interfaceController.setHostedNodeAnnounceInterval(it) }
+                    },
+                    onOpen = { hash -> onOpenHostedNode(hash) },
+                )
+            }
         }
+    }
+}
+
+/**
+ * This device's own hosted NomadNet node: name, on/off, announce
+ * interval, manual "Announce now", and a way to view it (opens the same
+ * browser screen used for any other node) — see this file's own doc
+ * comment for why manual announcing lives here and not Settings (that
+ * screen only ever owns *configuration*, never a "do it now" action).
+ * A duplicate on/off toggle and announce-interval config also live on
+ * Settings' Node tab, per explicit design direction — flip/configure
+ * from either place, same underlying state, same convention every other
+ * interface's Settings tab already follows.
+ */
+@Composable
+private fun HostedNodeSection(
+    status: HostedNodeStatus,
+    onToggle: (Boolean) -> Unit,
+    onRename: (String) -> Unit,
+    onAnnounceNow: () -> Unit,
+    onAnnounceIntervalChange: (seconds: Int) -> Unit,
+    onOpen: (nodeHash: String) -> Unit,
+) {
+    var editingName by remember { mutableStateOf(false) }
+    var nameDraft by remember(status.nodeName) { mutableStateOf(status.nodeName ?: "") }
+
+    Column(modifier = Modifier.fillMaxWidth()) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text(
+                text = "Hosted node",
+                style = MaterialTheme.typography.titleLarge,
+                color = MaterialTheme.colorScheme.secondary,
+            )
+            Switch(checked = status.enabled, onCheckedChange = onToggle)
+        }
+
+        if (!status.enabled) {
+            Text(
+                text = "Off — this device isn't serving any pages right now.",
+                style = MaterialTheme.typography.bodyLarge.copy(
+                    fontSize = MaterialTheme.typography.bodyLarge.fontSize * 0.85f,
+                ),
+                color = NomadTextDim,
+                modifier = Modifier.padding(top = 4.dp),
+            )
+            return
+        }
+
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(4.dp),
+        ) {
+            if (editingName) {
+                OutlinedTextField(
+                    value = nameDraft,
+                    onValueChange = { nameDraft = it },
+                    singleLine = true,
+                    textStyle = MaterialTheme.typography.bodyLarge.copy(
+                        fontSize = MaterialTheme.typography.bodyLarge.fontSize * 0.9f,
+                    ),
+                    modifier = Modifier.weight(1f, fill = false),
+                )
+                IconButton(onClick = {
+                    val trimmed = nameDraft.trim()
+                    if (trimmed.isNotEmpty()) onRename(trimmed)
+                    editingName = false
+                }) {
+                    Icon(Icons.Filled.Check, contentDescription = "Save name")
+                }
+                IconButton(onClick = {
+                    nameDraft = status.nodeName ?: ""
+                    editingName = false
+                }) {
+                    Icon(Icons.Filled.Close, contentDescription = "Cancel")
+                }
+            } else {
+                Text(
+                    text = status.nodeName ?: "Unnamed node",
+                    style = MaterialTheme.typography.bodyLarge,
+                    modifier = Modifier.weight(1f, fill = false),
+                )
+                IconButton(onClick = { editingName = true }) {
+                    Icon(Icons.Filled.Edit, contentDescription = "Rename")
+                }
+            }
+        }
+
+        status.nodeHash?.let { hash ->
+            Text(
+                text = hash,
+                style = MaterialTheme.typography.bodyLarge.copy(
+                    fontSize = MaterialTheme.typography.bodyLarge.fontSize * 0.55f,
+                ),
+                color = NomadTextDim,
+                maxLines = 1,
+                softWrap = false,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
+
+        Text(
+            text = if (status.lastAnnounceAtMillis != null) {
+                "Last announced ${formatRelativeAnnounceTime(status.lastAnnounceAtMillis)}"
+            } else {
+                "Never announced yet"
+            },
+            style = MaterialTheme.typography.bodyLarge.copy(
+                fontSize = MaterialTheme.typography.bodyLarge.fontSize * 0.7f,
+            ),
+            color = NomadTextDim,
+            modifier = Modifier.padding(top = 4.dp),
+        )
+
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text(
+                text = "Auto-announce (min)",
+                style = MaterialTheme.typography.bodyLarge.copy(
+                    fontSize = MaterialTheme.typography.bodyLarge.fontSize * 0.75f,
+                ),
+            )
+            MinutesField(
+                seconds = status.announceIntervalSeconds,
+                allowZero = true,
+                onCommit = onAnnounceIntervalChange,
+                modifier = Modifier.width(64.dp),
+            )
+        }
+
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            TextButton(onClick = onAnnounceNow) { Text("Announce now") }
+            status.nodeHash?.let { hash ->
+                TextButton(onClick = { onOpen(hash) }) { Text("View") }
+            }
+        }
+    }
+}
+
+/** Same relative-time bucketing as ConversationListScreen's/NodeListScreen's
+ * own formatRelativeTime — kept local rather than shared since each has
+ * its own "never" copy tailored to what it's describing. */
+private fun formatRelativeAnnounceTime(millis: Long): String {
+    val diffSeconds = ((System.currentTimeMillis() - millis) / 1000).coerceAtLeast(0)
+    return when {
+        diffSeconds < 60 -> "just now"
+        diffSeconds < 3600 -> "${diffSeconds / 60}m ago"
+        diffSeconds < 86_400 -> "${diffSeconds / 3600}h ago"
+        diffSeconds < 2_592_000 -> "${diffSeconds / 86_400}d ago"
+        else -> "${diffSeconds / 2_592_000}mo ago"
     }
 }
 

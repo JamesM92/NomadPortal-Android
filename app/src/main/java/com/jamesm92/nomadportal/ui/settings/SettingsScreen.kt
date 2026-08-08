@@ -4,11 +4,9 @@ import android.content.ClipData
 import android.content.res.Configuration
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxHeight
@@ -21,8 +19,6 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
-import androidx.compose.foundation.text.BasicTextField
-import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
@@ -37,7 +33,6 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LocalMinimumInteractiveComponentSize
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SecondaryTabRow
 import androidx.compose.material3.Slider
@@ -57,16 +52,12 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.onFocusChanged
-import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.platform.ClipEntry
 import androidx.compose.ui.platform.LocalClipboard
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
-import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -82,6 +73,7 @@ import com.jamesm92.nomadportal.permissions.BLUETOOTH_PERMISSIONS
 import com.jamesm92.nomadportal.permissions.hasBluetoothPermissions
 import com.jamesm92.nomadportal.ui.components.AdaptiveTopAppBar
 import com.jamesm92.nomadportal.ui.components.CompactTextField
+import com.jamesm92.nomadportal.ui.components.MinutesField
 import com.jamesm92.nomadportal.ui.components.PanicWipeLogo
 import com.jamesm92.nomadportal.ui.components.VerticalScrollIndicator
 import com.jamesm92.nomadportal.ui.theme.NomadMono
@@ -125,6 +117,7 @@ fun SettingsScreen(
     val rNodeEnabled by interfaceController.rNodeEnabled.collectAsState()
     val wifiDiscoveryEnabled by interfaceController.wifiDiscoveryEnabled.collectAsState()
     val nodeHostingEnabled by interfaceController.nodeHostingEnabled.collectAsState()
+    val hostedNodeStatus by interfaceController.hostedNodeStatus().collectAsState(initial = null)
 
     var bluetoothGranted by remember { mutableStateOf(hasBluetoothPermissions(context)) }
     val permissionLauncher = rememberLauncherForActivityResult(
@@ -147,9 +140,9 @@ fun SettingsScreen(
     // that interface's own Message/Auto policy; TCP's tab additionally
     // carries the full connection list (add/remove/enable/disable —
     // replaces the old single-hardcoded-hub design). Node is the hosted-
-    // node's own duplicate toggle, same pattern, no deeper config yet
-    // (SiteServer wiring doesn't exist — see InterfaceController's own
-    // doc comment).
+    // node's own duplicate toggle, same pattern, plus its own announce-
+    // interval config (a genuinely separate schedule from the four
+    // interfaces above — see HostedNodeStatus's own doc comment).
     var selectedTab by remember { mutableIntStateOf(0) }
     val isLandscape = LocalConfiguration.current.orientation == Configuration.ORIENTATION_LANDSCAPE
     val tabLabels = listOf("Main", "TCP", "Bluetooth", "RNode", "LAN", "Node")
@@ -487,17 +480,31 @@ fun SettingsScreen(
                     }
                 }
                 else -> {
-                    // Node (hosted NomadNet node) — duplicate toggle
-                    // only for now. Renaming/manual-announce for the
-                    // hosted node live on Home instead (per explicit
-                    // direction), and deeper hosting config needs real
-                    // SiteServer wiring that doesn't exist yet.
+                    // Node (hosted NomadNet node) — a duplicate toggle
+                    // (flip from either here or Home, same underlying
+                    // state, matching every other interface tab's own
+                    // convention) plus this node's own announce-interval
+                    // config. Renaming and manual "Announce now" live on
+                    // Home instead, per explicit direction — this screen
+                    // only ever owns configuration, never a "do it now"
+                    // action (see this file's own doc comment).
                     item {
                         ToggleRow(
                             label = "Host a NomadNet node",
                             checked = nodeHostingEnabled,
                             onCheckedChange = { scope.launch { interfaceController.setNodeHostingEnabled(it) } },
                         )
+                    }
+                    hostedNodeStatus?.takeIf { it.enabled }?.let { status ->
+                        item { HorizontalDivider() }
+                        item {
+                            HostedNodeAnnounceTab(
+                                announceIntervalSeconds = status.announceIntervalSeconds,
+                                onAnnounceIntervalChange = {
+                                    scope.launch { interfaceController.setHostedNodeAnnounceInterval(it) }
+                                },
+                            )
+                        }
                     }
                 }
             }
@@ -875,73 +882,33 @@ private fun InterfaceAnnounceTab(
 }
 
 /**
- * A number-of-minutes cell, built on `BasicTextField` +
- * `OutlinedTextFieldDefaults.DecorationBox` rather than the convenience
- * `OutlinedTextField` — that convenience composable exposes no
- * `contentPadding`, so a compact table cell built on it clips text no
- * matter how the outer `Modifier` is tuned (see the
- * `android-compose-compact-fields` skill for the full writeup; same
- * root cause and fix as `BrowserScreen`'s address bar and
- * `SearchField`). Commits on focus loss or the keyboard's Done action,
- * clamped to [1, 1440] minutes — or snapped to 0 when [allowZero] and
- * the typed value is 0/blank/invalid.
+ * The hosted node's own announce config — narrower than
+ * [InterfaceAnnounceTab] (no "Message (minutes)" field: that concept
+ * is about *this device's own identity* announce staleness blocking a
+ * *send*, which doesn't apply to a hosted node at all). Just the one
+ * auto-announce interval, 0 disables it — same convention throughout.
  */
 @Composable
-private fun MinutesField(
-    seconds: Int,
-    allowZero: Boolean,
-    onCommit: (seconds: Int) -> Unit,
-    modifier: Modifier = Modifier,
+private fun HostedNodeAnnounceTab(
+    announceIntervalSeconds: Int,
+    onAnnounceIntervalChange: (seconds: Int) -> Unit,
 ) {
-    var text by remember(seconds) { mutableStateOf((seconds / 60).toString()) }
-    val focusManager = LocalFocusManager.current
-    val interactionSource = remember { MutableInteractionSource() }
+    val labelStyle = MaterialTheme.typography.bodyLarge.copy(fontSize = MaterialTheme.typography.bodyLarge.fontSize * 0.75f)
+    val hintStyle = MaterialTheme.typography.bodyLarge.copy(fontSize = MaterialTheme.typography.bodyLarge.fontSize * 0.65f)
 
-    fun commit() {
-        val minutes = text.toIntOrNull()
-        val clampedMinutes = when {
-            minutes == null -> seconds / 60
-            minutes <= 0 -> if (allowZero) 0 else 1
-            else -> minutes.coerceAtMost(24 * 60)
-        }
-        text = clampedMinutes.toString()
-        onCommit(clampedMinutes * 60)
+    Column(modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 6.dp)) {
+        Text("Auto-announce (minutes)", style = labelStyle)
+        Text(
+            "How often this node proactively re-announces on its own. 0 disables auto-announce — the node still answers direct requests either way, it just won't broadcast itself.",
+            style = hintStyle,
+            color = NomadTextDim,
+        )
+        MinutesField(
+            seconds = announceIntervalSeconds,
+            allowZero = true,
+            onCommit = onAnnounceIntervalChange,
+            modifier = Modifier.width(64.dp).padding(top = 4.dp),
+        )
     }
-
-    BasicTextField(
-        value = text,
-        onValueChange = { new -> if (new.length <= 5 && new.all { it.isDigit() }) text = new },
-        modifier = modifier.onFocusChanged { if (!it.isFocused) commit() },
-        textStyle = MaterialTheme.typography.bodyLarge.copy(
-            fontSize = MaterialTheme.typography.bodyLarge.fontSize * 0.75f,
-            textAlign = TextAlign.Center,
-            color = MaterialTheme.colorScheme.onSurface,
-        ),
-        singleLine = true,
-        cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
-        interactionSource = interactionSource,
-        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number, imeAction = ImeAction.Done),
-        keyboardActions = KeyboardActions(onDone = {
-            commit()
-            focusManager.clearFocus()
-        }),
-        decorationBox = { innerTextField ->
-            OutlinedTextFieldDefaults.DecorationBox(
-                value = text,
-                innerTextField = innerTextField,
-                enabled = true,
-                singleLine = true,
-                visualTransformation = VisualTransformation.None,
-                interactionSource = interactionSource,
-                contentPadding = PaddingValues(horizontal = 6.dp, vertical = 3.dp),
-                container = {
-                    OutlinedTextFieldDefaults.Container(
-                        enabled = true,
-                        isError = false,
-                        interactionSource = interactionSource,
-                    )
-                },
-            )
-        },
-    )
 }
+

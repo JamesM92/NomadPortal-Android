@@ -2,8 +2,10 @@ package com.jamesm92.nomadportal.connectivity
 
 import com.jamesm92.nomadportal.data.SettingsRepository
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 
 /**
@@ -64,4 +66,23 @@ class NoopInterfaceController(
         // TODO(core extraction): start/stop the request-handler that serves pages/files.
         settings.setNodeHostingEnabled(enabled)
     }
+
+    // Persisted-intent-only, matching this class's own convention
+    // throughout — no real SiteServer here, so no real hash/name/
+    // announce state to report; enabled alone reflects what was asked
+    // for.
+    override fun hostedNodeStatus(): Flow<HostedNodeStatus> =
+        nodeHostingEnabled.map { enabled ->
+            HostedNodeStatus(
+                enabled = enabled,
+                nodeHash = null,
+                nodeName = null,
+                announceIntervalSeconds = 0,
+                lastAnnounceAtMillis = null,
+            )
+        }
+
+    override suspend fun setHostedNodeName(name: String): Boolean = false
+    override suspend fun setHostedNodeAnnounceInterval(seconds: Int): Boolean = false
+    override suspend fun announceHostedNodeNow(): Boolean = false
 }

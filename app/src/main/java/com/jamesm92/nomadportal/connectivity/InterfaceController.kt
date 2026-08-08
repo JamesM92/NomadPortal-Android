@@ -1,6 +1,30 @@
 package com.jamesm92.nomadportal.connectivity
 
+import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.StateFlow
+
+/**
+ * This device's own hosted NomadNet node — a genuinely different
+ * announce schedule from [com.jamesm92.nomadportal.data.messaging.AnnounceStatus]'s
+ * `interfaces` map, which governs how often this device's *LXMF
+ * identity* announces. The hosted node is a separate RNS destination
+ * (`nomadnetwork.node`, not `lxmf.delivery`) with its own independent
+ * announce loop — see `nomadnet_web.site_server.SiteServer`.
+ */
+data class HostedNodeStatus(
+    val enabled: Boolean,
+    /** Null unless [enabled]. */
+    val nodeHash: String?,
+    /** Null unless [enabled]. */
+    val nodeName: String?,
+    /** 0 means auto-announce disabled — no separate enabled flag, same
+     * convention as [com.jamesm92.nomadportal.data.messaging.InterfaceAnnounceConfig]. */
+    val announceIntervalSeconds: Int,
+    /** Null if this node has never announced yet. */
+    val lastAnnounceAtMillis: Long?,
+) {
+    val autoAnnounceEnabled: Boolean get() = announceIntervalSeconds > 0
+}
 
 /**
  * The single authoritative control point for which RNS interfaces are
@@ -62,4 +86,24 @@ interface InterfaceController {
      * browsing must keep working with this off.
      */
     suspend fun setNodeHostingEnabled(enabled: Boolean)
+
+    /** Live hosted-node status/config — see [HostedNodeStatus]'s own doc
+     * comment for why this is separate from [com.jamesm92.nomadportal.data.messaging.AnnounceStatus].
+     * Deliberately duplicated across two real surfaces (Home screen +
+     * Settings' Node tab), per explicit design direction. */
+    fun hostedNodeStatus(): Flow<HostedNodeStatus>
+
+    /** Renames the hosted node — takes effect on the next announce (this
+     * app's own display-name-rename convention: persisted immediately,
+     * not proactively pushed). Returns false if hosting is currently off. */
+    suspend fun setHostedNodeName(name: String): Boolean
+
+    /** 0 disables auto-announce for the hosted node — same convention as
+     * [com.jamesm92.nomadportal.data.messaging.MessagingRepository.setAutoAnnounceInterval].
+     * Returns false if hosting is currently off. */
+    suspend fun setHostedNodeAnnounceInterval(seconds: Int): Boolean
+
+    /** Manual "Announce now" for the hosted node. Returns true on success
+     * (false if hosting is currently off). */
+    suspend fun announceHostedNodeNow(): Boolean
 }

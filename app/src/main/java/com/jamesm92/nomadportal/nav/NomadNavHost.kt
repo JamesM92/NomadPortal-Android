@@ -42,9 +42,11 @@ fun NomadNavHost(
         composable(Routes.HOME) {
             HomeScreen(
                 messagingRepository = messagingRepository,
+                interfaceController = interfaceController,
                 onOpenSettings = { navController.navigate(Routes.SETTINGS) },
                 onOpenMessages = { navController.navigate(Routes.MESSAGES) },
                 onOpenNodes = { navController.navigate(Routes.NODES) },
+                onOpenHostedNode = { hash -> navController.navigate(Routes.browser(hash)) },
             )
         }
         composable(Routes.SETTINGS) {
