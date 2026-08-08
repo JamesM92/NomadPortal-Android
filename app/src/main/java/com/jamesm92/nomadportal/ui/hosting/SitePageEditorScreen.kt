@@ -6,7 +6,9 @@ import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.Brush
 import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.Code
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -24,25 +26,47 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
+import com.jamesm92.nomadportal.data.hosting.MicronBlock
 import com.jamesm92.nomadportal.data.hosting.SiteFileRepository
+import com.jamesm92.nomadportal.data.hosting.blocksToMicron
+import com.jamesm92.nomadportal.data.hosting.parseMicronToBlocks
 import com.jamesm92.nomadportal.ui.components.AdaptiveTopAppBar
+import com.jamesm92.nomadportal.ui.theme.NomadTextDim
 import kotlinx.coroutines.launch
 
+/** Which half of the dual-mode editor is currently driving the page's
+ * authoritative content. Only one is "live" at a time — the other's
+ * state is stale until the next toggle re-derives it (see
+ * [SitePageEditorScreen]'s own doc comment). */
+private enum class EditorMode { RICH, RAW }
+
 /**
- * Raw-Micron page editor — plain text in, plain text out, no formatting
- * assistance. This is phase 2's bridging piece (see the
- * nomadportal-android-hosted-node memory): it makes the whole browse
- * -> create -> edit -> save -> serve pipeline testable end-to-end
- * before the phase 3 rich-text WYSIWYG mode exists, and it isn't
- * throwaway work either — per explicit design direction, the finished
- * editor is *dual-mode* (switchable rendered/raw), and this screen is
- * exactly what that raw mode still needs to be underneath the rendered
- * one once it's added, not a separate thing to build twice.
+ * The hosted-page editor — dual-mode per explicit design direction
+ * ("i feel the wysiwyg is a bigger feature to give, wher eyou can
+ * either edit in the fully rendered mode, or switch to the raw micron
+ * editor, so people cna switch ebtween the 2"): a rendered WYSIWYG mode
+ * ([RichTextPageEditor], backed by the [MicronBlock] model) and a raw
+ * plain-text mode (this screen's own original phase-2 editor),
+ * switchable via the two toolbar icons.
  *
- * Monospace font — this is markup source, not prose; a monospace face
- * makes the `` ` `` escape sequences Micron uses actually legible
- * (matches this app's own NomadMono theme font already used for
- * hash/address display elsewhere).
+ * Each mode owns its own independent state (`blocks` / `rawDraft`)
+ * rather than one being derived live from the other on every keystroke
+ * — conversion only happens at the mode-switch boundary itself, via
+ * [parseMicronToBlocks]/[blocksToMicron]. This matters for raw mode
+ * specifically: reparsing into blocks on every keystroke would mint
+ * fresh block IDs constantly (see [MicronBlock]'s `id` — used by
+ * [RichTextPageEditor] for focus/selection tracking) and fight the
+ * text field's own cursor position for no benefit, since raw mode
+ * never needs block identity at all.
+ *
+ * Whichever mode is currently active is the one trusted at save time —
+ * always serialized fresh via [blocksToMicron] (rich mode) or used
+ * as-is (raw mode), never the other mode's possibly-stale copy.
+ *
+ * Monospace font in raw mode — this is markup source, not prose; a
+ * monospace face makes the `` ` `` escape sequences Micron uses
+ * actually legible (matches this app's own NomadMono theme font
+ * already used for hash/address display elsewhere).
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -52,21 +76,34 @@ fun SitePageEditorScreen(
     onBack: () -> Unit,
 ) {
     var content by remember { mutableStateOf<String?>(null) }
-    var draft by remember { mutableStateOf("") }
+    var mode by remember { mutableStateOf(EditorMode.RICH) }
+    var blocks by remember { mutableStateOf<List<MicronBlock>>(emptyList()) }
+    var rawDraft by remember { mutableStateOf("") }
     var saving by remember { mutableStateOf(false) }
     var errorText by remember { mutableStateOf<String?>(null) }
     val scope = rememberCoroutineScope()
 
     LaunchedEffect(path) {
-        val loaded = repository.readPage(path)
-        content = loaded ?: ""
-        draft = loaded ?: ""
+        val loaded = repository.readPage(path) ?: ""
+        content = loaded
+        rawDraft = loaded
+        blocks = parseMicronToBlocks(loaded)
+    }
+
+    fun switchMode(target: EditorMode) {
+        if (target == mode) return
+        when (target) {
+            EditorMode.RAW -> rawDraft = blocksToMicron(blocks)
+            EditorMode.RICH -> blocks = parseMicronToBlocks(rawDraft)
+        }
+        mode = target
     }
 
     fun save() {
+        val current = if (mode == EditorMode.RICH) blocksToMicron(blocks) else rawDraft
         saving = true
         scope.launch {
-            val ok = repository.writePage(path, draft)
+            val ok = repository.writePage(path, current)
             saving = false
             errorText = if (ok) null else "Couldn't save this page."
         }
@@ -84,6 +121,20 @@ fun SitePageEditorScreen(
                     }
                 },
                 actions = {
+                    IconButton(onClick = { switchMode(EditorMode.RICH) }, enabled = content != null) {
+                        Icon(
+                            Icons.Filled.Brush,
+                            contentDescription = "Rich text mode",
+                            tint = if (mode == EditorMode.RICH) MaterialTheme.colorScheme.primary else NomadTextDim,
+                        )
+                    }
+                    IconButton(onClick = { switchMode(EditorMode.RAW) }, enabled = content != null) {
+                        Icon(
+                            Icons.Filled.Code,
+                            contentDescription = "Raw markup mode",
+                            tint = if (mode == EditorMode.RAW) MaterialTheme.colorScheme.primary else NomadTextDim,
+                        )
+                    }
                     IconButton(onClick = { save() }, enabled = !saving) {
                         Icon(Icons.Filled.Check, contentDescription = "Save")
                     }
@@ -103,13 +154,20 @@ fun SitePageEditorScreen(
                 )
             }
             if (content != null) {
-                OutlinedTextField(
-                    value = draft,
-                    onValueChange = { draft = it },
-                    textStyle = MaterialTheme.typography.bodyLarge.copy(fontFamily = FontFamily.Monospace),
-                    placeholder = { Text(">Page title\n\nContent goes here.") },
-                    modifier = Modifier.fillMaxSize().padding(8.dp),
-                )
+                when (mode) {
+                    EditorMode.RICH -> RichTextPageEditor(
+                        blocks = blocks,
+                        onBlocksChange = { blocks = it },
+                        modifier = Modifier.fillMaxSize(),
+                    )
+                    EditorMode.RAW -> OutlinedTextField(
+                        value = rawDraft,
+                        onValueChange = { rawDraft = it },
+                        textStyle = MaterialTheme.typography.bodyLarge.copy(fontFamily = FontFamily.Monospace),
+                        placeholder = { Text(">Page title\n\nContent goes here.") },
+                        modifier = Modifier.fillMaxSize().padding(8.dp),
+                    )
+                }
             }
         }
     }

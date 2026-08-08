@@ -67,13 +67,11 @@ import com.jamesm92.nomadportal.data.messaging.ICON_APPEARANCE_NAMES
 import com.jamesm92.nomadportal.data.messaging.MdiIconRepository
 import com.jamesm92.nomadportal.data.messaging.MessagingRepository
 import com.jamesm92.nomadportal.data.messaging.materialIconFor
-import com.jamesm92.nomadportal.data.messaging.parseHexColor
-import com.jamesm92.nomadportal.data.messaging.toHexString
 import com.jamesm92.nomadportal.panicwipe.PanicWipe
 import com.jamesm92.nomadportal.ui.components.AdaptiveTopAppBar
 import com.jamesm92.nomadportal.ui.components.AppLogo
-import com.jamesm92.nomadportal.ui.components.CompactTextField
 import com.jamesm92.nomadportal.ui.components.MessagesIconWithBadge
+import com.jamesm92.nomadportal.ui.components.MicronColorPicker
 import com.jamesm92.nomadportal.ui.components.MinutesField
 import com.jamesm92.nomadportal.ui.components.SearchField
 import com.jamesm92.nomadportal.ui.theme.NomadAccent
@@ -549,7 +547,7 @@ private fun IdentityIconPreview(
 private enum class EditorSection { BACKGROUND, FOREGROUND, ICON }
 
 /** Collapsed-by-default color picker: a tappable one-line summary (swatch
- * dot + label + chevron) that expands to the full [ColorSwatchRow] grid
+ * dot + label + chevron) that expands to the full [MicronColorPicker] grid
  * only while [expanded] — see [IconAppearanceEditor]'s own doc comment
  * for why nothing here starts pre-expanded. */
 @Composable
@@ -581,7 +579,7 @@ private fun CompactColorRow(
             )
         }
         if (expanded) {
-            ColorSwatchRow(
+            MicronColorPicker(
                 selected = selected,
                 onSelect = onSelect,
                 modifier = Modifier.padding(top = 6.dp),
@@ -634,19 +632,6 @@ private fun CompactIconRow(
         )
     }
 }
-
-/** Preset background/foreground swatches offered by the editor below —
- * a small curated palette (this app's own accent colors plus basics)
- * rather than a full RGB picker, matching the rest of this app's
- * understated aesthetic. Any '#rrggbb' is valid over LXMF regardless —
- * this is just what the editor itself offers to tap. */
-private val ICON_COLOR_SWATCHES = listOf(
-    Color.White, Color.Black,
-    Color(0xFFE53935), Color(0xFFFB8C00), Color(0xFFFDD835), Color(0xFF43A047),
-    Color(0xFF00897B), Color(0xFF00ACC1), Color(0xFF1E88E5), Color(0xFF3949AB),
-    Color(0xFF8E24AA), Color(0xFFD81B60), Color(0xFF6D4C41), Color(0xFF757575),
-    NomadAccent, NomadAccent2,
-)
 
 /**
  * Inline editor for this device's own [ContactIcon.Appearance] — three
@@ -926,63 +911,6 @@ private fun FullScreenIconPicker(
                 ) {
                     Button(onClick = onSave) { Text("Save") }
                 }
-            }
-        }
-    }
-}
-
-/**
- * "Micron compatible" per explicit direction: real NomadNet Micron
- * markup's own color model (confirmed directly against
- * `nomadnet/ui/textui/MicronParser.py`) is plain hex — a full 6-digit
- * `` `Fxxxxxx`` or a 3-digit shorthand `` `Fxyz`` (each digit doubled,
- * same convention CSS's own hex shorthand uses — already how this
- * app's deterministic-identity color generation works, see
- * identity_store.py's `_hex_shorthand_to_rgb`) — not a fixed named
- * palette (there is no such thing in real Micron). So this offers 16
- * common colors as fast quick-picks, plus a free-entry hex field for
- * anything else — any 6-digit hex is valid Micron regardless of
- * whether it's one of the 16.
- */
-@Composable
-private fun ColorSwatchRow(selected: Color, onSelect: (Color) -> Unit, modifier: Modifier = Modifier) {
-    var hexDraft by remember(selected) { mutableStateOf(selected.toHexString()) }
-
-    Column(modifier = modifier) {
-        ICON_COLOR_SWATCHES.chunked(8).forEach { row ->
-            Row(
-                modifier = Modifier.padding(top = 4.dp),
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-            ) {
-                row.forEach { swatch ->
-                    Box(
-                        modifier = Modifier
-                            .size(32.dp)
-                            .clip(CircleShape)
-                            .background(swatch)
-                            .border(
-                                width = if (swatch == selected) 2.dp else 1.dp,
-                                color = if (swatch == selected) MaterialTheme.colorScheme.secondary else NomadBg3,
-                                shape = CircleShape,
-                            )
-                            .clickable { onSelect(swatch) },
-                    )
-                }
-            }
-        }
-        Row(
-            modifier = Modifier.padding(top = 8.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
-        ) {
-            CompactTextField(
-                value = hexDraft,
-                onValueChange = { hexDraft = it },
-                placeholder = "#rrggbb",
-                modifier = Modifier.width(110.dp),
-            )
-            TextButton(onClick = { onSelect(parseHexColor(hexDraft, selected)) }) {
-                Text("Use")
             }
         }
     }
