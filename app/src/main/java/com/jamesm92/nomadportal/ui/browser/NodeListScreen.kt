@@ -8,7 +8,6 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
@@ -28,7 +27,6 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -72,13 +70,12 @@ import kotlinx.coroutines.launch
  * scrolling) content without needing `LazyColumn.stickyHeader` at all
  * (tried first; real device testing showed it not actually staying
  * pinned once scrolled past — this sidesteps the whole mechanism rather
- * than chasing it further). Both headers stay tappable to
- * collapse/expand at all times; `favoritesDominant` only nudges the
- * *default* expanded state, it never locks a header — see
- * `FAVORITES_AUTO_EXPAND_THRESHOLD`'s use below.
+ * than chasing it further). Exactly one section is ever expanded at a
+ * time — see [com.jamesm92.nomadportal.ui.messages.ConversationListScreen]'s
+ * identical `favoritesOpen` pattern/doc comment, mirrored here per
+ * explicit follow-up request once that fix landed on the Messages
+ * screen first.
  */
-/** See [NodeListScreen]'s `favoritesDominant` comment. */
-private const val FAVORITES_AUTO_EXPAND_THRESHOLD = 7
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -136,22 +133,11 @@ fun NodeListScreen(
     val favorites = rememberStableOrder(sortedNodes.filter { it.isFavorite }, key = { it.hash })
     val announcesHeard = rememberStableOrder(sortedNodes, key = { it.hash })
 
-    var favoritesExpanded by remember { mutableStateOf(true) }
-    var announcesExpanded by remember { mutableStateOf(true) }
-    // "When a section is big enough to need the whole screen it auto
-    // collapses the other sections" — item-count based, not a real pixel
-    // measurement (would need onSizeChanged/BoxWithConstraints plumbing
-    // for genuinely adaptive sizing); this approximates it well enough
-    // without that.
-    val favoritesDominant = favorites.size > FAVORITES_AUTO_EXPAND_THRESHOLD
-    // A *default*, not a lock — auto-collapses Announces heard the
-    // moment Favorites crosses the threshold, but both headers stay
-    // clickable afterward (first cut wired this as collapsible=false,
-    // which made it impossible to manually re-expand either section —
-    // wrong, fixed per explicit follow-up).
-    LaunchedEffect(favoritesDominant) {
-        if (favoritesDominant) announcesExpanded = false
-    }
+    // Exactly one of Favorites/Announces heard is ever open — see this
+    // file's own doc comment / ConversationListScreen's identical
+    // `favoritesOpen`: opening one always closes the other, closing one
+    // always opens the other. Both headers just flip this single flag.
+    var favoritesOpen by remember { mutableStateOf(true) }
 
     Scaffold(
         topBar = {
@@ -209,38 +195,17 @@ fun NodeListScreen(
             }
 
             // Header always outside any LazyColumn — always visible,
-            // always tappable, regardless of dominance state. While
-            // Favorites is dominant, expanding either section collapses
-            // the other — "when a section is big enough to need the
-            // whole screen it auto collapses the other sections" applies
-            // to manual re-expansion too, not just the initial default
-            // (first cut only nudged the default once at mount, so
-            // manually expanding Announces heard back open left both
-            // expanded with no further collapsing — wrong, fixed here).
+            // always tappable. Exactly one section is ever expanded (see
+            // favoritesOpen's own doc comment above), so the expanded
+            // one always gets the full remaining space.
             SectionHeader(
                 title = "Favorites",
                 count = favorites.size,
-                expanded = favoritesExpanded,
-                onToggle = {
-                    favoritesExpanded = !favoritesExpanded
-                    if (favoritesExpanded && favoritesDominant) announcesExpanded = false
-                },
+                expanded = favoritesOpen,
+                onToggle = { favoritesOpen = !favoritesOpen },
             )
-            if (favoritesExpanded && favorites.isNotEmpty()) {
-                // Not yet dominant: bounded pane, so a large-but-not-yet-
-                // dominant favorites list scrolls within itself instead of
-                // pushing Announces heard off-screen. Once dominant, it
-                // takes the remaining space like Announces heard normally
-                // would (point 4 of the auto-collapse design: if both end
-                // up expanded at once, they split the remaining space
-                // evenly via weight(1f) on both — acceptable, not broken).
-                LazyColumn(
-                    modifier = if (favoritesDominant) {
-                        Modifier.weight(1f)
-                    } else {
-                        Modifier.heightIn(max = 280.dp)
-                    },
-                ) {
+            if (favoritesOpen) {
+                LazyColumn(modifier = Modifier.weight(1f)) {
                     items(favorites, key = { it.hash }) { node ->
                         NodeRow(
                             node = node,
@@ -259,13 +224,10 @@ fun NodeListScreen(
             SectionHeader(
                 title = "Announces heard",
                 count = announcesHeard.size,
-                expanded = announcesExpanded,
-                onToggle = {
-                    announcesExpanded = !announcesExpanded
-                    if (announcesExpanded && favoritesDominant) favoritesExpanded = false
-                },
+                expanded = !favoritesOpen,
+                onToggle = { favoritesOpen = !favoritesOpen },
             )
-            if (announcesExpanded) {
+            if (!favoritesOpen) {
                 LazyColumn(modifier = Modifier.weight(1f)) {
                     items(announcesHeard, key = { it.hash }) { node ->
                         NodeRow(
@@ -303,9 +265,11 @@ fun NodeListScreen(
 }
 
 /** [collapsible] = false renders a count-only label with no chevron and
- * no click target — used when a section has been auto-collapsed by size
- * rather than by the user's own toggle (see [NodeListScreen]'s
- * `favoritesDominant` logic). */
+ * no click target. Not currently used by [NodeListScreen] (both its
+ * sections are always tappable — see `favoritesOpen`'s doc comment) —
+ * kept for parity with [com.jamesm92.nomadportal.ui.messages.ConversationListScreen]'s
+ * identical `SectionHeader`, which still needs it for the Users tab's
+ * single non-collapsible section. */
 @Composable
 private fun SectionHeader(
     title: String,
