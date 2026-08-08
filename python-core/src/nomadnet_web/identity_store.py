@@ -191,6 +191,7 @@ class IdentityStore:
         identity = RNS.Identity()
         key_file = os.path.join(self._dir, f"{identity.hexhash}.id")
         identity.to_file(key_file)
+        dest_hash_hex = _dest_hash_hex(identity)
         if not name:
             name = _default_display_name(identity)
         entry = {
@@ -200,6 +201,16 @@ class IdentityStore:
             "key_file":  key_file,
             "nodes":     [],
             "created":   time.time(),
+            # The LXMF address hash (not identity.hexhash above -- a
+            # genuinely different value, see _dest_hash_hex's own doc
+            # comment), persisted so callers can reuse the exact same
+            # "one hex nibble picks a thing" convention _default_display_name/
+            # _default_icon_appearance already use, without needing to
+            # reload the RNS.Identity from disk just to recompute it.
+            # hex[3] is the next unused nibble after name (hex[0:3]) and
+            # icon (hex[4:10]) -- orchestrator.py's default-TCP-server
+            # sharding uses it.
+            "dest_hash_hex": dest_hash_hex,
         }
         # Always tag with user_sub, even "" — nomadportal-android has no
         # auth and uses user_sub="" as its one real, meaningful user

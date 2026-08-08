@@ -152,6 +152,13 @@ _tcp_ifaces: dict = {}
 # enabled flag; individual connections' enabled flags are preserved
 # either way, not overwritten.
 _tcp_master_enabled = True
+# Whether the one-time default-server seeding (see
+# _seed_default_tcp_connection_if_needed's own doc comment) has already
+# run to a conclusion (successfully added a connection). Persisted
+# specifically so a user who deliberately removes the seeded connection
+# never has it silently reappear on a later launch — this is a "give a
+# fresh install something that works" step, not an ongoing policy.
+_tcp_default_seeded = False
 
 
 def start(base_dir: str) -> None:
@@ -253,6 +260,15 @@ def _run_deferred_setup() -> None:
         ("LXMF auto-announce loop", start_announce_loop),
         ("LXMF propagation sync service", _prop_sync.start),
         ("LXMF tracker registration", _register_lxmf_tracker),
+        # Fresh installs only (see _tcp_default_seeded's own doc
+        # comment) — gives a brand-new user a real, working TCP
+        # connection instead of the empty list they'd otherwise start
+        # with. Runs before the sync step below on purpose: it calls
+        # add_tcp_connection() itself when it finds a reachable
+        # candidate, which already attaches it — the explicit sync step
+        # right after is then just its normal idempotent no-op pass,
+        # not a second attempt.
+        ("Default TCP server seeding", _seed_default_tcp_connection_if_needed),
         # Attaches whichever TCP connections were loaded from disk and
         # are (master-enabled AND individually-enabled) — this is what
         # actually makes a persisted "TCP: on" connection live again
@@ -668,12 +684,13 @@ def _tcp_config_path() -> str:
 
 def _load_tcp_connections() -> None:
     import json
-    global _tcp_connections, _tcp_master_enabled
+    global _tcp_connections, _tcp_master_enabled, _tcp_default_seeded
     try:
         with open(_tcp_config_path(), "r") as f:
             data = json.load(f)
         _tcp_connections = {c["id"]: c for c in data.get("connections", [])}
         _tcp_master_enabled = bool(data.get("master_enabled", True))
+        _tcp_default_seeded = bool(data.get("default_seeded", False))
     except (FileNotFoundError, ValueError, OSError, KeyError) as exc:
         log.info("No existing TCP connections config (%s) — starting empty", exc)
         _tcp_connections = {}
@@ -685,7 +702,11 @@ def _save_tcp_connections() -> None:
         os.makedirs(_base_dir, exist_ok=True)
         with open(_tcp_config_path(), "w") as f:
             json.dump(
-                {"master_enabled": _tcp_master_enabled, "connections": list(_tcp_connections.values())},
+                {
+                    "master_enabled": _tcp_master_enabled,
+                    "connections": list(_tcp_connections.values()),
+                    "default_seeded": _tcp_default_seeded,
+                },
                 f,
             )
     except OSError as exc:
@@ -773,6 +794,157 @@ def add_tcp_connection(name: str, host: str, port: int) -> str:
     _save_tcp_connections()
     _sync_tcp_interfaces()
     return conn_id
+
+
+# Bound on how many candidates a single default-seeding pass will
+# actually probe before giving up for this launch -- the directory's
+# own "online" status is only a first-pass filter (see
+# _fetch_tcp_directory_candidates), so a real probe sweep can still run
+# long if that data is stale; this keeps one bad launch from blocking
+# the deferred-setup thread for minutes over a large candidate pool.
+# Not a promise "only 10 servers are ever eligible" -- just how many
+# get *tried* per attempt; a fresh attempt on the next app launch
+# starts from the same index and gets its own budget.
+_MAX_TCP_SEED_PROBES = 10
+
+
+def _seed_default_tcp_connection_if_needed() -> None:
+    """Gives a fresh install a real, working TCP connection by default,
+    instead of the empty list _load_tcp_connections() otherwise leaves
+    it at — deliberately spread across a pool of independently-run
+    public interfaces (fetched live from directory.rns.recipes, not a
+    handful of hostnames baked into this app) rather than everyone
+    converging on the same one, per explicit direction.
+
+    Deterministic starting pick: this identity's own LXMF address hash
+    (see identity_store.py's IdentityStore.create — "dest_hash_hex" in
+    its stored entry) indexes into the fetched, filtered candidate list
+    via one hex nibble, hex[3] — the same "one hex nibble picks a
+    thing" convention _default_display_name/_default_icon_appearance
+    already use for the auto-generated name/icon, continued at the
+    next position those two haven't already claimed (hex[0:3], then
+    hex[4:10]). Different identities land on different starting points
+    across a large pool without any coordination needed.
+
+    Real rollover, not just a single deterministic pick: starting at
+    that index, each candidate gets a raw TCP reachability probe (see
+    _tcp_probe) in turn, wrapping around the list, until one succeeds
+    or the probe budget (_MAX_TCP_SEED_PROBES) runs out — "assigned
+    server" only means "where the rotation *starts*", never "used even
+    if it's down". Only that one, actually-reachable connection gets
+    persisted via add_tcp_connection; nothing else in the pool is added
+    or retried once one works.
+
+    No ongoing monitoring after that — if the seeded connection later
+    goes down, that's the same "user notices and edits it themselves"
+    story any other TCP connection already has, not a new background
+    retry loop. This function only ever runs a fresh rollover sweep
+    again on a *later app launch*, and only if the previous attempt
+    never actually got as far as adding a connection (see
+    _tcp_default_seeded's own doc comment).
+
+    Never raises — one failed step here must not block the rest of
+    deferred setup, same posture as every other step in that list.
+    """
+    global _tcp_default_seeded
+    if _tcp_default_seeded or _tcp_connections:
+        # Either already handled, or the user already has connections
+        # of their own (e.g. added one manually before this step ever
+        # got a chance to run) — don't second-guess either case.
+        return
+
+    entry = _identity_store.get_for_user("") if _identity_store else None
+    dest_hash_hex = (entry or {}).get("dest_hash_hex")
+    if not dest_hash_hex:
+        log.info("No LXMF address hash available yet — skipping default TCP seeding for now")
+        return
+
+    candidates = _fetch_tcp_directory_candidates()
+    if not candidates:
+        log.info("Default TCP server directory unavailable or empty — nothing to seed yet")
+        return
+
+    start_index = int(dest_hash_hex[3], 16) % len(candidates)
+    ordered = candidates[start_index:] + candidates[:start_index]
+
+    for candidate in ordered[:_MAX_TCP_SEED_PROBES]:
+        if _tcp_probe(candidate["host"], candidate["port"]):
+            add_tcp_connection(candidate["name"], candidate["host"], candidate["port"])
+            _tcp_default_seeded = True
+            _save_tcp_connections()
+            log.info(
+                "Seeded default TCP connection '%s' (%s:%d)",
+                candidate["name"], candidate["host"], candidate["port"],
+            )
+            return
+
+    log.info(
+        "None of the first %d candidate TCP servers (of %d total) were reachable — will retry next launch",
+        min(_MAX_TCP_SEED_PROBES, len(ordered)), len(candidates),
+    )
+
+
+def _fetch_tcp_directory_candidates() -> list:
+    """Live TCP-interface entries from directory.rns.recipes's public
+    API (community-maintained, not this app's own data) — filtered to
+    what this app can actually use: TCPClientInterface-compatible
+    ("tcp" type only; "backbone"/BackboneInterface entries need a
+    different RNS interface class this app doesn't construct anywhere
+    else, out of scope here), clearnet (no Tor/I2P/Yggdrasil transport
+    support in this app), and reported online by the directory itself —
+    a first-pass filter only, not a substitute for _tcp_probe's own
+    real reachability check, since directory status can lag reality
+    either direction. Returns [] on any failure (network, parse,
+    anything) — never raises, matching every other deferred-setup
+    step's own never-block-the-rest posture.
+    """
+    import json
+    import urllib.request
+
+    url = "https://directory.rns.recipes/api/directory/submitted"
+    try:
+        with urllib.request.urlopen(url, timeout=10) as resp:
+            payload = json.loads(resp.read().decode("utf-8"))
+    except Exception as exc:
+        log.info("Could not fetch TCP server directory: %s", exc)
+        return []
+
+    candidates = []
+    for item in payload.get("data", []):
+        try:
+            if item.get("type") != "tcp":
+                continue
+            if item.get("network") != "clearnet":
+                continue
+            if item.get("status") != "online":
+                continue
+            host = item["host"]
+            port = int(item["port"])
+            name = item.get("name") or f"{host}:{port}"
+        except (KeyError, TypeError, ValueError):
+            continue
+        candidates.append({"name": name, "host": host, "port": port})
+
+    # Stable order before sharding -- the directory's own JSON order
+    # isn't guaranteed consistent between fetches, and a consistent
+    # order matters for "different identities land on different
+    # starting points" to actually mean anything within a single fetch.
+    candidates.sort(key=lambda c: (c["host"], c["port"]))
+    return candidates
+
+
+def _tcp_probe(host: str, port: int, timeout: float = 5.0) -> bool:
+    """Raw TCP reachability check — deliberately not a real RNS-level
+    handshake (that's what add_tcp_connection's own _sync_tcp_interfaces
+    does afterward, for whichever candidate actually gets picked); this
+    only needs to answer "is anything listening here right now" cheaply
+    enough to walk an entire candidate list per app launch."""
+    import socket
+    try:
+        with socket.create_connection((host, port), timeout=timeout):
+            return True
+    except OSError:
+        return False
 
 
 def update_tcp_connection(conn_id: str, name: str, host: str, port: int) -> bool:
