@@ -34,6 +34,7 @@ class MainActivity : ComponentActivity() {
                         browserRepository = app.browserRepository,
                         settingsRepository = app.settingsRepository,
                         tcpConnectionsRepository = app.tcpConnectionsRepository,
+                        siteFileRepository = app.siteFileRepository,
                     )
                 }
             }

@@ -43,12 +43,118 @@ MAX_ANNOUNCE_INTERVAL     = 24 * 60 * 60 # 24 hours — beyond this, peers' path
 RESCAN_INTERVAL    = 5  * 60   # re-scan pages/files every 5 minutes
 START_ANNOUNCE_DELAY = 6        # seconds after start before first announce
 
-_DEFAULT_INDEX = """>Welcome
+# Served whenever no real index.mu exists in the pages directory (see
+# _register_pages' own fallback route below) — a fresh install's pages
+# directory starts empty, so this is what anyone browsing to a brand
+# new NomadPortal install's node actually sees, until/unless the
+# operator replaces it with their own real index.mu via the file nav
+# (SiteFilesScreen.kt). Written to double as an honest pitch for the
+# app itself, per explicit direction — "for a new install the index.mu
+# will be a sales pitch for the nomad portal android project, for
+# anybody who may come across it." Every claim in it is something this
+# app actually does, verified this session, not aspirational copy —
+# including the "no Python/executables" line, which is exactly what
+# this module's own hardening (see this file's module doc comment)
+# makes true. Deliberately doesn't claim a download link/public release
+# that doesn't exist yet.
+#
+# Markup verified directly against markqvist/NomadNet's own
+# MicronParser.py (not guessed) — headings ('>'/'>>'), inline
+# bold/italic/underline toggles ('`!'/'`*'/'`_', each a toggle, not a
+# start/end pair — closed by repeating the same escape), centered/reset
+# alignment ('`c'/'`a'), and horizontal dividers (a line whose *first*
+# character is '-', unconditionally — confirmed real bullet points
+# can't start with a literal "-" for exactly that reason, hence '•'
+# below instead of "-" as this page's own list marker).
+_DEFAULT_INDEX = """>NomadPortal
+`cA native Android app for Reticulum & NomadNet`a
 
-This node is serving pages, but no `*index.mu`* was found in the pages directory.
+-
 
-If you are the node operator, create a file named `*index.mu`* in the pages directory to customise this page.
+This page is being served live from an Android phone running NomadPortal -- a native Kotlin/Compose app built around the real, embedded Reticulum and LXMF reference implementations (not a reimplementation), for infrastructure-free mesh communication.
+
+>>What it does
+
+• Message people over LXMF: text, photos, audio, and files
+• Browse and host NomadNet pages, like this one
+• Connect over TCP and local Wi-Fi discovery (Bluetooth mesh and LoRa are on the way)
+• A panic-wipe safeguard that securely erases identity and message data in seconds
+• Never asks for location access, full stop
+
+>>Why this page is boring on purpose
+
+Pages hosted by NomadPortal are plain Micron markup only -- no Python, no executables, ever. A real NomadNet server can run scripts to build pages dynamically; this app deliberately never does, because a phone carried in someone's pocket is a different trust boundary than a server an operator administers directly. What you're reading is exactly the file it is, nothing more.
+
+-
+
+If you're reading this from another NomadNet client, you've found a real, live instance -- running on ordinary consumer hardware, nothing but an Android phone. NomadPortal is under active development.
+
+See examples.mu on this node for a quick tour of what this page's own markup can do.
 """
+
+# A real file (not a synthetic fallback like _DEFAULT_INDEX above) —
+# seeded once, the first time a fresh install's pages directory is
+# created (see orchestrator.py's _site_pages_dir()), so it shows up in
+# the file nav like any other page: editable, deletable, a starting
+# point rather than a hidden magic route. Original content, not a copy
+# of NomadNet's own example guide — that project is GPL-3.0, a real
+# license conflict with this one (PolyForm Noncommercial), so this
+# demonstrates the same underlying Micron syntax with entirely original
+# text instead. Every construct here is verified directly against
+# MicronParser.py, not guessed.
+DEFAULT_EXAMPLES_PAGE = """>Micron quick tour
+`aA few of the formatting options available on this node's pages.
+
+-
+
+>>Headings
+
+`*This line uses the `!>`! heading marker`*
+`*Two markers ( `!>>`! ) make a smaller sub-heading, like the one above`*
+
+>>Text styles
+
+`!Bold`! text uses a backtick then an exclamation mark on each side.
+`*Italic`* text uses a backtick then an asterisk.
+`_Underline`_ text uses a backtick then an underscore.
+Combine them: `!`_bold and underlined together`_`!
+
+>>Colors
+
+`F308000Foreground color`f is set with a backtick, F, and a 6-digit hex code.
+`B103050`FaaddffBackground color`f`b works the same way, with B instead of F.
+
+>>Alignment
+
+`cThis line is centered.
+`rThis line is right-aligned.`a
+
+>>Dividers
+
+A line whose first character is a dash becomes a horizontal rule, like the ones on this page:
+
+-
+
+Everything above renders the same way on any real NomadNet client -- this page is just plain text with a few backtick-escaped instructions in it, nothing more.
+"""
+
+
+def seed_starter_content(pages_dir: str) -> None:
+    """Writes examples.mu the first time [pages_dir] is created — a
+    real, editable/deletable starter file, unlike _DEFAULT_INDEX (a
+    synthetic fallback with no file behind it at all — see
+    _register_pages()'s own fallback route). No-op if examples.mu
+    already exists, so this is always safe to call on every startup,
+    not just the genuinely-first one; callers don't need to track
+    "was this directory actually new" themselves."""
+    examples_path = os.path.join(pages_dir, "examples.mu")
+    if os.path.exists(examples_path):
+        return
+    try:
+        with open(examples_path, "w", encoding="utf-8") as fh:
+            fh.write(DEFAULT_EXAMPLES_PAGE)
+    except OSError as exc:
+        log.warning("Could not seed examples.mu: %s", exc)
 
 
 class SiteServer:

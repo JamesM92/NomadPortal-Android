@@ -10,6 +10,8 @@ import com.jamesm92.nomadportal.connectivity.TcpConnectionsRepository
 import com.jamesm92.nomadportal.data.SettingsRepository
 import com.jamesm92.nomadportal.data.browsing.BrowserRepository
 import com.jamesm92.nomadportal.data.browsing.RealBrowserRepository
+import com.jamesm92.nomadportal.data.hosting.RealSiteFileRepository
+import com.jamesm92.nomadportal.data.hosting.SiteFileRepository
 import com.jamesm92.nomadportal.data.messaging.MdiIconRepository
 import com.jamesm92.nomadportal.data.messaging.MessagingRepository
 import com.jamesm92.nomadportal.data.messaging.RealMessagingRepository
@@ -39,6 +41,8 @@ class NomadPortalApp : Application() {
         private set
     lateinit var browserRepository: BrowserRepository
         private set
+    lateinit var siteFileRepository: SiteFileRepository
+        private set
 
     override fun onCreate() {
         super.onCreate()
@@ -56,14 +60,14 @@ class NomadPortalApp : Application() {
         settingsRepository = SettingsRepository(this)
         // RealInterfaceController, backed by nomadportal_core.orchestrator
         // (app/src/main/python/nomadportal_core/orchestrator.py — see its
-        // docstring for the RNS-interface-lifecycle design). Only TCP and
-        // Wi-Fi discovery are actually wired to real RNS behavior right
-        // now; RNode/Bluetooth-mesh/hosting remain persisted-intent-only
-        // pending their own separate prerequisites — see
-        // RealInterfaceController's own doc comment for exactly why each
-        // one isn't done yet.
+        // docstring for the RNS-interface-lifecycle design). TCP, Wi-Fi
+        // discovery, and node hosting are wired to real behavior; RNode/
+        // Bluetooth-mesh remain persisted-intent-only pending their own
+        // separate prerequisites — see RealInterfaceController's own doc
+        // comment for exactly why.
         interfaceController = RealInterfaceController(settingsRepository, appScope)
         tcpConnectionsRepository = RealTcpConnectionsRepository()
+        siteFileRepository = RealSiteFileRepository()
 
         // noBackupFilesDir, not filesDir: RNS identity material must never
         // leave the device via a cloud-backup/device-transfer side channel

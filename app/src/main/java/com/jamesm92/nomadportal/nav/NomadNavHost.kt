@@ -1,5 +1,6 @@
 package com.jamesm92.nomadportal.nav
 
+import android.net.Uri
 import androidx.compose.runtime.Composable
 import androidx.navigation.NavHostController
 import androidx.navigation.compose.NavHost
@@ -10,10 +11,13 @@ import com.jamesm92.nomadportal.connectivity.TcpConnectionsRepository
 import com.jamesm92.nomadportal.data.SettingsRepository
 import com.jamesm92.nomadportal.data.browsing.BrowserRepository
 import com.jamesm92.nomadportal.data.browsing.PageAddress
+import com.jamesm92.nomadportal.data.hosting.SiteFileRepository
 import com.jamesm92.nomadportal.data.messaging.MessagingRepository
 import com.jamesm92.nomadportal.ui.browser.BrowserScreen
 import com.jamesm92.nomadportal.ui.browser.NodeListScreen
 import com.jamesm92.nomadportal.ui.home.HomeScreen
+import com.jamesm92.nomadportal.ui.hosting.SiteFilesScreen
+import com.jamesm92.nomadportal.ui.hosting.SitePageEditorScreen
 import com.jamesm92.nomadportal.ui.messages.ConversationListScreen
 import com.jamesm92.nomadportal.ui.messages.ConversationScreen
 import com.jamesm92.nomadportal.ui.settings.SettingsScreen
@@ -27,6 +31,12 @@ private object Routes {
     const val NODES = "nodes"
     const val BROWSER = "browser/{nodeHash}"
     fun browser(nodeHash: String) = "browser/$nodeHash"
+    const val SITE_FILES = "site_files"
+    // Uri-encoded: a page's relative path contains "/" (subfolders),
+    // which a plain Navigation Compose {arg} placeholder would
+    // otherwise parse as extra route segments.
+    const val SITE_PAGE_EDITOR = "site_editor/{encodedPath}"
+    fun sitePageEditor(path: String) = "site_editor/${Uri.encode(path)}"
 }
 
 @Composable
@@ -36,6 +46,7 @@ fun NomadNavHost(
     browserRepository: BrowserRepository,
     settingsRepository: SettingsRepository,
     tcpConnectionsRepository: TcpConnectionsRepository,
+    siteFileRepository: SiteFileRepository,
     navController: NavHostController = rememberNavController(),
 ) {
     NavHost(navController = navController, startDestination = Routes.HOME) {
@@ -47,6 +58,7 @@ fun NomadNavHost(
                 onOpenMessages = { navController.navigate(Routes.MESSAGES) },
                 onOpenNodes = { navController.navigate(Routes.NODES) },
                 onOpenHostedNode = { hash -> navController.navigate(Routes.browser(hash)) },
+                onManageHostedPages = { navController.navigate(Routes.SITE_FILES) },
             )
         }
         composable(Routes.SETTINGS) {
@@ -95,6 +107,26 @@ fun NomadNavHost(
                 onBack = { navController.popBackStack(Routes.HOME, inclusive = false) },
                 onOpenMessages = { navController.navigate(Routes.MESSAGES) },
             )
+        }
+        composable(Routes.SITE_FILES) {
+            SiteFilesScreen(
+                repository = siteFileRepository,
+                onOpenPage = { path -> navController.navigate(Routes.sitePageEditor(path)) },
+                onBack = { navController.popBackStack() },
+            )
+        }
+        composable(Routes.SITE_PAGE_EDITOR) { backStackEntry ->
+            val encodedPath = backStackEntry.arguments?.getString("encodedPath")
+            val path = encodedPath?.let(Uri::decode)
+            if (path == null) {
+                navController.popBackStack()
+            } else {
+                SitePageEditorScreen(
+                    repository = siteFileRepository,
+                    path = path,
+                    onBack = { navController.popBackStack() },
+                )
+            }
         }
         composable(Routes.BROWSER) { backStackEntry ->
             val nodeHash = backStackEntry.arguments?.getString("nodeHash")

@@ -94,16 +94,13 @@ import kotlinx.coroutines.launch
  * here rather than duplicated per-screen since Home is this app's
  * "always reachable" root.
  *
- * A hosted-node identity section (rename + manual announce, matching
- * the LXMF one below) is NOT here yet, even though it was requested
- * alongside this — node hosting has no real `SiteServer` behind it yet
- * (see [com.jamesm92.nomadportal.connectivity.RealInterfaceController]'s
- * own doc comment: Settings' hosting toggle is still persisted-intent-
- * only). Building rename/announce controls for an identity that doesn't
- * exist yet would be exactly the "toggle that doesn't actually control
- * what it claims to" anti-pattern this app's connectivity design
- * otherwise goes out of its way to avoid — this needs real SiteServer
- * wiring first (sequencing step 5), not a cosmetic stand-in.
+ * A hosted-node identity section ([HostedNodeSection]) lives here too,
+ * same rename/manual-announce placement reasoning as the LXMF one above
+ * it — real `SiteServer` wiring landed Aug 2026 (see
+ * [com.jamesm92.nomadportal.connectivity.RealInterfaceController]'s own
+ * doc comment), including a way into the file nav for the hosted
+ * node's pages (still phase 2 of that feature — see the
+ * nomadportal-android-hosted-node memory for the full phased design).
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -114,6 +111,7 @@ fun HomeScreen(
     onOpenMessages: () -> Unit,
     onOpenNodes: () -> Unit,
     onOpenHostedNode: (nodeHash: String) -> Unit,
+    onManageHostedPages: () -> Unit,
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -191,6 +189,7 @@ fun HomeScreen(
                         scope.launch { interfaceController.setHostedNodeAnnounceInterval(it) }
                     },
                     onOpen = { hash -> onOpenHostedNode(hash) },
+                    onManagePages = onManageHostedPages,
                 )
             }
         }
@@ -199,14 +198,16 @@ fun HomeScreen(
 
 /**
  * This device's own hosted NomadNet node: name, on/off, announce
- * interval, manual "Announce now", and a way to view it (opens the same
- * browser screen used for any other node) — see this file's own doc
- * comment for why manual announcing lives here and not Settings (that
- * screen only ever owns *configuration*, never a "do it now" action).
- * A duplicate on/off toggle and announce-interval config also live on
- * Settings' Node tab, per explicit design direction — flip/configure
- * from either place, same underlying state, same convention every other
- * interface's Settings tab already follows.
+ * interval, manual "Announce now", a way to view it (opens the same
+ * browser screen used for any other node), and "Manage pages" (the
+ * file nav for this node's site content — see
+ * [com.jamesm92.nomadportal.ui.hosting.SiteFilesScreen]) — see this
+ * file's own doc comment for why manual announcing lives here and not
+ * Settings (that screen only ever owns *configuration*, never a "do it
+ * now" action). A duplicate on/off toggle and announce-interval config
+ * also live on Settings' Node tab, per explicit design direction —
+ * flip/configure from either place, same underlying state, same
+ * convention every other interface's Settings tab already follows.
  */
 @Composable
 private fun HostedNodeSection(
@@ -216,6 +217,7 @@ private fun HostedNodeSection(
     onAnnounceNow: () -> Unit,
     onAnnounceIntervalChange: (seconds: Int) -> Unit,
     onOpen: (nodeHash: String) -> Unit,
+    onManagePages: () -> Unit,
 ) {
     var editingName by remember { mutableStateOf(false) }
     var nameDraft by remember(status.nodeName) { mutableStateOf(status.nodeName ?: "") }
@@ -235,14 +237,26 @@ private fun HostedNodeSection(
         }
 
         if (!status.enabled) {
+            // Still editable while off, per explicit direction — page
+            // content lives under the pages directory regardless of
+            // whether SiteServer is actually running (see
+            // SiteFileRepository's own doc comment: nothing there
+            // depends on hosting being live), so there's no reason to
+            // block someone from preparing/editing their site before
+            // they're ready to actually turn hosting on and let others
+            // see it.
             Text(
-                text = "Off — this device isn't serving any pages right now.",
+                text = "Off — this device isn't serving any pages right now. You can still edit pages below.",
                 style = MaterialTheme.typography.bodyLarge.copy(
                     fontSize = MaterialTheme.typography.bodyLarge.fontSize * 0.85f,
                 ),
                 color = NomadTextDim,
                 modifier = Modifier.padding(top = 4.dp),
             )
+            TextButton(
+                onClick = onManagePages,
+                modifier = Modifier.padding(top = 4.dp),
+            ) { Text("Manage pages") }
             return
         }
 
@@ -339,6 +353,7 @@ private fun HostedNodeSection(
             status.nodeHash?.let { hash ->
                 TextButton(onClick = { onOpen(hash) }) { Text("View") }
             }
+            TextButton(onClick = onManagePages) { Text("Manage pages") }
         }
     }
 }

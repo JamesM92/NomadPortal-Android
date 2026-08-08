@@ -447,6 +447,194 @@ def announce_site_now() -> bool:
     return True
 
 
+# ---------------------------------------------------------------------------
+# Hosted-node page management (file nav — phase 2 of the hosting feature).
+# Deliberately independent of whether SiteServer is currently running —
+# _site_pages_dir() is a plain path under _base_dir, not something
+# SiteServer owns exclusively, so a page can be authored/organized
+# whether hosting is currently on or off (SiteServer picks up whatever's
+# on disk on its next rescan/start — see site_server.py's own
+# RESCAN_INTERVAL). Every function here validates the given relative
+# path resolves to something still inside the pages directory, same
+# realpath-prefix-check SiteServer.fetch_page already uses, and only
+# ".mu" is ever accepted for a *page* (folders have no extension
+# concept) — per explicit direction ("will be requiring it to be .mu
+# only no python or executables"), enforced here at the point content
+# is actually created, not just at the serving layer this module
+# already hardened.
+# ---------------------------------------------------------------------------
+
+def _site_pages_dir() -> str:
+    path = os.path.join(_base_dir, "site", "pages")
+    os.makedirs(path, exist_ok=True)
+    from nomadnet_web.site_server import seed_starter_content
+    seed_starter_content(path)
+    return path
+
+
+def _resolve_site_path(relative_path: str) -> Optional[str]:
+    """None if [relative_path] would escape the pages directory (path
+    traversal) or is empty/root when a specific entry was required by
+    the caller — callers decide which of those cases apply."""
+    pages_root = os.path.realpath(_site_pages_dir())
+    candidate = os.path.realpath(os.path.join(pages_root, (relative_path or "").strip("/\\")))
+    if candidate != pages_root and not candidate.startswith(pages_root + os.sep):
+        return None
+    return candidate
+
+
+def list_site_pages_json(relative_path: str = "") -> str:
+    """[SitePageEntry] shape: name, path (relative, forward-slash —
+    Kotlin's own join separator, not this OS's), is_directory. Lists
+    only the immediate children of [relative_path] (a plain directory
+    listing, not a recursive tree) — the file nav UI calls this again
+    each time it navigates into a folder, same "no continuous polling
+    needed, nothing external mutates this directory" reasoning as
+    everywhere else content only ever changes via this app's own
+    actions. Empty list (not an error) for a path that doesn't resolve
+    or isn't a directory — nothing to show is a valid, unremarkable
+    state for a brand new site."""
+    import json
+    resolved = _resolve_site_path(relative_path)
+    if resolved is None or not os.path.isdir(resolved):
+        return json.dumps([])
+    entries = []
+    for entry in sorted(os.listdir(resolved)):
+        if entry.startswith("."):
+            continue
+        full = os.path.join(resolved, entry)
+        rel = (relative_path.strip("/\\") + "/" + entry).strip("/") if relative_path else entry
+        entries.append({
+            "name": entry,
+            "path": rel.replace(os.sep, "/"),
+            "is_directory": os.path.isdir(full),
+        })
+    return json.dumps(entries)
+
+
+def create_site_page(relative_path: str) -> str:
+    """[FileOpResult] shape: success, message — same shape as
+    announce_now(), this section's own established convention for
+    "bool plus a human-readable reason" rather than a raw Python tuple
+    (never used elsewhere as a Kotlin-facing return type in this
+    module)."""
+    import json
+    if not relative_path.endswith(".mu"):
+        return json.dumps({"success": False, "message": "Pages must end in .mu"})
+    resolved = _resolve_site_path(relative_path)
+    if resolved is None:
+        return json.dumps({"success": False, "message": "Invalid path"})
+    if os.path.exists(resolved):
+        return json.dumps({"success": False, "message": "Already exists"})
+    try:
+        os.makedirs(os.path.dirname(resolved), exist_ok=True)
+        with open(resolved, "w", encoding="utf-8") as fh:
+            fh.write("")
+        return json.dumps({"success": True, "message": "Created"})
+    except OSError as exc:
+        return json.dumps({"success": False, "message": str(exc)})
+
+
+def create_site_folder(relative_path: str) -> str:
+    import json
+    resolved = _resolve_site_path(relative_path)
+    if resolved is None:
+        return json.dumps({"success": False, "message": "Invalid path"})
+    if os.path.exists(resolved):
+        return json.dumps({"success": False, "message": "Already exists"})
+    try:
+        os.makedirs(resolved)
+        return json.dumps({"success": True, "message": "Created"})
+    except OSError as exc:
+        return json.dumps({"success": False, "message": str(exc)})
+
+
+def rename_site_entry(old_relative_path: str, new_relative_path: str) -> str:
+    """Also how a page/folder is *moved* — a move is just a rename to a
+    path under a different parent directory, no separate operation."""
+    import json
+    old_resolved = _resolve_site_path(old_relative_path)
+    new_resolved = _resolve_site_path(new_relative_path)
+    if old_resolved is None or new_resolved is None:
+        return json.dumps({"success": False, "message": "Invalid path"})
+    if not os.path.exists(old_resolved):
+        return json.dumps({"success": False, "message": "Not found"})
+    if os.path.exists(new_resolved):
+        return json.dumps({"success": False, "message": "Already exists"})
+    # A folder has no extension concept, but a page being renamed/moved
+    # must stay a .mu file — silently letting it become e.g. "page.py"
+    # here would reopen exactly the hole fetch_page's own hardening
+    # closed on the serving side.
+    if os.path.isfile(old_resolved) and not new_relative_path.endswith(".mu"):
+        return json.dumps({"success": False, "message": "Pages must end in .mu"})
+    try:
+        os.makedirs(os.path.dirname(new_resolved), exist_ok=True)
+        os.rename(old_resolved, new_resolved)
+        return json.dumps({"success": True, "message": "Renamed"})
+    except OSError as exc:
+        return json.dumps({"success": False, "message": str(exc)})
+
+
+def delete_site_entry(relative_path: str) -> str:
+    import json
+    resolved = _resolve_site_path(relative_path)
+    if resolved is None or resolved == os.path.realpath(_site_pages_dir()):
+        return json.dumps({"success": False, "message": "Invalid path"})
+    if not os.path.exists(resolved):
+        return json.dumps({"success": False, "message": "Not found"})
+    try:
+        if os.path.isdir(resolved):
+            import shutil
+            shutil.rmtree(resolved)
+        else:
+            os.remove(resolved)
+        return json.dumps({"success": True, "message": "Deleted"})
+    except OSError as exc:
+        return json.dumps({"success": False, "message": str(exc)})
+
+
+def read_site_page_json(relative_path: str) -> str:
+    """{"content": str, "error": null} or {"content": null, "error": str}."""
+    import json
+    resolved = _resolve_site_path(relative_path)
+    if resolved is None or not os.path.isfile(resolved):
+        return json.dumps({"content": None, "error": "Page not found"})
+    try:
+        with open(resolved, "r", encoding="utf-8", errors="replace") as fh:
+            return json.dumps({"content": fh.read(), "error": None})
+    except OSError as exc:
+        return json.dumps({"content": None, "error": str(exc)})
+
+
+def write_site_page(relative_path: str, content: str) -> str:
+    import json
+    if not relative_path.endswith(".mu"):
+        return json.dumps({"success": False, "message": "Pages must end in .mu"})
+    resolved = _resolve_site_path(relative_path)
+    if resolved is None:
+        return json.dumps({"success": False, "message": "Invalid path"})
+    try:
+        os.makedirs(os.path.dirname(resolved), exist_ok=True)
+        with open(resolved, "w", encoding="utf-8") as fh:
+            fh.write(content)
+        # Belt-and-suspenders on top of never invoking a page as a
+        # subprocess (see this module's site_server.py-hardening notes)
+        # — a page this app itself just wrote should never carry an
+        # executable bit in the first place, but strip it explicitly
+        # rather than trust that always holds (e.g. a future platform/
+        # umask surprise). No-op on Windows dev machines (os.chmod's
+        # execute bits are meaningless there), harmless either way.
+        try:
+            import stat
+            mode = os.stat(resolved).st_mode
+            os.chmod(resolved, mode & ~(stat.S_IEXEC | stat.S_IXGRP | stat.S_IXOTH))
+        except OSError:
+            pass
+        return json.dumps({"success": True, "message": "Saved"})
+    except OSError as exc:
+        return json.dumps({"success": False, "message": str(exc)})
+
+
 def _set_interface(key: str, enabled: bool, factory) -> None:
     if not is_ready():
         raise RuntimeError(f"Cannot toggle '{key}' — RNS is not ready yet")
