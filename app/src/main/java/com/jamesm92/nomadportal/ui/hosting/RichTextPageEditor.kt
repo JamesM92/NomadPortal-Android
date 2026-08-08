@@ -32,21 +32,25 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.text.TextRange
-import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import com.jamesm92.micron2compose.compose.MicronBlock as RealMicronBlockView
+import com.jamesm92.micron2compose.parser.MicronConverter
 import com.jamesm92.nomadportal.data.hosting.CharStyle
 import com.jamesm92.nomadportal.data.hosting.MicronAlign
 import com.jamesm92.nomadportal.data.hosting.MicronBlock
@@ -54,11 +58,13 @@ import com.jamesm92.nomadportal.data.hosting.adjustCharStyles
 import com.jamesm92.nomadportal.data.hosting.applyBackgroundColor
 import com.jamesm92.nomadportal.data.hosting.applyColor
 import com.jamesm92.nomadportal.data.hosting.toAnnotatedString
+import com.jamesm92.nomadportal.data.hosting.toMicronLine
 import com.jamesm92.nomadportal.data.hosting.toggleCharStyle
 import com.jamesm92.nomadportal.ui.components.CompactTextField
 import com.jamesm92.nomadportal.ui.components.MicronColorPicker
 import com.jamesm92.nomadportal.ui.theme.NomadAccent
 import com.jamesm92.nomadportal.ui.theme.NomadBg3
+import com.jamesm92.nomadportal.ui.theme.NomadMono
 import com.jamesm92.nomadportal.ui.theme.NomadTextDim
 import java.util.UUID
 
@@ -68,10 +74,26 @@ import java.util.UUID
  * comment for the underlying block model and exactly what's
  * deliberately not modeled here (tables/literal blocks/comments are
  * round-trip-safe but not toolbar-creatable — raw mode,
- * [SitePageEditorScreen]'s other half, is the escape hatch). Text size
- * never varies here either, headings included — see that same doc
- * comment for why: real Micron is a terminal markup with no font-size
- * concept at all, only color.
+ * [SitePageEditorScreen]'s other half, is the escape hatch).
+ *
+ * **Every block renders through the real `micron2compose` renderer
+ * except the one currently being typed into.** Per this app's own
+ * node-rendering-parity requirement: a *second*, hand-rolled Compose
+ * rendering of the same rules would only ever be an approximation,
+ * proven live this session (its heading colors visibly didn't match
+ * real NomadNet's own dark-theme palette). So each unfocused block is
+ * round-tripped — [MicronBlock.Paragraph.toMicronLine]/`rawText`
+ * serialized, then re-parsed by `micron2compose`'s own
+ * `MicronConverter` and rendered by its own `MicronBlock` composable —
+ * giving an exact, not approximate, preview with zero extra UI mode.
+ * This is display-only and carries no round-trip risk: the block's own
+ * `text`/`charStyles`/`rawText` (never this parsed copy) stay the one
+ * source of truth serialized on save. Only the block currently focused
+ * swaps to an editable `BasicTextField`, since real typing needs a
+ * cursor/selection/IME that a read-only `Text` can't provide — tapping
+ * any block (including a divider or raw-passthrough block) focuses it,
+ * shown via a highlighted row background, and requests real keyboard
+ * focus for it.
  *
  * The toolbar is organized as **category tabs**, not one flat icon
  * row — Format / foreground color / highlight (background) color /
@@ -83,11 +105,7 @@ import java.util.UUID
  * style and intercepting exactly which characters an IME/autocomplete
  * insertion actually added) is a much bigger, buggier problem than
  * this editor takes on. Heading level, alignment, and block add/delete
- * are block-level instead — they apply to whichever block has focus,
- * no selection needed (tapping any block, including a divider or raw-
- * passthrough block, focuses it — visually indicated by a highlighted
- * row background — so "delete this block" always has an unambiguous
- * target).
+ * are block-level instead — no selection needed.
  *
  * No block reordering in v1 either — blocks stay in document order,
  * only "add at the end" and "delete the focused one" are offered.
@@ -95,12 +113,11 @@ import java.util.UUID
  * site simple" direction elsewhere in this feature.
  *
  * Link insertion is intentionally minimal: it inserts real Micron link
- * markup (`[label`destination]`) as plain text at the selection/cursor
- * — it does not render as an interactive chip in rich mode (this
- * model doesn't parse `[...]` specially, by design, so an inserted
- * link is just literal text that happens to be valid Micron once
- * saved). That's enough to make links usable from rich mode without
- * taking on full inline-link rendering as part of this pass.
+ * markup (`[label`destination]`) as plain text at the selection/cursor.
+ * It *does* render as a real, correctly-styled link once the block is
+ * unfocused (that's exactly what the real-rendering above gives for
+ * free) — it just isn't a richly editable object while focused, only
+ * literal text.
  */
 @Composable
 fun RichTextPageEditor(
@@ -247,13 +264,28 @@ fun RichTextPageEditor(
                     block = block,
                     isFocused = block.id == focusedBlockId,
                     selection = if (block.id == focusedBlockId) focusedSelection else TextRange.Zero,
-                    onFocus = { focusedBlockId = block.id },
+                    onFocus = {
+                        // Reset selection on every focus-*gain* event (this
+                        // only ever fires once per gain, never per-keystroke
+                        // -- see this function's own call sites) so a stale
+                        // selection range from whichever block was focused
+                        // before never carries over into this one.
+                        focusedBlockId = block.id
+                        focusedSelection = TextRange.Zero
+                    },
                     onSelectionChange = { focusedSelection = it },
                     onChange = { updated ->
                         onBlocksChange(blocks.map { if (it.id == updated.id) updated else it })
                     },
                 )
-                HorizontalDivider()
+                // No per-block HorizontalDivider here, deliberately -- an
+                // editor-chrome line between *every* block would be
+                // indistinguishable from (and visually clutter) a real
+                // Divider block's own actual rendering now that unfocused
+                // blocks render through micron2compose for real. The
+                // focused-row tint is the only "this is a block boundary"
+                // signal left, and only for whichever one is actually
+                // being edited.
             }
         }
     }
@@ -431,6 +463,14 @@ private fun StructurePanel(
     }
 }
 
+/** Subtle tint marking whichever row currently owns the toolbar's
+ * block-level actions and (for a Paragraph/RawPassthrough) is the one
+ * block rendered as an editable text field instead of real-rendered
+ * content — replaces the old always-visible per-row delete icon, which
+ * the actual on-device experience showed was just visual clutter on
+ * every single line. */
+private val FOCUSED_ROW_TINT = NomadAccent.copy(alpha = 0.08f)
+
 @Composable
 private fun BlockRow(
     block: MicronBlock,
@@ -440,18 +480,52 @@ private fun BlockRow(
     onSelectionChange: (TextRange) -> Unit,
     onChange: (MicronBlock) -> Unit,
 ) {
+    val rowModifier = Modifier
+        .fillMaxWidth()
+        .background(if (isFocused) FOCUSED_ROW_TINT else Color.Transparent)
+
     when (block) {
-        is MicronBlock.Paragraph -> ParagraphBlockRow(block, isFocused, selection, onFocus, onSelectionChange, onChange)
-        is MicronBlock.Divider -> DividerBlockRow(isFocused, onFocus)
-        is MicronBlock.RawPassthrough -> RawPassthroughBlockRow(block, isFocused, onFocus, onChange)
+        is MicronBlock.Paragraph -> ParagraphBlockRow(block, isFocused, selection, onFocus, onSelectionChange, onChange, rowModifier)
+        // A divider has no content to edit at all -- always real-rendered,
+        // "focused" only means "selected as the toolbar's delete target".
+        is MicronBlock.Divider -> RealRenderedBlockRow(rawText = "-", onFocus = onFocus, modifier = rowModifier)
+        is MicronBlock.RawPassthrough -> RawPassthroughBlockRow(block, isFocused, onFocus, onChange, rowModifier)
     }
 }
 
-/** Subtle tint marking whichever row currently owns the toolbar's
- * block-level actions — replaces the old always-visible per-row delete
- * icon, which the actual on-device experience showed was just visual
- * clutter on every single line. */
-private val FOCUSED_ROW_TINT = NomadAccent.copy(alpha = 0.08f)
+/** Renders [rawText] through `micron2compose`'s own real parser +
+ * renderer — see this file's own top doc comment on why (exact parity,
+ * not a second approximation) and why it's safe (display-only; never
+ * feeds back into the editable model). Tapping anywhere in the row
+ * focuses its owning block instead of doing anything link-specific,
+ * even if the content happens to include a real link — this is an
+ * editing surface, not a browsing one. */
+@Composable
+private fun RealRenderedBlockRow(rawText: String, onFocus: () -> Unit, modifier: Modifier = Modifier) {
+    val converter = remember { MicronConverter() }
+    val parsedBlocks = remember(rawText) { converter.convert(rawText).blocks }
+    Column(
+        modifier = modifier.clickable(onClick = onFocus).padding(horizontal = 8.dp, vertical = 4.dp),
+    ) {
+        if (parsedBlocks.isEmpty()) {
+            // A blank line or a standalone "``" reset line -- micron2compose
+            // emits no Block for either, but the row still needs a visible/
+            // tappable presence.
+            Text(" ", fontFamily = NomadMono, style = MaterialTheme.typography.bodyLarge)
+        } else {
+            parsedBlocks.forEach { parsed ->
+                RealMicronBlockView(
+                    block = parsed,
+                    readOnly = true,
+                    fontFamily = NomadMono,
+                    monospaceFontFamily = NomadMono,
+                    onLinkClick = {},
+                    modifier = Modifier.fillMaxWidth(),
+                )
+            }
+        }
+    }
+}
 
 @Composable
 private fun ParagraphBlockRow(
@@ -461,7 +535,13 @@ private fun ParagraphBlockRow(
     onFocus: () -> Unit,
     onSelectionChange: (TextRange) -> Unit,
     onChange: (MicronBlock) -> Unit,
+    modifier: Modifier,
 ) {
+    if (!isFocused) {
+        RealRenderedBlockRow(rawText = block.toMicronLine(), onFocus = onFocus, modifier = modifier)
+        return
+    }
+
     // Always freshly derived from `block` (the single source of truth,
     // owned by the parent's `blocks` list) rather than held as its own
     // `remember`ed copy -- avoids needing to manually keep a local
@@ -473,31 +553,20 @@ private fun ParagraphBlockRow(
         annotatedString = block.toAnnotatedString(),
         selection = selection.coerceIn(block.text.length),
     )
-    // Single fixed text size for every block, heading or not -- real
-    // Micron has no font-size concept at all (see this file's own top
-    // doc comment). Heading depth shows as a background color band
-    // instead, mirroring how MicronParser.py's own dark-theme heading
-    // styles are pure fg/bg color, never bold or a bigger face.
-    val headingTint = when (block.headingLevel) {
-        1 -> NomadAccent.copy(alpha = 0.30f)
-        2 -> NomadAccent.copy(alpha = 0.18f)
-        3 -> NomadAccent.copy(alpha = 0.10f)
-        else -> Color.Transparent
-    }
     val textAlign = when (block.align) {
         MicronAlign.CENTER -> TextAlign.Center
         MicronAlign.RIGHT -> TextAlign.Right
         MicronAlign.DEFAULT -> TextAlign.Start
     }
+    // This block just became the focused one (including the instant a
+    // brand-new block is created already-focused) -- grab real keyboard
+    // focus for it. Without this, swapping from the real-rendered (read-
+    // only Text) view into this BasicTextField wouldn't itself bring up
+    // the keyboard; the user would have to tap a second time.
+    val focusRequester = remember { FocusRequester() }
+    LaunchedEffect(Unit) { focusRequester.requestFocus() }
 
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .background(if (isFocused) FOCUSED_ROW_TINT else Color.Transparent)
-            .background(headingTint)
-            .padding(horizontal = 8.dp, vertical = 4.dp),
-        verticalAlignment = Alignment.Top,
-    ) {
+    Row(modifier = modifier.padding(horizontal = 8.dp, vertical = 4.dp), verticalAlignment = Alignment.Top) {
         BasicTextField(
             value = fieldValue,
             onValueChange = { new ->
@@ -514,11 +583,13 @@ private fun ParagraphBlockRow(
             textStyle = MaterialTheme.typography.bodyLarge.copy(
                 textAlign = textAlign,
                 color = MaterialTheme.colorScheme.onSurface,
+                fontFamily = NomadMono, // matches the real-rendered (unfocused) view's own font, no swap-flicker
             ),
             cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
             modifier = Modifier
                 .fillMaxWidth()
                 .padding(vertical = 4.dp)
+                .focusRequester(focusRequester)
                 .onFocusChanged { if (it.isFocused) onFocus() },
         )
     }
@@ -528,49 +599,35 @@ private fun TextRange.coerceIn(maxLength: Int): TextRange =
     TextRange(start.coerceIn(0, maxLength), end.coerceIn(0, maxLength))
 
 @Composable
-private fun DividerBlockRow(isFocused: Boolean, onFocus: () -> Unit) {
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .background(if (isFocused) FOCUSED_ROW_TINT else Color.Transparent)
-            .clickable(onClick = onFocus)
-            .padding(horizontal = 8.dp, vertical = 4.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        HorizontalDivider(modifier = Modifier.weight(1f).padding(vertical = 4.dp))
-        Text(
-            text = "divider",
-            style = MaterialTheme.typography.bodyLarge.copy(fontSize = MaterialTheme.typography.bodyLarge.fontSize * 0.6f),
-            color = NomadTextDim,
-            modifier = Modifier.padding(horizontal = 8.dp),
-        )
-    }
-}
-
-@Composable
 private fun RawPassthroughBlockRow(
     block: MicronBlock.RawPassthrough,
     isFocused: Boolean,
     onFocus: () -> Unit,
     onChange: (MicronBlock) -> Unit,
+    modifier: Modifier,
 ) {
-    Column(
-        modifier = Modifier
-            .fillMaxWidth()
-            .background(if (isFocused) FOCUSED_ROW_TINT else Color.Transparent)
-            .clickable(onClick = onFocus)
-            .padding(horizontal = 8.dp, vertical = 4.dp),
-    ) {
+    if (!isFocused) {
+        RealRenderedBlockRow(rawText = block.rawText, onFocus = onFocus, modifier = modifier)
+        return
+    }
+
+    val focusRequester = remember { FocusRequester() }
+    LaunchedEffect(Unit) { focusRequester.requestFocus() }
+
+    Column(modifier = modifier.padding(horizontal = 8.dp, vertical = 4.dp)) {
         Text(
-            text = "Raw markup (not richly editable — see raw mode for full control)",
+            text = "Editing raw markup — a table/literal block/comment/link this editor doesn't richly model",
             style = MaterialTheme.typography.bodyLarge.copy(fontSize = MaterialTheme.typography.bodyLarge.fontSize * 0.6f),
             color = NomadTextDim,
         )
         BasicTextField(
             value = block.rawText,
             onValueChange = { onChange(block.copy(rawText = it)) },
-            textStyle = TextStyle(fontFamily = FontFamily.Monospace, color = MaterialTheme.colorScheme.onSurface),
-            modifier = Modifier.fillMaxWidth(),
+            textStyle = MaterialTheme.typography.bodyLarge.copy(fontFamily = NomadMono, color = MaterialTheme.colorScheme.onSurface),
+            modifier = Modifier
+                .fillMaxWidth()
+                .focusRequester(focusRequester)
+                .onFocusChanged { if (it.isFocused) onFocus() },
         )
     }
 }

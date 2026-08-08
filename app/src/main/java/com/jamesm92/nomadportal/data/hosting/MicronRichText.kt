@@ -247,8 +247,13 @@ fun blocksToMicron(blocks: List<MicronBlock>): String =
  * run 1's own reset wiped the alignment set two escapes earlier).
  * Headings don't need any special-casing here either: the heading
  * marker (`>`/`>>`/`>>>`) is a separate line-level prefix consumed
- * once, before any of this per-run escape handling even starts. */
-private fun MicronBlock.Paragraph.toMicronLine(): String {
+ * once, before any of this per-run escape handling even starts.
+ *
+ * Not `private`: also used by [com.jamesm92.nomadportal.ui.hosting.RichTextPageEditor]
+ * to get a real-render preview of an unfocused block, by round-tripping
+ * it through this same serializer and `micron2compose`'s own parser —
+ * see that file's own doc comment. */
+fun MicronBlock.Paragraph.toMicronLine(): String {
     val sb = StringBuilder()
     if (headingLevel > 0) sb.append(">".repeat(headingLevel.coerceIn(1, 3)))
     if (text.isEmpty()) return sb.toString()
