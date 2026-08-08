@@ -34,23 +34,37 @@ fun readAttachmentForSend(context: Context, uri: Uri): PickedAttachment? {
 }
 
 /**
- * Downscales + re-encodes a picked image to WEBP before it ever reaches
- * `send_message` — matching Sideband's own low-bandwidth-link-conscious
- * approach (verified directly against its source, see the
- * nomadportal-android-competitor-research memory: it resizes to one of
- * three tiers and re-encodes to WEBP rather than sending an original
- * multi-MB photo over what might be a LoRa link). This app offers one
- * tier for now (a "medium" 640px/quality-70 equivalent) rather than
- * Sideband's three — simpler first cut, revisit if users actually want
- * the quality/size tradeoff exposed.
+ * A user-facing choice of how much to shrink an outgoing image before
+ * sending — per explicit direction ("images should be scaled for
+ * reduced bandwidth if needed" + a prompt for which size). [maxDimension]/
+ * [quality] values match Sideband's own three real tiers exactly
+ * (verified directly against its source — see the
+ * nomadportal-android-competitor-research memory), not guessed
+ * equivalents, so a size choice here means roughly the same thing it
+ * would in Sideband. A raw file attachment (see [readAttachmentForSend])
+ * has no equivalent prompt — it's always sent as-is, per the same
+ * explicit direction ("if its a file its assumed to be the raw file").
+ */
+enum class ImageSizeTier(val maxDimension: Int, val quality: Int, val label: String, val description: String) {
+    LOW(320, 22, "Low bandwidth", "Smallest file, most compressed — best for slow links (LoRa, weak mesh hops)"),
+    MEDIUM(640, 66, "Medium", "Balanced size and quality — good default for most links"),
+    HIGH(1280, 75, "High quality", "Largest file, sharpest image — best when bandwidth isn't a concern"),
+}
+
+/**
+ * Downscales + re-encodes a picked image to WEBP at the chosen [tier]
+ * before it ever reaches `send_message` — matching Sideband's own
+ * low-bandwidth-link-conscious approach rather than sending an original
+ * multi-MB photo over what might be a LoRa link.
  *
  * Downsampled via [BitmapFactory.Options.inSampleSize] computed from the
  * real image bounds first (`inJustDecodeBounds`), not decoded at full
  * resolution then scaled down — avoids an OOM on a large photo from a
  * modern phone camera.
  */
-fun compressImageForSend(context: Context, uri: Uri, maxDimension: Int = 640, quality: Int = 70): PickedAttachment? {
+fun compressImageForSend(context: Context, uri: Uri, tier: ImageSizeTier): PickedAttachment? {
     val resolver = context.contentResolver
+    val maxDimension = tier.maxDimension
     return try {
         val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
         resolver.openInputStream(uri)?.use { BitmapFactory.decodeStream(it, null, bounds) }
@@ -79,7 +93,7 @@ fun compressImageForSend(context: Context, uri: Uri, maxDimension: Int = 640, qu
             @Suppress("DEPRECATION")
             Bitmap.CompressFormat.WEBP
         }
-        scaled.compress(format, quality, out)
+        scaled.compress(format, tier.quality, out)
         if (scaled !== bitmap) scaled.recycle()
         bitmap.recycle()
 

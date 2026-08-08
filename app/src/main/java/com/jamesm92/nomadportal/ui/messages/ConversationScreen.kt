@@ -3,6 +3,7 @@ package com.jamesm92.nomadportal.ui.messages
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -27,6 +28,7 @@ import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Image
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -34,8 +36,10 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -52,6 +56,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.jamesm92.nomadportal.data.messaging.AttachmentKind
 import com.jamesm92.nomadportal.data.messaging.Contact
+import com.jamesm92.nomadportal.data.messaging.ImageSizeTier
 import com.jamesm92.nomadportal.data.messaging.MAX_ATTACHMENT_BYTES
 import com.jamesm92.nomadportal.data.messaging.MessagingRepository
 import com.jamesm92.nomadportal.data.messaging.compressImageForSend
@@ -108,18 +113,17 @@ fun ConversationScreen(
     // sendMessage together can take a moment for a large image).
     var sendingAttachment by remember { mutableStateOf(false) }
     var attachMenuExpanded by remember { mutableStateOf(false) }
+    // Set the moment an image is picked, cleared once a size tier is
+    // chosen (or the picker dialog is dismissed) — per explicit
+    // direction: unlike a raw file (always sent as-is), an image gets a
+    // prompt for how much to shrink it before it's actually sent.
+    var pendingImageUri by remember { mutableStateOf<android.net.Uri?>(null) }
 
-    fun sendAttachment(kind: AttachmentKind, uri: android.net.Uri?) {
+    fun sendFileAttachment(uri: android.net.Uri?) {
         if (uri == null) return
         sendingAttachment = true
         scope.launch {
-            val picked = withContext(Dispatchers.IO) {
-                if (kind == AttachmentKind.IMAGE) {
-                    compressImageForSend(context, uri)
-                } else {
-                    readAttachmentForSend(context, uri)
-                }
-            }
+            val picked = withContext(Dispatchers.IO) { readAttachmentForSend(context, uri) }
             sendingAttachment = false
             if (picked == null) {
                 sendError = "Couldn't read that file"
@@ -131,12 +135,10 @@ fun ConversationScreen(
             }
             try {
                 repository.sendMessage(
-                    contact.lxmfHash,
-                    draft.trim(),
+                    contact.lxmfHash, draft.trim(),
                     attachmentFilename = picked.filename,
                     attachmentData = picked.bytes,
-                    attachmentKind = kind,
-                    imageFormat = if (kind == AttachmentKind.IMAGE) "webp" else null,
+                    attachmentKind = AttachmentKind.FILE,
                 )
                 draft = ""
                 sendError = null
@@ -146,15 +148,44 @@ fun ConversationScreen(
         }
     }
 
+    fun sendImageAttachment(uri: android.net.Uri, tier: ImageSizeTier) {
+        sendingAttachment = true
+        scope.launch {
+            val picked = withContext(Dispatchers.IO) { compressImageForSend(context, uri, tier) }
+            sendingAttachment = false
+            if (picked == null) {
+                sendError = "Couldn't read that image"
+                return@launch
+            }
+            // MAX_ATTACHMENT_BYTES check deliberately omitted here — every
+            // tier's real-world output is well under the cap (even HIGH's
+            // 1280px/quality-75 WEBP is normally a few hundred KB at
+            // most), unlike an arbitrary raw file pick.
+            try {
+                repository.sendMessage(
+                    contact.lxmfHash, draft.trim(),
+                    attachmentFilename = picked.filename,
+                    attachmentData = picked.bytes,
+                    attachmentKind = AttachmentKind.IMAGE,
+                    imageFormat = "webp",
+                )
+                draft = ""
+                sendError = null
+            } catch (e: Exception) {
+                sendError = e.message ?: "Failed to send image"
+            }
+        }
+    }
+
     val pickImageLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.PickVisualMedia(),
-    ) { uri -> sendAttachment(AttachmentKind.IMAGE, uri) }
+    ) { uri -> pendingImageUri = uri }
     val pickAudioLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.OpenDocument(),
-    ) { uri -> sendAttachment(AttachmentKind.FILE, uri) }
+    ) { uri -> sendFileAttachment(uri) }
     val pickFileLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.OpenDocument(),
-    ) { uri -> sendAttachment(AttachmentKind.FILE, uri) }
+    ) { uri -> sendFileAttachment(uri) }
 
     // The Contact passed in is a one-shot snapshot from nav time — kept
     // fresh by re-fetching whenever `messages` changes, rather than an
@@ -413,6 +444,52 @@ fun ConversationScreen(
                 }
             }
         }
+    }
+
+    // Per explicit direction: an image gets a size-tier prompt before
+    // it's sent (a raw file attachment never does — it's always sent
+    // as-is). Cancelling just clears pendingImageUri without sending
+    // anything.
+    pendingImageUri?.let { uri ->
+        AlertDialog(
+            onDismissRequest = { pendingImageUri = null },
+            title = { Text("Image size") },
+            text = {
+                Column {
+                    ImageSizeTier.entries.forEach { tier ->
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable {
+                                    pendingImageUri = null
+                                    sendImageAttachment(uri, tier)
+                                }
+                                .padding(vertical = 6.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            RadioButton(selected = tier == ImageSizeTier.MEDIUM, onClick = {
+                                pendingImageUri = null
+                                sendImageAttachment(uri, tier)
+                            })
+                            Column {
+                                Text(tier.label, style = MaterialTheme.typography.bodyLarge)
+                                Text(
+                                    text = tier.description,
+                                    style = MaterialTheme.typography.bodyLarge.copy(
+                                        fontSize = MaterialTheme.typography.bodyLarge.fontSize * 0.75f,
+                                    ),
+                                    color = NomadTextDim,
+                                )
+                            }
+                        }
+                    }
+                }
+            },
+            confirmButton = {},
+            dismissButton = {
+                TextButton(onClick = { pendingImageUri = null }) { Text("Cancel") }
+            },
+        )
     }
 }
 

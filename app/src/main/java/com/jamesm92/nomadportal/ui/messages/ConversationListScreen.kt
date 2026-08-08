@@ -108,10 +108,44 @@ fun ConversationListScreen(
     var selectedTab by remember { mutableIntStateOf(0) }
     var sortOption by remember { mutableStateOf(SortOption.RECENT) }
 
+    // Optimistic favorite toggling — repository.conversations() is a
+    // 4-second poll (see RealMessagingRepository's own doc comment;
+    // MessagingService/orchestrator.py have no push mechanism), so
+    // without this a favorite tap could take up to 4s to visibly
+    // update, which reads as "did that even register?" (a real
+    // on-device report). hash -> the value this device is *waiting* to
+    // see confirmed; applied on top of the live `conversations` list
+    // below rather than replacing it, and self-prunes the moment the
+    // next poll actually confirms it — including correcting itself if
+    // the underlying setFavorite call silently failed, no separate
+    // revert-on-error path needed.
+    var favoriteOverrides by remember { mutableStateOf<Map<String, Boolean>>(emptyMap()) }
+    LaunchedEffect(conversations) {
+        if (favoriteOverrides.isEmpty()) return@LaunchedEffect
+        val stillPending = favoriteOverrides.filter { (hash, wanted) ->
+            conversations.find { it.contact.lxmfHash == hash }?.contact?.isFavorite != wanted
+        }
+        if (stillPending.size != favoriteOverrides.size) favoriteOverrides = stillPending
+    }
+    val effectiveConversations = remember(conversations, favoriteOverrides) {
+        if (favoriteOverrides.isEmpty()) {
+            conversations
+        } else {
+            conversations.map { summary ->
+                val wanted = favoriteOverrides[summary.contact.lxmfHash]
+                if (wanted != null && wanted != summary.contact.isFavorite) {
+                    summary.copy(contact = summary.contact.copy(isFavorite = wanted))
+                } else {
+                    summary
+                }
+            }
+        }
+    }
+
     val filtered = if (searchQuery.isBlank()) {
-        conversations
+        effectiveConversations
     } else {
-        conversations.filter {
+        effectiveConversations.filter {
             it.contact.displayName.contains(searchQuery, ignoreCase = true) ||
                 it.contact.lxmfHash.contains(searchQuery, ignoreCase = true)
         }
@@ -164,7 +198,21 @@ fun ConversationListScreen(
     var favoritesOpen by remember { mutableStateOf(true) }
 
     fun toggleFavorite(summary: ConversationSummary) {
-        scope.launch { repository.setFavorite(summary.contact.lxmfHash, !summary.contact.isFavorite) }
+        val hash = summary.contact.lxmfHash
+        val wanted = !summary.contact.isFavorite
+        favoriteOverrides = favoriteOverrides + (hash to wanted)
+        scope.launch {
+            try {
+                repository.setFavorite(hash, wanted)
+            } catch (e: Exception) {
+                // Left in favoriteOverrides — the next poll will show
+                // the real (unchanged) state, which the pruning
+                // LaunchedEffect above then clears automatically. Not
+                // rethrown: this coroutine shares `scope` with every
+                // other action on this screen, and an uncaught
+                // exception here would cancel all of them.
+            }
+        }
     }
 
     // Confirmed before actually deleting — hard to reverse (message

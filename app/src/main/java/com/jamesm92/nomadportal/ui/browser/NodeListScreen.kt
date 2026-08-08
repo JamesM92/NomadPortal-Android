@@ -27,6 +27,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -97,13 +98,50 @@ fun NodeListScreen(
     var showAddByAddress by remember { mutableStateOf(false) }
     var sortOption by remember { mutableStateOf(SortOption.RECENT) }
 
+    // Optimistic favorite toggling — same fix/rationale as
+    // ConversationListScreen's identical `favoriteOverrides`: discoveredNodes()
+    // is a multi-second poll, so without this a favorite tap could take
+    // several seconds to visibly update (a real on-device report —
+    // "clicking the favorites hearts needs to be more instant").
+    var favoriteOverrides by remember { mutableStateOf<Map<String, Boolean>>(emptyMap()) }
+    LaunchedEffect(nodes) {
+        if (favoriteOverrides.isEmpty()) return@LaunchedEffect
+        val stillPending = favoriteOverrides.filter { (hash, wanted) ->
+            nodes.find { it.hash == hash }?.isFavorite != wanted
+        }
+        if (stillPending.size != favoriteOverrides.size) favoriteOverrides = stillPending
+    }
+    val effectiveNodes = remember(nodes, favoriteOverrides) {
+        if (favoriteOverrides.isEmpty()) {
+            nodes
+        } else {
+            nodes.map { node ->
+                val wanted = favoriteOverrides[node.hash]
+                if (wanted != null && wanted != node.isFavorite) node.copy(isFavorite = wanted) else node
+            }
+        }
+    }
+    fun toggleFavorite(node: NodeInfo) {
+        val wanted = !node.isFavorite
+        favoriteOverrides = favoriteOverrides + (node.hash to wanted)
+        scope.launch {
+            try {
+                repository.setFavorite(node.hash, wanted)
+            } catch (e: Exception) {
+                // Self-corrects via the pruning LaunchedEffect above on
+                // the next poll — see ConversationListScreen's identical
+                // comment for why this isn't rethrown.
+            }
+        }
+    }
+
     // Filters name and hash (a user may search by either) — applied
     // before the Favorites/Announces-heard split so a search still
     // respects that split, not a flat re-merged result.
     val filteredNodes = if (searchQuery.isBlank()) {
-        nodes
+        effectiveNodes
     } else {
-        nodes.filter {
+        effectiveNodes.filter {
             it.displayName.contains(searchQuery, ignoreCase = true) ||
                 it.hash.contains(searchQuery, ignoreCase = true)
         }
@@ -210,9 +248,7 @@ fun NodeListScreen(
                         NodeRow(
                             node = node,
                             onClick = { onOpenNode(node.hash) },
-                            onToggleFavorite = {
-                                scope.launch { repository.setFavorite(node.hash, !node.isFavorite) }
-                            },
+                            onToggleFavorite = { toggleFavorite(node) },
                         )
                         HorizontalDivider()
                     }
@@ -233,9 +269,7 @@ fun NodeListScreen(
                         NodeRow(
                             node = node,
                             onClick = { onOpenNode(node.hash) },
-                            onToggleFavorite = {
-                                scope.launch { repository.setFavorite(node.hash, !node.isFavorite) }
-                            },
+                            onToggleFavorite = { toggleFavorite(node) },
                         )
                         HorizontalDivider()
                     }
