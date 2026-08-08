@@ -457,11 +457,18 @@ def announce_site_now() -> bool:
 # RESCAN_INTERVAL). Every function here validates the given relative
 # path resolves to something still inside the pages directory, same
 # realpath-prefix-check SiteServer.fetch_page already uses, and only
-# ".mu" is ever accepted for a *page* (folders have no extension
-# concept) — per explicit direction ("will be requiring it to be .mu
-# only no python or executables"), enforced here at the point content
-# is actually created, not just at the serving layer this module
-# already hardened.
+# ".mu" is ever accepted for a *page* — per explicit direction ("will
+# be requiring it to be .mu only no python or executables"), enforced
+# here at the point content is actually created, not just at the
+# serving layer this module already hardened.
+#
+# No folder-creation here, deliberately — per explicit direction, a
+# phone-hosted site should stay a simple flat structure, not a nested
+# tree an author has to navigate on a small screen. list/rename/delete
+# still tolerate a folder if one somehow exists (SiteServer itself has
+# always supported nested directories, and there's no reason to make
+# those calls actively hostile to one), there's just no UI path left
+# that can ever create a new one.
 # ---------------------------------------------------------------------------
 
 def _site_pages_dir() -> str:
@@ -530,20 +537,6 @@ def create_site_page(relative_path: str) -> str:
         os.makedirs(os.path.dirname(resolved), exist_ok=True)
         with open(resolved, "w", encoding="utf-8") as fh:
             fh.write("")
-        return json.dumps({"success": True, "message": "Created"})
-    except OSError as exc:
-        return json.dumps({"success": False, "message": str(exc)})
-
-
-def create_site_folder(relative_path: str) -> str:
-    import json
-    resolved = _resolve_site_path(relative_path)
-    if resolved is None:
-        return json.dumps({"success": False, "message": "Invalid path"})
-    if os.path.exists(resolved):
-        return json.dumps({"success": False, "message": "Already exists"})
-    try:
-        os.makedirs(resolved)
         return json.dumps({"success": True, "message": "Created"})
     except OSError as exc:
         return json.dumps({"success": False, "message": str(exc)})

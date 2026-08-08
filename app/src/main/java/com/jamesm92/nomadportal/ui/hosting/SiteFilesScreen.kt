@@ -15,7 +15,6 @@ import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.InsertDriveFile
 import androidx.compose.material.icons.automirrored.filled.NoteAdd
 import androidx.compose.material.icons.filled.Add
-import androidx.compose.material.icons.filled.CreateNewFolder
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.DriveFileRenameOutline
 import androidx.compose.material.icons.filled.Folder
@@ -78,9 +77,7 @@ fun SiteFilesScreen(
     }
     fun refresh() { refreshToken++ }
 
-    var addMenuExpanded by remember { mutableStateOf(false) }
     var creatingPage by remember { mutableStateOf(false) }
-    var creatingFolder by remember { mutableStateOf(false) }
     var renaming by remember { mutableStateOf<SiteFileEntry?>(null) }
     var pendingDelete by remember { mutableStateOf<SiteFileEntry?>(null) }
     var errorText by remember { mutableStateOf<String?>(null) }
@@ -109,22 +106,14 @@ fun SiteFilesScreen(
                     }
                 },
                 actions = {
-                    Box {
-                        IconButton(onClick = { addMenuExpanded = true }) {
-                            Icon(Icons.Filled.Add, contentDescription = "New")
-                        }
-                        DropdownMenu(expanded = addMenuExpanded, onDismissRequest = { addMenuExpanded = false }) {
-                            DropdownMenuItem(
-                                text = { Text("New page") },
-                                leadingIcon = { Icon(Icons.AutoMirrored.Filled.NoteAdd, contentDescription = null) },
-                                onClick = { addMenuExpanded = false; creatingPage = true },
-                            )
-                            DropdownMenuItem(
-                                text = { Text("New folder") },
-                                leadingIcon = { Icon(Icons.Filled.CreateNewFolder, contentDescription = null) },
-                                onClick = { addMenuExpanded = false; creatingFolder = true },
-                            )
-                        }
+                    // A single, direct action — not a dropdown menu —
+                    // now that "New folder" is gone (per explicit
+                    // direction: a phone-hosted site stays a simple
+                    // flat structure). A menu with exactly one item
+                    // left in it would just be an extra tap for no
+                    // reason.
+                    IconButton(onClick = { creatingPage = true }) {
+                        Icon(Icons.Filled.Add, contentDescription = "New page")
                     }
                 },
             )
@@ -143,7 +132,7 @@ fun SiteFilesScreen(
             }
             if (entries.isEmpty()) {
                 Text(
-                    text = "Nothing here yet — use + to add a page or folder.",
+                    text = "Nothing here yet — use + to add a page.",
                     style = MaterialTheme.typography.bodyLarge,
                     color = NomadTextDim,
                     modifier = Modifier.padding(24.dp),
@@ -177,24 +166,6 @@ fun SiteFilesScreen(
                         refresh()
                     } else {
                         errorText = "Couldn't create that page — name may already be in use."
-                    }
-                }
-            },
-        )
-    }
-
-    if (creatingFolder) {
-        NameEntryDialog(
-            title = "New folder",
-            placeholder = "folder-name",
-            onDismiss = { creatingFolder = false },
-            onConfirm = { name ->
-                creatingFolder = false
-                scope.launch {
-                    if (repository.createFolder(joinPath(currentPath, name))) {
-                        refresh()
-                    } else {
-                        errorText = "Couldn't create that folder — name may already be in use."
                     }
                 }
             },

@@ -32,8 +32,6 @@ class RealSiteFileRepository : SiteFileRepository {
 
     override suspend fun createPage(path: String): Boolean = fileOp("create_site_page", path)
 
-    override suspend fun createFolder(path: String): Boolean = fileOp("create_site_folder", path)
-
     override suspend fun rename(oldPath: String, newPath: String): Boolean = withContext(Dispatchers.IO) {
         JSONObject(orchestrator.callAttr("rename_site_entry", oldPath, newPath).toString())
             .optBoolean("success", false)

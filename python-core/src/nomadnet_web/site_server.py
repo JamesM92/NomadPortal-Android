@@ -140,21 +140,33 @@ Everything above renders the same way on any real NomadNet client -- this page i
 
 
 def seed_starter_content(pages_dir: str) -> None:
-    """Writes examples.mu the first time [pages_dir] is created — a
-    real, editable/deletable starter file, unlike _DEFAULT_INDEX (a
-    synthetic fallback with no file behind it at all — see
-    _register_pages()'s own fallback route). No-op if examples.mu
-    already exists, so this is always safe to call on every startup,
-    not just the genuinely-first one; callers don't need to track
-    "was this directory actually new" themselves."""
-    examples_path = os.path.join(pages_dir, "examples.mu")
-    if os.path.exists(examples_path):
+    """Writes index.mu and examples.mu the first time [pages_dir] is
+    created — real, editable/deletable/visible-in-the-file-nav starter
+    files. index.mu here is a real file with the exact same pitch
+    content as _DEFAULT_INDEX above (not just that synthetic fallback,
+    which only ever covers the case where no real index.mu exists at
+    all) — a fresh install's file nav would otherwise show only
+    examples.mu, with the actual index page nowhere visible/editable
+    even though it's genuinely what's being served, which is exactly
+    the confusing gap this closes. _DEFAULT_INDEX itself stays as a
+    safety net for the case an operator deletes their index.mu.
+
+    No-op per file if it already exists, so this is always safe to call
+    on every startup, not just the genuinely-first one — callers don't
+    need to track "was this directory actually new" themselves."""
+    _seed_file(pages_dir, "index.mu", _DEFAULT_INDEX)
+    _seed_file(pages_dir, "examples.mu", DEFAULT_EXAMPLES_PAGE)
+
+
+def _seed_file(pages_dir: str, filename: str, content: str) -> None:
+    path = os.path.join(pages_dir, filename)
+    if os.path.exists(path):
         return
     try:
-        with open(examples_path, "w", encoding="utf-8") as fh:
-            fh.write(DEFAULT_EXAMPLES_PAGE)
+        with open(path, "w", encoding="utf-8") as fh:
+            fh.write(content)
     except OSError as exc:
-        log.warning("Could not seed examples.mu: %s", exc)
+        log.warning("Could not seed %s: %s", filename, exc)
 
 
 class SiteServer:

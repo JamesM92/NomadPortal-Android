@@ -23,20 +23,20 @@ interface SiteFileRepository {
 
     /** [path] must end in ".mu". False (with no further detail — see
      * each implementation for how failures surface) if it already
-     * exists or the path is otherwise invalid. */
+     * exists or the path is otherwise invalid. No folder-creation
+     * here, deliberately — per explicit direction, a phone-hosted site
+     * stays a simple flat structure, not a nested tree to navigate on
+     * a small screen. */
     suspend fun createPage(path: String): Boolean
 
-    suspend fun createFolder(path: String): Boolean
-
-    /** Also how an entry is *moved* — a move is a rename to a path
-     * under a different parent, no separate operation. Renaming a page
-     * to something not ending in ".mu" fails. */
+    /** Also how a page is *moved* — a move is a rename to a path under
+     * a different parent, no separate operation. Renaming to something
+     * not ending in ".mu" fails. */
     suspend fun rename(oldPath: String, newPath: String): Boolean
 
-    /** Deletes a page, or a folder and everything inside it — callers
-     * must confirm before calling this, same destructive-action
-     * convention as this app's other delete flows (panic wipe,
-     * deleting a chat). */
+    /** Deletes a page — callers must confirm before calling this, same
+     * destructive-action convention as this app's other delete flows
+     * (panic wipe, deleting a chat). */
     suspend fun delete(path: String): Boolean
 
     /** Null (not blank) if [path] doesn't resolve to a real page —
