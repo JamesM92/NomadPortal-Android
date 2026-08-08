@@ -8,6 +8,10 @@ import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextDecoration
+import com.jamesm92.micron2compose.parser.Align
+import com.jamesm92.micron2compose.parser.BlockKind
+import com.jamesm92.micron2compose.parser.MicronConverter
+import com.jamesm92.micron2compose.parser.TextRun
 import java.util.UUID
 
 /**
@@ -42,6 +46,17 @@ import java.util.UUID
  * with a background color band instead (see [MicronBlock.Paragraph]'s
  * own `headingLevel` doc comment / the composable that renders it),
  * never a font-size change.
+ *
+ * **Parsing is delegated to `micron2compose`'s own `MicronConverter`**
+ * (see [parseMicronToBlocks]'s own doc comment) — this app's own node-
+ * rendering-parity requirement means the grammar (color-escape width,
+ * full-reset semantics, heading depth, alignment) has exactly one
+ * implementation shared with the node-*browsing* renderer
+ * (`BrowserScreen`), not a second hand-written parser kept in sync by
+ * hand. This is a one-way reuse, though: `micron2compose` is read-only
+ * (Micron text → render), with no serialization direction at all, so
+ * [blocksToMicron] below has to stay original code regardless — there
+ * is nothing to delegate that half to.
  */
 
 enum class MicronAlign { DEFAULT, CENTER, RIGHT }
@@ -278,7 +293,38 @@ private fun Color.toMicronHex(): String = String.format("%06X", toArgb() and 0xF
 // Parsing: real Micron markup text -> List<MicronBlock>.
 // ---------------------------------------------------------------------
 
+/**
+ * Delegates the actual grammar to `micron2compose`'s own
+ * [MicronConverter] — see this file's own top doc comment on why: one
+ * parser shared with node *browsing*, not a second hand-written one
+ * that could silently drift from it.
+ *
+ * This file still does its own scan for three constructs whose
+ * `micron2compose`-parsed form can't be losslessly turned back into
+ * source text: literal blocks (`` `= ``…`` `= ``) and table regions
+ * (`` `t ``…`` `t ``) are re-assembled by `MicronConverter` into
+ * *rendered* content (e.g. a table's laid-out box-drawing text), not
+ * preserved as the original markup; comments (`#`) are dropped
+ * entirely by real Micron (and by `MicronConverter`, matching it) but
+ * this editor deliberately keeps them instead of silently discarding
+ * an author's own notes. All three need the original raw text sliced
+ * out by hand, same as before this delegation existed.
+ *
+ * Every other line goes through [MicronConverter.convert] (called
+ * per-line, each an independent single-line "document" — matching
+ * this model's own one-block-per-line scope) and its result is mapped
+ * onto [MicronBlock]. One more case gets the same verbatim treatment
+ * for the same reason as literal/table blocks: a line whose runs
+ * include a link, form field, anchor, or partial. `micron2compose`
+ * resolves those into structured, context-dependent values (a link's
+ * `runs` carry its *resolved* href, not the original `[label`url]`
+ * text) — reconstructing the line from that could silently rewrite it
+ * on save, so it's kept as [MicronBlock.RawPassthrough] instead. Raw
+ * mode is still the full-fidelity way to edit a line like that (see
+ * this file's own top doc comment).
+ */
 fun parseMicronToBlocks(raw: String): List<MicronBlock> {
+    val converter = MicronConverter()
     val lines = raw.split("\n")
     val blocks = mutableListOf<MicronBlock>()
     var i = 0
@@ -286,7 +332,7 @@ fun parseMicronToBlocks(raw: String): List<MicronBlock> {
         val line = lines[i]
         when {
             // Literal block: `= ... `= (verbatim, opaque -- see this
-            // file's own doc comment on why RawPassthrough exists).
+            // function's own doc comment).
             line == "`=" -> {
                 val start = i
                 i++
@@ -305,149 +351,80 @@ fun parseMicronToBlocks(raw: String): List<MicronBlock> {
                 continue
             }
             // Comments and partials -- single-line, preserved verbatim
-            // rather than silently dropped (real Micron drops `#`
-            // comments entirely; this editor doesn't, on purpose, so
-            // an author's own notes never quietly vanish under them).
+            // rather than silently dropped (real Micron -- and
+            // micron2compose, matching it -- drops `#` comments
+            // entirely; this editor doesn't, on purpose, so an
+            // author's own notes never quietly vanish under them).
             line.startsWith("#") || line.startsWith("`{") -> {
                 blocks.add(MicronBlock.RawPassthrough(rawText = line))
             }
-            line.isNotEmpty() && line[0] == '>' -> {
-                var depth = 0
-                while (depth < line.length && line[depth] == '>') depth++
-                val (text, styles, align) = parseInlineSpans(line.substring(depth))
-                blocks.add(
-                    MicronBlock.Paragraph(
-                        headingLevel = depth.coerceIn(1, 3), text = text, charStyles = styles, align = align,
-                    ),
-                )
-            }
-            // Real Micron: a line's first character being "-" is
-            // unconditionally a divider, regardless of what follows —
-            // confirmed directly against MicronParser.py, not guessed.
-            line.isNotEmpty() && line[0] == '-' -> {
-                blocks.add(MicronBlock.Divider())
-            }
-            else -> {
-                val (text, styles, align) = parseInlineSpans(line)
-                blocks.add(MicronBlock.Paragraph(text = text, charStyles = styles, align = align))
-            }
+            else -> blocks.add(parseOrdinaryLine(line, converter))
         }
         i++
     }
     return blocks
 }
 
-/** Walks one line's inline escapes (bold/italic/underline/reset/
- * foreground+background color/alignment — the subset this editor
- * models) and returns the plain text with backtick escapes stripped, a
- * parallel [CharStyle] list, and whichever alignment escape was last
- * seen (Micron allows changing it more than once per line; this model
- * only tracks one alignment per paragraph, so the last one wins).
- *
- * Anything not in that recognized set — links, any other escape —
- * falls through untouched as literal visible text (including its own
- * backtick), never crashing, never silently eating characters it
- * doesn't understand. A known, narrow gap from this: a link's own
- * internal backtick separator (`[label`url]`) could misparse as a real
- * escape if the character right after it happens to coincide with one
- * of the letters this function does recognize (e.g. a URL starting
- * with "c") — accepted, given links are already a raw-mode-only
- * construct in this editor.
- */
-private fun parseInlineSpans(line: String): Triple<String, List<CharStyle>, MicronAlign> {
-    val outText = StringBuilder()
-    val outStyles = mutableListOf<CharStyle>()
-    var bold = false
-    var italic = false
-    var underline = false
-    var color: Color? = null
-    var background: Color? = null
-    var align = MicronAlign.DEFAULT
-    var i = 0
-    while (i < line.length) {
-        val c = line[i]
-        if (c == '`' && i + 1 < line.length) {
-            when (line[i + 1]) {
-                '!' -> { bold = !bold; i += 2; continue }
-                '*' -> { italic = !italic; i += 2; continue }
-                '_' -> { underline = !underline; i += 2; continue }
-                '`' -> {
-                    // Full reset -- clears everything, not just the
-                    // toggles (see toMicronLine's own doc comment).
-                    bold = false; italic = false; underline = false
-                    color = null; background = null; align = MicronAlign.DEFAULT
-                    i += 2
-                    continue
+/** Parses one line that isn't part of a literal/table/comment region
+ * (see [parseMicronToBlocks]'s own doc comment) via `micron2compose`'s
+ * [MicronConverter] — this is what actually understands headings,
+ * dividers, blank lines, alignment, and inline bold/italic/underline/
+ * color escapes, real-Micron-verified. */
+private fun parseOrdinaryLine(line: String, converter: MicronConverter): MicronBlock {
+    val block = converter.convert(line).blocks.firstOrNull()
+        ?: return MicronBlock.Paragraph(text = "") // e.g. a standalone "``" line, which resets state but emits no row
+
+    return when (block.kind) {
+        BlockKind.DIVIDER -> MicronBlock.Divider()
+        BlockKind.BLANK -> MicronBlock.Paragraph(text = "")
+        BlockKind.HEADING, BlockKind.TEXT -> {
+            val runs = block.runs
+            if (runs.all { it is TextRun }) {
+                val text = StringBuilder()
+                val styles = mutableListOf<CharStyle>()
+                for (run in runs) {
+                    run as TextRun
+                    val style = CharStyle(
+                        bold = run.bold,
+                        italic = run.italic,
+                        underline = run.underline,
+                        color = run.fgColor?.let { parseHex(it.removePrefix("#")) },
+                        background = run.bgColor?.let { parseHex(it.removePrefix("#")) },
+                    )
+                    text.append(run.text)
+                    repeat(run.text.length) { styles.add(style) }
                 }
-                'f' -> { color = null; i += 2; continue }
-                'b' -> { background = null; i += 2; continue }
-                'c' -> { align = MicronAlign.CENTER; i += 2; continue }
-                'r' -> { align = MicronAlign.RIGHT; i += 2; continue }
-                'l', 'a' -> { align = MicronAlign.DEFAULT; i += 2; continue }
-                'F' -> {
-                    val (parsed, consumed) = parseColorEscape(line, i + 2)
-                    if (consumed > 0) { color = parsed; i += 2 + consumed; continue }
-                }
-                'B' -> {
-                    val (parsed, consumed) = parseColorEscape(line, i + 2)
-                    if (consumed > 0) { background = parsed; i += 2 + consumed; continue }
-                }
+                MicronBlock.Paragraph(
+                    headingLevel = block.headingLevel,
+                    align = block.align.toMicronAlign(),
+                    text = text.toString(),
+                    charStyles = styles,
+                )
+            } else {
+                // Contains a link/field/anchor/partial -- see this
+                // file's own doc comment on why that's not safely
+                // reconstructible from micron2compose's parsed form.
+                MicronBlock.RawPassthrough(rawText = line)
             }
         }
-        outText.append(c)
-        outStyles.add(CharStyle(bold = bold, italic = italic, underline = underline, color = color, background = background))
-        i++
+        // LITERAL/TABLE/PARTIAL shouldn't reach here -- parseMicronToBlocks
+        // already slices those out by hand before calling this function.
+        // Defensive-only fallback, never silently drops the line either way.
+        else -> MicronBlock.RawPassthrough(rawText = line)
     }
-    return Triple(outText.toString(), outStyles, align)
 }
 
-/** Consumes one Micron `` `F ``/`` `B `` color payload starting right
- * after the two-character escape itself, mirroring the real dispatch
- * (confirmed directly against MicronParser.py): a literal `T` marker
- * selects the 6-hex truecolor form (`` `FT<6 hex>``, 7 chars
- * consumed), otherwise exactly 3 characters are *always* consumed —
- * either a CSS-style digit-doubled hex triplet, or (when the first of
- * the 3 is `g`) a two-digit decimal grayscale percentage, matching
- * MicronParser.py's own `high_color()` helper. Returns the parsed
- * [Color] (null if the payload didn't actually parse, e.g. malformed
- * input — matching real Micron's own fallback to "default") together
- * with how many characters were consumed, so the caller can stay in
- * sync with a real Micron parser's cursor position even when the color
- * itself came out invalid. */
-private fun parseColorEscape(line: String, start: Int): Pair<Color?, Int> {
-    if (start < line.length && line[start] == 'T' && isHexRun(line, start + 1, 6)) {
-        return parseHex(line.substring(start + 1, start + 7)) to 7
-    }
-    if (start + 3 <= line.length) {
-        val chunk = line.substring(start, start + 3)
-        val color = when {
-            chunk[0] == 'g' -> parseGrayscale(chunk[1], chunk[2])
-            chunk.all { it.isHexDigit() } -> parseHex(chunk.map { "$it$it" }.joinToString(""))
-            else -> null
-        }
-        return color to 3
-    }
-    return null to 0
+private fun Align.toMicronAlign(): MicronAlign = when (this) {
+    Align.LEFT -> MicronAlign.DEFAULT
+    Align.CENTER -> MicronAlign.CENTER
+    Align.RIGHT -> MicronAlign.RIGHT
 }
 
-/** Micron's grayscale shorthand (`` `Fg<d><d>``/`` `Bg<d><d>``, two
- * decimal digits 0-9 each) — approximated here as an actual gray
- * [Color] rather than being dropped, since the underlying [CharStyle]
- * model has no separate grayscale channel to keep it in more
- * faithfully than that. */
-private fun parseGrayscale(d1: Char, d2: Char): Color? {
-    val v1 = d1.digitToIntOrNull()?.coerceIn(0, 9) ?: return null
-    val v2 = d2.digitToIntOrNull()?.coerceIn(0, 9) ?: return null
-    val percent = (v1 * 10 + v2).coerceIn(0, 99)
-    val level = percent * 255 / 99
-    return Color(level, level, level)
-}
-
-private fun isHexRun(s: String, start: Int, len: Int): Boolean =
-    start + len <= s.length && (start until start + len).all { s[it].isHexDigit() }
-
-private fun Char.isHexDigit(): Boolean = this in '0'..'9' || this in 'a'..'f' || this in 'A'..'F'
-
+/** `TextRun.fgColor`/`bgColor` are already-validated `"#rrggbb"`
+ * strings (`micron2compose`'s own `parseColor` guarantees this — see
+ * its doc comment), but kept defensive here rather than trusting that
+ * unconditionally, consistent with the rest of this codebase's "never
+ * crash on content" posture. */
 private fun parseHex(hex6: String): Color? = try {
     Color(android.graphics.Color.parseColor("#$hex6"))
 } catch (e: IllegalArgumentException) {
