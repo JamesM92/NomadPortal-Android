@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    Backs the FileProvider declared in AndroidManifest.xml. Attachment
+    files live under Context.getNoBackupFilesDir() (see messaging.py's
+    `_save_attachment` doc comment) — a directory with no dedicated
+    named path type in FileProvider's schema (unlike files-path/
+    cache-path for getFilesDir()/getCacheDir()), so root-path is the
+    correct declaration here, not a gap/oversight. This alone grants
+    nothing: FileProvider only ever exposes a content:// URI for a
+    specific file when AttachmentFileProvider.kt explicitly asks for
+    one, scoped to that single file via a one-off Intent grant — this
+    just declares which directories are *eligible* to have a URI built
+    for them at all.
+-->
+<paths xmlns:android="http://schemas.android.com/apk/res/android">
+    <root-path name="root" path="." />
+</paths>

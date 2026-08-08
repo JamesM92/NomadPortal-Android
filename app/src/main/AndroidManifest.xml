@@ -46,6 +46,30 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
+
+        <!-- Exposes received/sent message attachments (stored under
+             getNoBackupFilesDir()/reticulum/lxmf/attachments — see
+             messaging.py's own doc comment for why they live there,
+             same never-backed-up storage root as everything else this
+             app persists) to the system share sheet / other apps via a
+             content:// URI, without granting broader filesystem access
+             than the specific file being shared — FileProvider itself
+             only ever exposes a URI when AttachmentFileProvider.kt
+             explicitly builds one for a single real file, root-path
+             below is just which directories are eligible to have a URI
+             built for them at all. root-path (not files-path) because
+             getNoBackupFilesDir() has no dedicated named path type in
+             FileProvider's own schema, unlike getFilesDir()/
+             getCacheDir() — see res/xml/file_paths.xml's own comment. -->
+        <provider
+            android:name="androidx.core.content.FileProvider"
+            android:authorities="${applicationId}.fileprovider"
+            android:exported="false"
+            android:grantUriPermissions="true">
+            <meta-data
+                android:name="android.support.FILE_PROVIDER_PATHS"
+                android:resource="@xml/file_paths" />
+        </provider>
     </application>
 
 </manifest>

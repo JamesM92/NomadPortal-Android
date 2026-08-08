@@ -709,12 +709,13 @@ def _conversation_entries() -> list:
         contact = contacts.get(h) if contacts else None
         peer = peers_by_hash.get(h)
         my_sent = [
-            {"id": m["id"], "content": m["content"], "ts": m["sent_at"], "is_sent": True, "state": m["state"]}
+            {"id": m["id"], "content": m["content"], "ts": m["sent_at"], "is_sent": True, "state": m["state"],
+             "attachment": m.get("attachment")}
             for m in sent if m["dest"] == h
         ]
         my_received = [
             {"id": m["id"], "content": m["content"], "ts": m["received_at"], "is_sent": False, "state": None,
-             "read": m.get("read", False)}
+             "read": m.get("read", False), "attachment": m.get("attachment")}
             for m in received if m["source"] == h
         ]
         all_msgs = sorted(my_sent + my_received, key=lambda m: m["ts"])
@@ -787,7 +788,14 @@ def get_messages_json(contact_hash: str) -> str:
     received). Note (see orchestration-design memory): a sent message's
     id can be rewritten by message_store.py after delivery (client UUID
     -> real LXMF hash) — don't rely on it as a stable diffing key across
-    polls for outbound messages."""
+    polls for outbound messages.
+
+    `attachment`, when present (null otherwise): {kind: "file"|"image",
+    filename, mime, size, path}. `path` is an absolute on-device path —
+    messaging.py already wrote the real file there (see its own
+    `_save_attachment` doc comment for why binary content never lives
+    inline in this JSON/messages.json itself); Kotlin reads it directly
+    rather than routing bytes through Chaquopy a second time."""
     import json
     for e in _conversation_entries():
         if e["hash"] == contact_hash:
@@ -1218,7 +1226,14 @@ def announce_now() -> str:
     return json.dumps({"success": success, "message": message})
 
 
-def send_message(dest_hash_hex: str, content: str) -> None:
+def send_message(
+    dest_hash_hex: str,
+    content: str,
+    attachment_filename: str = None,
+    attachment_data: bytes = None,
+    attachment_kind: str = "file",
+    image_format: str = None,
+) -> None:
     """Raises RuntimeError on failure — e.g. no delivery identity
     registered, OR _check_send_allowed() blocked this send because the
     identity's announce is stale and auto-announce is disabled on every
@@ -1233,13 +1248,28 @@ def send_message(dest_hash_hex: str, content: str) -> None:
     not just a state check, so this can occasionally add real latency to
     a send. Accepted trade-off: correctness (the recipient actually
     having a path to reach us back, or a relay having a fresh path to
-    reach *them*) matters more here than shaving this call's latency."""
+    reach *them*) matters more here than shaving this call's latency.
+
+    [attachment_data] is a Java `byte[]` on the Kotlin side — Chaquopy
+    bridges that to a Python `bytes` object automatically, no manual
+    marshalling needed (same as every other Chaquopy call site in this
+    module). None (the default) means "no attachment", matching
+    MessagingService.send_message's own optional-attachment contract —
+    see its doc comment for [attachment_kind]'s "file" vs "image"
+    meaning and why an arbitrary audio file is sent as "file", not
+    LXMF's dedicated (codec-specific) audio field."""
     if _messaging is None:
         raise RuntimeError("Messaging not initialized yet")
     allowed, block_reason = _check_send_allowed()
     if not allowed:
         raise RuntimeError(block_reason)
-    ok, result = _messaging.send_message(dest_hash_hex, content, "", "")
+    ok, result = _messaging.send_message(
+        dest_hash_hex, content, "", "",
+        attachment_filename=attachment_filename,
+        attachment_data=bytes(attachment_data) if attachment_data is not None else None,
+        attachment_kind=attachment_kind,
+        image_format=image_format,
+    )
     if not ok:
         raise RuntimeError(result)
 

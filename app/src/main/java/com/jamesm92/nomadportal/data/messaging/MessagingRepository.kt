@@ -29,7 +29,33 @@ interface MessagingRepository {
      */
     fun conversations(): Flow<List<ConversationSummary>>
     fun messages(contactHash: String): Flow<List<Message>>
-    suspend fun sendMessage(contactHash: String, content: String)
+
+    /**
+     * [attachmentData] is the already-final bytes to send — for an image
+     * that means already downscaled/re-encoded client-side (see
+     * ConversationScreen.kt's `compressImageForSend`, matching Sideband's
+     * own low-bandwidth-link-conscious approach — see the
+     * nomadportal-android-competitor-research memory) before this is
+     * ever called, this layer does no transcoding of its own.
+     * [attachmentKind] governs which LXMF field carries it
+     * (FIELD_IMAGE vs FIELD_FILE_ATTACHMENTS — see
+     * `nomadnet_web.messaging.MessagingService.send_message`'s own doc
+     * comment for exactly why an audio file is [AttachmentKind.FILE],
+     * not a dedicated audio kind). [imageFormat] (e.g. "webp") is only
+     * consulted when [attachmentKind] is [AttachmentKind.IMAGE].
+     *
+     * Throws on failure — including a rejected oversized attachment
+     * (`nomadnet_web.messaging.MAX_ATTACHMENT_BYTES`) — same contract as
+     * every other failure mode here.
+     */
+    suspend fun sendMessage(
+        contactHash: String,
+        content: String,
+        attachmentFilename: String? = null,
+        attachmentData: ByteArray? = null,
+        attachmentKind: AttachmentKind = AttachmentKind.FILE,
+        imageFormat: String? = null,
+    )
     suspend fun markRead(contactHash: String)
     suspend fun setFavorite(contactHash: String, favorite: Boolean)
 

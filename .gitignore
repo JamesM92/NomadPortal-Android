@@ -25,6 +25,10 @@ app/src/main/python/**/__pycache__/
 **/__pycache__/
 *.pyc
 
+## python-core local test venv artifacts (e.g. `pip install -e .`)
+*.egg-info/
+.pytest_cache/
+
 ## Keystores — never commit signing material
 *.jks
 *.keystore

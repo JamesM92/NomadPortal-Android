@@ -55,14 +55,35 @@ class StubMessagingRepository(private val scope: CoroutineScope) : MessagingRepo
     override fun messages(contactHash: String): StateFlow<List<Message>> =
         (messagesByContact[contactHash] ?: MutableStateFlow(emptyList())).asStateFlow()
 
-    override suspend fun sendMessage(contactHash: String, content: String) {
+    override suspend fun sendMessage(
+        contactHash: String,
+        content: String,
+        attachmentFilename: String?,
+        attachmentData: ByteArray?,
+        attachmentKind: AttachmentKind,
+        imageFormat: String?,
+    ) {
         val flow = messagesByContact[contactHash] ?: return
+        // Fake, in-memory only — no real file gets written, unlike
+        // RealMessagingRepository. `path` is deliberately unusable
+        // (blank) rather than a real path, so nothing downstream
+        // mistakes this for real on-disk content.
+        val attachment = attachmentData?.let {
+            Attachment(
+                kind = attachmentKind,
+                filename = attachmentFilename ?: "attachment",
+                mime = if (attachmentKind == AttachmentKind.IMAGE) "image/${imageFormat ?: "png"}" else "application/octet-stream",
+                sizeBytes = it.size.toLong(),
+                path = "",
+            )
+        }
         val message = Message(
             id = "local-${System.nanoTime()}",
             content = content,
             timestampMillis = System.currentTimeMillis(),
             isSent = true,
             deliveryState = DeliveryState.QUEUED,
+            attachment = attachment,
         )
         flow.value = flow.value + message
 

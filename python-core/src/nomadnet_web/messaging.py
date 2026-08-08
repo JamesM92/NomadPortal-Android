@@ -9,6 +9,7 @@ of whether they are currently logged in.
 """
 
 import logging
+import mimetypes
 import os
 import threading
 import time
@@ -17,6 +18,44 @@ from typing import Optional
 log = logging.getLogger(__name__)
 
 PATH_WAIT = 10  # seconds to wait for identity recall after path request
+
+# Real Reticulum links (LoRa in particular) are slow and often
+# congested — an attachment this app will actually try to push through
+# opportunistically/directly rather than a dedicated resource-transfer
+# flow. 10 MiB is generous enough for a typical photo/document while
+# still being an explicit, honest limit rather than letting someone
+# queue something that could take an unreasonable amount of time (or
+# just fail) over a constrained link. Enforced both here (source of
+# truth) and client-side in ConversationScreen.kt (so a user finds out
+# before waiting on a round trip through Chaquopy).
+MAX_ATTACHMENT_BYTES = 10 * 1024 * 1024
+
+
+def _sanitize_attachment_filename(name: str) -> str:
+    """Strip any path component/traversal sequence from a peer- or
+    user-supplied filename before it's ever used to build an on-disk
+    path — same defensive pattern Sideband's own attachment-save code
+    uses (`.replace("../", "").replace("..\\\\", "")`, confirmed
+    directly against its source, sbapp/ui/messages.py's
+    `gen_save_attachment` — note it's specifically "`..` + a separator",
+    not bare `..`, so a legitimate filename that happens to contain a
+    literal `".."` with no separator, e.g. "v1..2.txt", survives
+    untouched), followed by an explicit split on both possible
+    separators to take just the final segment.
+
+    Deliberately NOT `os.path.basename()` for that last step — a real
+    bug caught by this module's own tests: `ntpath.basename()` (what
+    `os.path` resolves to on this project's Windows dev/build machine —
+    see build.gradle.kts's `buildPython`) mishandles a leading `//`
+    (produced by stripping `"../../etc/passwd"` down to `"//etc/passwd"`)
+    as a UNC-path prefix and returns `""` instead of `"passwd"`. The
+    shipped app always runs under Android/POSIX, where `posixpath`
+    doesn't have this quirk — but the algorithm should be correct on its
+    own terms, not merely lucky about which OS happens to run it."""
+    name = (name or "attachment").replace("../", "").replace("..\\", "")
+    for sep in ("/", "\\"):
+        name = name.rsplit(sep, 1)[-1]
+    return name or "attachment"
 
 
 def _channel_to_255(v) -> int:
@@ -108,6 +147,54 @@ class MessagingService:
         # first — see do_announce()'s own doc comment for why the
         # decision of *when* lives up there instead of in here.
         self._last_announce_at: dict = {}
+
+        # Attachment binary content lives on disk as real files, not
+        # inline in messages.json — that file is fully re-serialized on
+        # every single save_sent()/save_received() call (message_store.py),
+        # so embedding even base64'd multi-MB blobs there would mean
+        # rewriting gigabytes of unrelated old attachment data on every
+        # unrelated new message. Kept under this same never-backed-up
+        # storage root (not a second directory) — matches this app's
+        # existing privacy stance that nothing user-facing here should
+        # ever leave the device via a backup side channel, now the
+        # app's explicit committed position (see the
+        # nomadportal-android-product-positioning memory), not just an
+        # identity-material-specific concern.
+        self._attachments_dir = os.path.join(self._storage, "attachments")
+
+    def _save_attachment(
+        self, msg_id: str, filename: str, data: bytes, kind: str,
+        image_format: Optional[str] = None,
+    ) -> dict:
+        """Writes attachment bytes to a real file and returns the small
+        metadata dict stored inline in the message entry
+        (message_store.py) — `path` is an absolute on-device path Kotlin
+        reads directly (BitmapFactory.decodeFile / File.readBytes /
+        FileProvider-wrapped share intent), not routed back through
+        Chaquopy a second time. Raises ValueError if `data` exceeds
+        MAX_ATTACHMENT_BYTES."""
+        if len(data) > MAX_ATTACHMENT_BYTES:
+            raise ValueError(
+                f"Attachment too large ({len(data)} bytes, "
+                f"max {MAX_ATTACHMENT_BYTES})"
+            )
+        os.makedirs(self._attachments_dir, exist_ok=True)
+        safe_name = _sanitize_attachment_filename(filename)
+        on_disk_name = f"{msg_id}_{safe_name}"
+        path = os.path.join(self._attachments_dir, on_disk_name)
+        with open(path, "wb") as fh:
+            fh.write(data)
+        if kind == "image":
+            mime = f"image/{(image_format or 'png').lower()}"
+        else:
+            mime = mimetypes.guess_type(safe_name)[0] or "application/octet-stream"
+        return {
+            "kind": kind,
+            "filename": safe_name,
+            "mime": mime,
+            "size": len(data),
+            "path": path,
+        }
 
     # ------------------------------------------------------------------
     # Setup helpers
@@ -385,12 +472,30 @@ class MessagingService:
         content: str,
         title: str = "",
         user_sub: str = "",
+        attachment_filename: Optional[str] = None,
+        attachment_data: Optional[bytes] = None,
+        attachment_kind: str = "file",
+        image_format: Optional[str] = None,
     ) -> tuple[bool, str]:
+        """[attachment_kind] is "file" (LXMF FIELD_FILE_ATTACHMENTS,
+        0x05 — any attached file, including audio: real audio playback
+        via FIELD_AUDIO requires an exact Opus/Codec2 codec tag real
+        clients decode against, which an arbitrary picked audio file
+        isn't guaranteed to be — see messaging.py module notes/the
+        nomadportal-android-competitor-research memory for the real
+        Sideband-verified field shapes this app deliberately doesn't
+        try to fake) or "image" (LXMF FIELD_IMAGE, 0x06 — [image_format,
+        bytes], already resized/re-encoded client-side before this call;
+        this layer stores it as given, it does not itself transcode)."""
         return self._send(
             dest_hash_hex=dest_hash_hex,
             title=title,
             content=content,
             user_sub=user_sub,
+            attachment_filename=attachment_filename,
+            attachment_data=attachment_data,
+            attachment_kind=attachment_kind,
+            image_format=image_format,
         )
 
     def sent_messages(self) -> list:
@@ -412,10 +517,35 @@ class MessagingService:
         this user — the message-history half of "delete this chat"; the
         contact_store entry (name/icon/favorite) is a separate concern,
         deleted by orchestrator.delete_conversation() alongside this.
-        Returns how many messages were actually removed."""
-        if self._msg_store:
-            return self._msg_store.delete_conversation(hash_hex, owner=user_sub)
-        return 0
+        Returns how many messages were actually removed.
+
+        Also removes any attachment files those messages left on disk —
+        without this, deleting a chat would silently leave orphaned
+        attachment files behind forever (message_store.py's own
+        delete_conversation only touches messages.json, it has no
+        knowledge of the attachments directory, which is this class's
+        concern, not its own)."""
+        if self._msg_store is None:
+            return 0
+        for m in self._msg_store.sent_messages():
+            if m.get("dest") == hash_hex and (not user_sub or m.get("owner") == user_sub):
+                self._delete_attachment_file(m.get("attachment"))
+        for m in self._msg_store.received_messages():
+            if m.get("source") == hash_hex and (not user_sub or m.get("owner") == user_sub):
+                self._delete_attachment_file(m.get("attachment"))
+        return self._msg_store.delete_conversation(hash_hex, owner=user_sub)
+
+    @staticmethod
+    def _delete_attachment_file(attachment: Optional[dict]) -> None:
+        if not attachment:
+            return
+        path = attachment.get("path")
+        if not path:
+            return
+        try:
+            os.remove(path)
+        except OSError:
+            pass  # Already gone, or never existed — not worth failing the delete over.
 
     # ------------------------------------------------------------------
     # Internal
@@ -446,11 +576,14 @@ class MessagingService:
         # since it's the "live" descriptor.
         icon_appearance = None  # (glyph, fg_hex, bg_hex) or None
         icon_image = None       # (b64, mime) or None
+        # Read once, safely (getattr with a default can't raise), so
+        # both this block and the message-attachment extraction below
+        # can rely on it existing even if something inside either try
+        # block fails.
+        fields = getattr(message, "fields", None) or {}
+        appearance = fields.get(0x04)
+        image      = fields.get(0x06)
         try:
-            fields = getattr(message, "fields", None) or {}
-            appearance = fields.get(0x04)
-            image      = fields.get(0x06)
-
             if isinstance(appearance, list) and len(appearance) >= 3:
                 glyph = appearance[0] if isinstance(appearance[0], str) and appearance[0] else "?"
                 icon_appearance = (glyph, _rgba_to_hex(appearance[1]), _rgba_to_hex(appearance[2]))
@@ -466,6 +599,43 @@ class MessagingService:
         except Exception as exc:
             log.debug("Icon extraction skipped: %s", exc)
 
+        # Message-content attachment — a genuinely different concern
+        # from the icon/avatar-fallback extraction above even though
+        # FIELD_IMAGE (0x06) is the same field number: real clients
+        # (Sideband, confirmed directly against its source — see the
+        # nomadportal-android-competitor-research memory) use 0x06 as
+        # an actual per-message photo, not an avatar. Both behaviors are
+        # kept rather than one replacing the other: an inbound image
+        # still updates this contact's avatar-fallback (existing,
+        # unchanged, low risk to touch), and separately — new — is
+        # attached to *this* message so it renders inline in the
+        # conversation. Only the first entry of FIELD_FILE_ATTACHMENTS
+        # is kept (this app only ever sends one attachment per message
+        # itself — see _send()/_deliver() — so there's nothing to
+        # gain from modeling a list here too).
+        attachment_meta = None
+        try:
+            file_attachments = fields.get(0x05)
+            if isinstance(image, list) and len(image) >= 2 and isinstance(image[1], (bytes, bytearray)):
+                ext = (image[0] or "png").lower() if isinstance(image[0], str) else "png"
+                attachment_meta = self._save_attachment(
+                    msg_id, f"image.{ext}", bytes(image[1]), "image", image_format=ext,
+                )
+            elif isinstance(file_attachments, list) and len(file_attachments) > 0:
+                first = file_attachments[0]
+                if isinstance(first, (list, tuple)) and len(first) >= 2 and isinstance(first[1], (bytes, bytearray)):
+                    fname = first[0] if isinstance(first[0], str) and first[0] else "attachment"
+                    attachment_meta = self._save_attachment(msg_id, fname, bytes(first[1]), "file")
+        except ValueError as exc:
+            # Oversized inbound attachment (shouldn't normally happen —
+            # this is a receive-side safety net, not the primary
+            # enforcement point, which is the sender's own size check)
+            # — message content/text still arrives, just without the
+            # attachment rather than dropping the whole message.
+            log.warning("Inbound attachment rejected: %s", exc)
+        except Exception as exc:
+            log.debug("Attachment extraction skipped: %s", exc)
+
         entry = {
             "id":          msg_id,
             "source":      source_hex,
@@ -474,6 +644,7 @@ class MessagingService:
             "received_at": time.time(),
             "read":        False,
             "owner":       user_sub,
+            "attachment":  attachment_meta,
         }
 
         log.info(
@@ -502,6 +673,10 @@ class MessagingService:
         title: str,
         content: str,
         user_sub: str = "",
+        attachment_filename: Optional[str] = None,
+        attachment_data: Optional[bytes] = None,
+        attachment_kind: str = "file",
+        image_format: Optional[str] = None,
     ) -> tuple[bool, str]:
         """Queue a message for background delivery and return immediately."""
         import uuid
@@ -519,6 +694,23 @@ class MessagingService:
             return False, "Invalid destination hash"
 
         msg_id = str(uuid.uuid4())
+
+        # Saved to disk (and its metadata attached to the sent entry)
+        # up front, synchronously, before queueing the async delivery —
+        # so the sender's own chat bubble can render the attachment
+        # immediately rather than waiting on delivery, and so a
+        # too-large attachment fails fast with a real error instead of
+        # queuing a message that can never actually go out.
+        attachment_meta = None
+        if attachment_data is not None:
+            try:
+                attachment_meta = self._save_attachment(
+                    msg_id, attachment_filename or "attachment",
+                    attachment_data, attachment_kind, image_format,
+                )
+            except ValueError as exc:
+                return False, str(exc)
+
         entry = {
             "id":      msg_id,
             "dest":    dest_hash_hex,
@@ -537,6 +729,7 @@ class MessagingService:
             "state":   "queued",
             "sent_at": time.time(),
             "owner":   user_sub,
+            "attachment": attachment_meta,
         }
         if self._msg_store:
             self._msg_store.save_sent(entry)
@@ -598,6 +791,21 @@ class MessagingService:
                             _hex_to_icon_bytes(icon.get("fg", "#ffffff")),
                             _hex_to_icon_bytes(icon.get("bg", "#5ba3c9")),
                         ]
+
+                # Attachment field shapes verified directly against
+                # Sideband's own source (sbapp/sideband/core.py /
+                # sbapp/main.py) — not guessed — see the
+                # nomadportal-android-competitor-research memory:
+                #   FIELD_FILE_ATTACHMENTS (0x05) = [[filename, bytes], ...]
+                #   FIELD_IMAGE (0x06) = [format_str, bytes]  (single, not a list)
+                if attachment_data is not None:
+                    if attachment_kind == "image":
+                        fields[0x06] = [image_format or "png", attachment_data]
+                    else:
+                        fields[0x05] = [[
+                            _sanitize_attachment_filename(attachment_filename or "attachment"),
+                            attachment_data,
+                        ]]
 
                 # Prefer OPPORTUNISTIC (single encrypted packet, no link needed).
                 # LXMessage automatically falls back to DIRECT if the content

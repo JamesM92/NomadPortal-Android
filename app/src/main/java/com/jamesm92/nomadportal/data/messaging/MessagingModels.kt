@@ -60,6 +60,34 @@ sealed interface ContactIcon {
 
 enum class DeliveryState { QUEUED, DELIVERED, FAILED }
 
+enum class AttachmentKind { FILE, IMAGE }
+
+/**
+ * A file/image/audio-file attachment carried by one [Message]. [path] is
+ * an absolute on-device path — `messaging.py` already wrote the real
+ * bytes there (see its own `_save_attachment` doc comment for why binary
+ * content never round-trips through Chaquopy as a JSON/base64 payload),
+ * so rendering (image thumbnail) or sharing (generic file, via
+ * [com.jamesm92.nomadportal.ui.messages.AttachmentFileProvider]) reads
+ * straight from that file.
+ *
+ * Audio files are [AttachmentKind.FILE], not a dedicated audio kind —
+ * LXMF's own `FIELD_AUDIO` requires an exact Opus/Codec2 codec tag real
+ * clients decode against (verified directly against Sideband's source —
+ * see the nomadportal-android-competitor-research memory), which an
+ * arbitrary picked audio file isn't guaranteed to satisfy; sending it as
+ * a generic file attachment is the correct, interoperable choice, not a
+ * shortcut. [mime] still reflects the real audio type either way, so the
+ * UI can offer to open/play it via the system's own audio app.
+ */
+data class Attachment(
+    val kind: AttachmentKind,
+    val filename: String,
+    val mime: String,
+    val sizeBytes: Long,
+    val path: String,
+)
+
 /**
  * A single message. [content] is always the full message text — never a
  * truncated preview (porting-notes.md §6's "store what you display" bug:
@@ -75,6 +103,7 @@ data class Message(
     val isSent: Boolean,
     /** Only meaningful when [isSent] is true — null for received messages. */
     val deliveryState: DeliveryState? = null,
+    val attachment: Attachment? = null,
 )
 
 data class ConversationSummary(

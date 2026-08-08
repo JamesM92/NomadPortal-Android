@@ -1,6 +1,10 @@
 package com.jamesm92.nomadportal.ui.messages
 
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.PickVisualMediaRequest
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
@@ -15,10 +19,16 @@ import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.InsertDriveFile
 import androidx.compose.material.icons.automirrored.filled.Send
+import androidx.compose.material.icons.filled.AttachFile
+import androidx.compose.material.icons.filled.AudioFile
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Edit
+import androidx.compose.material.icons.filled.Image
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -40,15 +50,21 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import com.jamesm92.nomadportal.data.messaging.AttachmentKind
 import com.jamesm92.nomadportal.data.messaging.Contact
+import com.jamesm92.nomadportal.data.messaging.MAX_ATTACHMENT_BYTES
 import com.jamesm92.nomadportal.data.messaging.MessagingRepository
+import com.jamesm92.nomadportal.data.messaging.compressImageForSend
+import com.jamesm92.nomadportal.data.messaging.readAttachmentForSend
 import com.jamesm92.nomadportal.panicwipe.PanicWipe
 import com.jamesm92.nomadportal.ui.components.AdaptiveTopAppBar
 import com.jamesm92.nomadportal.ui.components.ContactAvatar
 import com.jamesm92.nomadportal.ui.components.PanicWipeLogo
 import com.jamesm92.nomadportal.ui.components.dismissKeyboardOnTap
 import com.jamesm92.nomadportal.ui.theme.NomadTextDim
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 /**
  * Message thread for one contact. Two mobile-UX lessons from
@@ -86,6 +102,59 @@ fun ConversationScreen(
     val context = LocalContext.current
     var draft by remember { mutableStateOf("") }
     var sendError by remember { mutableStateOf<String?>(null) }
+    // True while a picked attachment is being read/compressed and sent
+    // — disables the attach button so a second tap can't fire a second
+    // pick mid-send (compressImageForSend/readAttachmentForSend +
+    // sendMessage together can take a moment for a large image).
+    var sendingAttachment by remember { mutableStateOf(false) }
+    var attachMenuExpanded by remember { mutableStateOf(false) }
+
+    fun sendAttachment(kind: AttachmentKind, uri: android.net.Uri?) {
+        if (uri == null) return
+        sendingAttachment = true
+        scope.launch {
+            val picked = withContext(Dispatchers.IO) {
+                if (kind == AttachmentKind.IMAGE) {
+                    compressImageForSend(context, uri)
+                } else {
+                    readAttachmentForSend(context, uri)
+                }
+            }
+            sendingAttachment = false
+            if (picked == null) {
+                sendError = "Couldn't read that file"
+                return@launch
+            }
+            if (picked.bytes.size > MAX_ATTACHMENT_BYTES) {
+                sendError = "That file is too large to send (max ${MAX_ATTACHMENT_BYTES / (1024 * 1024)} MB)"
+                return@launch
+            }
+            try {
+                repository.sendMessage(
+                    contact.lxmfHash,
+                    draft.trim(),
+                    attachmentFilename = picked.filename,
+                    attachmentData = picked.bytes,
+                    attachmentKind = kind,
+                    imageFormat = if (kind == AttachmentKind.IMAGE) "webp" else null,
+                )
+                draft = ""
+                sendError = null
+            } catch (e: Exception) {
+                sendError = e.message ?: "Failed to send attachment"
+            }
+        }
+    }
+
+    val pickImageLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.PickVisualMedia(),
+    ) { uri -> sendAttachment(AttachmentKind.IMAGE, uri) }
+    val pickAudioLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.OpenDocument(),
+    ) { uri -> sendAttachment(AttachmentKind.FILE, uri) }
+    val pickFileLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.OpenDocument(),
+    ) { uri -> sendAttachment(AttachmentKind.FILE, uri) }
 
     // The Contact passed in is a one-shot snapshot from nav time — kept
     // fresh by re-fetching whenever `messages` changes, rather than an
@@ -275,6 +344,52 @@ fun ConversationScreen(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
             ) {
+                // Attach: a small menu rather than a single button, per
+                // explicit direction ("add files, images, or audio files
+                // for transfer") — three distinct pickers, each filtered
+                // to the right content so the system picker itself does
+                // the narrowing rather than a generic "any file" dialog
+                // for all three. Disabled mid-send so a second tap can't
+                // fire a second pick while one's already being read/sent.
+                Box {
+                    IconButton(
+                        onClick = { attachMenuExpanded = true },
+                        enabled = !sendingAttachment,
+                    ) {
+                        Icon(Icons.Filled.AttachFile, contentDescription = "Attach")
+                    }
+                    DropdownMenu(
+                        expanded = attachMenuExpanded,
+                        onDismissRequest = { attachMenuExpanded = false },
+                    ) {
+                        DropdownMenuItem(
+                            text = { Text("Photo") },
+                            leadingIcon = { Icon(Icons.Filled.Image, contentDescription = null) },
+                            onClick = {
+                                attachMenuExpanded = false
+                                pickImageLauncher.launch(
+                                    PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly),
+                                )
+                            },
+                        )
+                        DropdownMenuItem(
+                            text = { Text("Audio file") },
+                            leadingIcon = { Icon(Icons.Filled.AudioFile, contentDescription = null) },
+                            onClick = {
+                                attachMenuExpanded = false
+                                pickAudioLauncher.launch(arrayOf("audio/*"))
+                            },
+                        )
+                        DropdownMenuItem(
+                            text = { Text("File") },
+                            leadingIcon = { Icon(Icons.AutoMirrored.Filled.InsertDriveFile, contentDescription = null) },
+                            onClick = {
+                                attachMenuExpanded = false
+                                pickFileLauncher.launch(arrayOf("*/*"))
+                            },
+                        )
+                    }
+                }
                 OutlinedTextField(
                     value = draft,
                     onValueChange = { draft = it },

@@ -52,10 +52,25 @@ class RealMessagingRepository : MessagingRepository {
         }
     }.flowOn(Dispatchers.IO)
 
-    override suspend fun sendMessage(contactHash: String, content: String) {
+    override suspend fun sendMessage(
+        contactHash: String,
+        content: String,
+        attachmentFilename: String?,
+        attachmentData: ByteArray?,
+        attachmentKind: AttachmentKind,
+        imageFormat: String?,
+    ) {
         withContext(Dispatchers.IO) {
             try {
-                orchestrator.callAttr("send_message", contactHash, content)
+                orchestrator.callAttr(
+                    "send_message",
+                    contactHash,
+                    content,
+                    attachmentFilename,
+                    attachmentData,
+                    if (attachmentKind == AttachmentKind.IMAGE) "image" else "file",
+                    imageFormat,
+                )
             } catch (e: PyException) {
                 throw IOException(e.message, e)
             }
@@ -261,8 +276,17 @@ class RealMessagingRepository : MessagingRepository {
                 "failed" -> DeliveryState.FAILED
                 else -> null
             },
+            attachment = obj.optJSONObject("attachment")?.let(::parseAttachment),
         )
     }
+
+    private fun parseAttachment(obj: JSONObject): Attachment = Attachment(
+        kind = if (obj.optString("kind") == "image") AttachmentKind.IMAGE else AttachmentKind.FILE,
+        filename = obj.optString("filename", "attachment"),
+        mime = obj.optString("mime", "application/octet-stream"),
+        sizeBytes = obj.optLong("size", 0L),
+        path = obj.getString("path"),
+    )
 
     private companion object {
         const val POLL_INTERVAL_MS = 4000L
