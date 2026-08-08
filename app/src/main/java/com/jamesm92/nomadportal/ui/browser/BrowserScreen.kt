@@ -476,18 +476,16 @@ fun BrowserScreen(
                     Box(
                         modifier = Modifier.fillMaxSize().horizontalScroll(horizontalScrollState),
                     ) {
-                        // MicronBlock (micron2compose) only sets an
-                        // explicit fontSize for HEADING blocks
-                        // (headingFontSize(level)) — body-level blocks
-                        // pass TextUnit.Unspecified and fall back to the
-                        // ambient LocalTextStyle, so this is how body
-                        // text size is controlled here (headings aren't
-                        // affected, they keep their own explicit size
-                        // regardless — see the micron2compose heading
-                        // font-size issue already reported upstream).
-                        // Scaled off the theme's own bodyLarge size so it
-                        // still tracks the user's Settings → text size
-                        // multiplier.
+                        // MicronBlock (micron2compose) never sets an
+                        // explicit fontSize at all, headings included —
+                        // real Micron has no font-size concept (a
+                        // terminal markup), so every block just inherits
+                        // this ambient LocalTextStyle uniformly, headings
+                        // distinguished only by their own fg/bg color
+                        // band. This is how body (and heading) text size
+                        // is controlled here. Scaled off the theme's own
+                        // bodyLarge size so it still tracks the user's
+                        // Settings → text size multiplier.
                         CompositionLocalProvider(
                             LocalTextStyle provides MaterialTheme.typography.bodyLarge.copy(fontSize = bodyFontSize),
                         ) {
