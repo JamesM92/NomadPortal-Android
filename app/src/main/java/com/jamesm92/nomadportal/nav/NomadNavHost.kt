@@ -15,6 +15,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.produceState
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Modifier
 import androidx.navigation.NavGraph.Companion.findStartDestination
@@ -42,7 +43,9 @@ import com.jamesm92.nomadportal.ui.hosting.SiteFilesScreen
 import com.jamesm92.nomadportal.ui.hosting.SitePageEditorScreen
 import com.jamesm92.nomadportal.ui.messages.ConversationListScreen
 import com.jamesm92.nomadportal.ui.messages.ConversationScreen
+import com.jamesm92.nomadportal.ui.onboarding.OnboardingScreen
 import com.jamesm92.nomadportal.ui.settings.SettingsScreen
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 
 // The app's 4 real top-level destinations, shown as bottom-nav tabs —
@@ -69,6 +72,11 @@ private object Routes {
     // otherwise parse as extra route segments.
     const val SITE_PAGE_EDITOR = "site_editor/{encodedPath}"
     fun sitePageEditor(path: String) = "site_editor/${Uri.encode(path)}"
+    // Deliberately absent from TOP_LEVEL_ROUTES -- renders without the
+    // bottom nav bar, same as SITE_FILES/CONVERSATION. See NomadNavHost's
+    // own start-destination gating for why this isn't just "the first
+    // screen in the graph."
+    const val ONBOARDING = "onboarding"
 }
 
 @Composable
@@ -99,6 +107,17 @@ fun NomadNavHost(
 
     val currentRoute = navController.currentBackStackEntryAsState().value?.destination?.route
 
+    // Resolved once (a single suspend `first()` read, not a continuous
+    // collection) purely to pick NavHost's startDestination -- matches
+    // NavHost's own "fixed at first composition" nature, so there's no
+    // need to keep observing this after the initial decision. Nullable
+    // and gated below so a returning user's app never flashes onboarding
+    // for a frame before the real persisted value resolves.
+    val hasCompletedOnboarding by produceState<Boolean?>(initialValue = null) {
+        value = settingsRepository.hasCompletedOnboarding.first()
+    }
+    if (hasCompletedOnboarding == null) return
+
     Box(modifier = Modifier.fillMaxSize()) {
     Scaffold(
         bottomBar = {
@@ -114,9 +133,21 @@ fun NomadNavHost(
     ) { innerPadding ->
     NavHost(
         navController = navController,
-        startDestination = Routes.HOME,
+        startDestination = if (hasCompletedOnboarding == true) Routes.HOME else Routes.ONBOARDING,
         modifier = Modifier.padding(innerPadding),
     ) {
+        composable(Routes.ONBOARDING) {
+            OnboardingScreen(
+                messagingRepository = messagingRepository,
+                interfaceController = interfaceController,
+                onComplete = {
+                    scope.launch { settingsRepository.setOnboardingComplete(true) }
+                    navController.navigate(Routes.HOME) {
+                        popUpTo(Routes.ONBOARDING) { inclusive = true }
+                    }
+                },
+            )
+        }
         composable(Routes.HOME) {
             HomeScreen(
                 messagingRepository = messagingRepository,

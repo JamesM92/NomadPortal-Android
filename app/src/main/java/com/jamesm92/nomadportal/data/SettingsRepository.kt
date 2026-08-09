@@ -38,6 +38,10 @@ class SettingsRepository(context: Context) {
     val wifiDiscoveryEnabled: Flow<Boolean> = boolFlow(KEY_WIFI_DISCOVERY, default = false)
     val nodeHostingEnabled: Flow<Boolean> = boolFlow(KEY_NODE_HOSTING, default = false)
 
+    // Gates the first-run OnboardingScreen (NomadNavHost.kt) -- false
+    // until the user actually reaches/skips the end of that flow once.
+    val hasCompletedOnboarding: Flow<Boolean> = boolFlow(KEY_ONBOARDING_COMPLETE, default = false)
+
     // User-adjustable app-wide text scale, applied by NomadPortalTheme to
     // NomadTypography (see Theme.kt) — a multiplier, not an absolute size,
     // so it scales consistently with whatever base sizes the theme
@@ -54,6 +58,7 @@ class SettingsRepository(context: Context) {
     suspend fun setRNodeEnabled(enabled: Boolean) = setBool(KEY_RNODE, enabled)
     suspend fun setWifiDiscoveryEnabled(enabled: Boolean) = setBool(KEY_WIFI_DISCOVERY, enabled)
     suspend fun setNodeHostingEnabled(enabled: Boolean) = setBool(KEY_NODE_HOSTING, enabled)
+    suspend fun setOnboardingComplete(completed: Boolean) = setBool(KEY_ONBOARDING_COMPLETE, completed)
 
     suspend fun setTextScale(scale: Float) {
         dataStore.edit { it[KEY_TEXT_SCALE] = scale.coerceIn(MIN_TEXT_SCALE, MAX_TEXT_SCALE) }
@@ -77,5 +82,6 @@ class SettingsRepository(context: Context) {
         private val KEY_WIFI_DISCOVERY = booleanPreferencesKey("wifi_discovery_enabled")
         private val KEY_NODE_HOSTING = booleanPreferencesKey("node_hosting_enabled")
         private val KEY_TEXT_SCALE = floatPreferencesKey("text_scale")
+        private val KEY_ONBOARDING_COMPLETE = booleanPreferencesKey("onboarding_complete")
     }
 }
