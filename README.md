@@ -26,9 +26,7 @@ editor functionality yet — those are blocked on `micron2compose` (a
 separate sibling project) and the RNS/LXMF core extraction from
 `nomadportal`. See
 [`nomadportal_android_handoff.md`](nomadportal_android_handoff.md) for the
-full architecture and build sequencing, and
-[`porting-notes.md`](porting-notes.md) for the protocol-level lessons this
-project inherits from the web version.
+full architecture and build sequencing.
 
 ## Architecture
 
