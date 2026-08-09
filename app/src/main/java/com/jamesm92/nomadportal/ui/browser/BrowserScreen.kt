@@ -2,6 +2,8 @@ package com.jamesm92.nomadportal.ui.browser
 
 import android.content.res.Configuration
 import androidx.compose.foundation.background
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.verticalScroll
@@ -52,6 +54,10 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.input.pointer.PointerEventPass
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.input.pointer.positionChange
+import androidx.compose.ui.input.pointer.positionChanged
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
@@ -474,7 +480,84 @@ fun BrowserScreen(
                     }
 
                     Box(
-                        modifier = Modifier.fillMaxSize().horizontalScroll(horizontalScrollState),
+                        modifier = Modifier
+                            .fillMaxSize()
+                            // enabled = false: horizontalScrollState still
+                            // backs this modifier's layout offset, but its
+                            // own gesture detection is off — driven
+                            // manually below instead, see that pointerInput's
+                            // doc comment for why.
+                            .horizontalScroll(horizontalScrollState, enabled = false)
+                            .pointerInput(horizontalScrollState, listState) {
+                                // Real Micron pages are routinely both
+                                // wider AND taller than the viewport
+                                // (box-drawing art, wide tables) — the two
+                                // scroll axes here are two separate
+                                // scrollable() detectors at different
+                                // composable depths (this outer
+                                // horizontalScrollState vs. MicronPage's
+                                // own internal LazyColumn), and Compose's
+                                // per-orientation touch-slop locking means
+                                // whichever axis's detector wins the
+                                // initial slop race consumes the whole
+                                // drag gesture, leaving the other axis
+                                // dead for that entire continuous drag —
+                                // a real on-device report ("can't swipe
+                                // diagonally... only vertically or
+                                // horizontally at a time"). Intercepting
+                                // at PointerEventPass.Initial (before
+                                // MicronPage's LazyColumn gets a chance to
+                                // see the event at all) and driving both
+                                // ScrollStates directly via
+                                // dispatchRawDelta — the non-suspend API
+                                // meant for exactly this "a custom drag
+                                // detector programmatically drives scroll
+                                // state" case, no coroutine-launch-per-
+                                // pointer-move-event race — replaces that
+                                // per-axis lock with genuine simultaneous
+                                // 2-axis panning.
+                                //
+                                // Consumption only starts once movement
+                                // clears real touch slop (below, mirrors
+                                // how Compose's own scrollable() gesture
+                                // detector distinguishes a drag from a
+                                // tap) — a plain link tap under this Box
+                                // routinely carries a pixel or two of
+                                // sensor jitter, and consuming from the
+                                // very first sub-slop movement would eat
+                                // that tap before MicronPage's own link
+                                // tap-detector (Main pass) ever saw a
+                                // complete down+up sequence.
+                                awaitEachGesture {
+                                    val down = awaitFirstDown(pass = PointerEventPass.Initial)
+                                    val pointerId = down.id
+                                    val slop = viewConfiguration.touchSlop
+                                    var dragging = false
+                                    var accumX = 0f
+                                    var accumY = 0f
+                                    while (true) {
+                                        val event = awaitPointerEvent(pass = PointerEventPass.Initial)
+                                        val change = event.changes.firstOrNull { it.id == pointerId } ?: break
+                                        if (!change.pressed) break
+                                        if (!change.positionChanged()) continue
+                                        val delta = change.positionChange()
+                                        if (dragging) {
+                                            change.consume()
+                                            horizontalScrollState.dispatchRawDelta(-delta.x)
+                                            listState.dispatchRawDelta(-delta.y)
+                                        } else {
+                                            accumX += delta.x
+                                            accumY += delta.y
+                                            if (kotlin.math.abs(accumX) > slop || kotlin.math.abs(accumY) > slop) {
+                                                dragging = true
+                                                change.consume()
+                                                horizontalScrollState.dispatchRawDelta(-accumX)
+                                                listState.dispatchRawDelta(-accumY)
+                                            }
+                                        }
+                                    }
+                                }
+                            },
                     ) {
                         // MicronBlock (micron2compose) never sets an
                         // explicit fontSize at all, headings included —
