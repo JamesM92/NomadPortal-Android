@@ -450,7 +450,13 @@ fun BrowserScreen(
                     val textMeasurer = rememberTextMeasurer()
                     val listState = rememberLazyListState()
                     val horizontalScrollState = rememberScrollState()
-                    val bodyFontSize = MaterialTheme.typography.bodyMedium.fontSize
+                    // ~15% smaller than bodyMedium itself -- per explicit
+                    // on-device feedback that rendered Micron page text
+                    // ran a bit large. Still derived from a real type-
+                    // scale role (not a freehand value), and still goes
+                    // through the same `* scale` accessibility multiplier
+                    // bodyMedium itself carries.
+                    val bodyFontSize = MaterialTheme.typography.bodyMedium.fontSize * 0.85f
                     val contentWidth = remember(result, bodyFontSize) {
                         var maxWidthPx = 0
                         for (block in result!!.blocks) {
