@@ -20,7 +20,6 @@ import androidx.compose.ui.unit.dp
 import com.jamesm92.nomadportal.data.messaging.Contact
 import com.jamesm92.nomadportal.data.messaging.ContactIcon
 import com.jamesm92.nomadportal.data.messaging.materialIconFor
-import com.jamesm92.nomadportal.ui.theme.NomadBg3
 
 /**
  * Renders a [Contact]'s appearance (porting-notes.md §4: LXMF's `0x04`
@@ -30,9 +29,13 @@ import com.jamesm92.nomadportal.ui.theme.NomadBg3
  *   initial letter — never a blank circle.
  * - [ContactIcon.RawImage]: decoded via Android's built-in
  *   [BitmapFactory] (covers PNG/JPEG/GIF/WEBP — no new dependency; an SVG
- *   payload, which BitmapFactory can't decode, falls back to initials
- *   like a decode failure of any other kind).
- * - [ContactIcon.None]: initials on a neutral background.
+ *   payload, which BitmapFactory can't decode, falls back to the same
+ *   [Identicon] treatment as a decode failure of any other kind).
+ * - [ContactIcon.None]: a deterministic [Identicon] generated from
+ *   [Contact.lxmfHash] — real per-contact distinctiveness for a contact
+ *   that hasn't sent an icon, replacing the old same-grey-circle-for-
+ *   everyone behavior (Columba-style, ported directly from its own real
+ *   source — see [Identicon]'s own doc comment).
  */
 @Composable
 fun ContactAvatar(contact: Contact, modifier: Modifier = Modifier) {
@@ -80,28 +83,15 @@ fun ContactAvatar(contact: Contact, modifier: Modifier = Modifier) {
                 )
             } else {
                 // Decode failure (e.g. an SVG payload — BitmapFactory
-                // only handles raster formats) falls back to initials
-                // rather than rendering nothing.
-                InitialsAvatar(contact, modifier)
+                // only handles raster formats) falls back to the same
+                // Identicon treatment as ContactIcon.None below, rather
+                // than rendering nothing.
+                Identicon(hash = remember(contact.lxmfHash) { contact.lxmfHash.hexToByteArray() }, size = 40.dp, modifier = modifier)
             }
         }
 
-        ContactIcon.None -> InitialsAvatar(contact, modifier)
-    }
-}
-
-@Composable
-private fun InitialsAvatar(contact: Contact, modifier: Modifier = Modifier) {
-    Box(
-        modifier = modifier
-            .size(40.dp)
-            .clip(CircleShape)
-            .background(NomadBg3),
-        contentAlignment = Alignment.Center,
-    ) {
-        Text(
-            text = contact.displayName.take(1).uppercase(),
-            style = MaterialTheme.typography.titleLarge,
-        )
+        ContactIcon.None -> {
+            Identicon(hash = remember(contact.lxmfHash) { contact.lxmfHash.hexToByteArray() }, size = 40.dp, modifier = modifier)
+        }
     }
 }
