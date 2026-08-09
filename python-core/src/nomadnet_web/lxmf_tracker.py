@@ -105,26 +105,49 @@ class LXMFPeerTracker:
     # Internal
     # ------------------------------------------------------------------
 
+    @staticmethod
+    def decode_display_name(app_data: Optional[bytes]) -> str:
+        """LXMF delivery announces encode app_data as msgpack
+        `[display_name_bytes, stamp_cost]`; older clients may just send
+        a bare UTF-8 name string instead. Returns "" (never raises) if
+        [app_data] is empty or doesn't parse as either shape.
+
+        Not just this class's own `record()` — also used by
+        orchestrator.py's `_conversation_entries()` as a fallback name
+        source (`RNS.Identity.recall_app_data()`), for peers whose
+        announce this device's own tracker never directly saw (e.g. one
+        that only ever reached us via a relay/propagation node, no
+        direct announce). RNS itself caches the app_data from *any*
+        announce it processes at the transport level regardless of
+        whether a handler was registered for it — a strictly larger set
+        of "known names" than this tracker's own announce-handler-only
+        record, confirmed as the real cause of a contact's name
+        reverting to their hash after a successful message exchange
+        (they messaged us via a path that never surfaced their own
+        announce to our handler)."""
+        if not app_data:
+            return ""
+        try:
+            import RNS.vendor.umsgpack as msgpack
+            unpacked = msgpack.unpackb(app_data)
+            # LXMF delivery format: [display_name_bytes, stamp_cost]
+            if isinstance(unpacked, list) and unpacked:
+                raw = unpacked[0]
+                if isinstance(raw, bytes):
+                    return raw.decode("utf-8", errors="replace").strip()
+                elif isinstance(raw, str):
+                    return raw.strip()
+        except Exception:
+            pass
+        # Fallback: plain UTF-8 string (older clients)
+        try:
+            return app_data.decode("utf-8", errors="replace").strip()
+        except Exception:
+            return ""
+
     def record(self, destination_hash: bytes, app_data: Optional[bytes]) -> None:
         hash_hex = destination_hash.hex()
-        name = ""
-        if app_data:
-            try:
-                import RNS.vendor.umsgpack as msgpack
-                unpacked = msgpack.unpackb(app_data)
-                # LXMF delivery format: [display_name_bytes, stamp_cost]
-                if isinstance(unpacked, list) and unpacked:
-                    raw = unpacked[0]
-                    if isinstance(raw, bytes):
-                        name = raw.decode("utf-8", errors="replace").strip()
-                    elif isinstance(raw, str):
-                        name = raw.strip()
-            except Exception:
-                # Fallback: plain UTF-8 string (older clients)
-                try:
-                    name = app_data.decode("utf-8", errors="replace").strip()
-                except Exception:
-                    pass
+        name = self.decode_display_name(app_data)
 
         now = time.time()
         with self._lock:

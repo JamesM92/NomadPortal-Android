@@ -1151,6 +1151,28 @@ def set_node_favorite(hash_hex: str, value: bool) -> bool:
 # itself to keep that file a clean, UI-agnostic port.
 # ---------------------------------------------------------------------------
 
+def _recall_announced_name(hash_hex: str) -> str:
+    """Fallback name source for _conversation_entries(), tried between
+    the live LXMF peer tracker and a stored contact name — see
+    LXMFPeerTracker.decode_display_name's own doc comment for the real
+    bug this fixes: this device's own tracker only knows a peer's name
+    if *this process* directly received their announce via its
+    registered handler, which a contact reached purely through relay/
+    propagation (e.g. their very first message to us) never triggers.
+    RNS.Identity.recall_app_data() reflects any announce RNS's own
+    transport layer has processed for this hash at all, handler or not
+    — confirmed directly against RNS 1.3.9 source, a real fix, not a
+    guess. Never raises — a failed lookup here should just mean "no
+    fallback name available," not break the whole conversations list."""
+    try:
+        import RNS
+        from nomadnet_web.lxmf_tracker import LXMFPeerTracker
+        app_data = RNS.Identity.recall_app_data(bytes.fromhex(hash_hex))
+        return LXMFPeerTracker.decode_display_name(app_data)
+    except Exception:
+        return ""
+
+
 def _conversation_entries() -> list:
     """Every hash worth showing on the Messages screen: anyone this user
     has ever exchanged a message with, has a saved contact for, or has
@@ -1177,7 +1199,18 @@ def _conversation_entries() -> list:
     chain used to do (a real reported bug once already, for the
     favoriting path specifically — see set_contact_favorite()'s own doc
     comment for that history; this generalizes the same fix to every
-    entry-creation path, not just that one)."""
+    entry-creation path, not just that one).
+
+    Full chain, in order: this device's own live LXMF peer tracker
+    (announces it directly received) → `RNS.Identity.recall_app_data()`
+    (announces RNS's transport layer processed at all, a strictly
+    larger set — see `_recall_announced_name`'s own doc comment for the
+    real bug this second tier fixes: a contact whose first-ever contact
+    with us was a message routed through relay/propagation, with no
+    announce our own handler ever directly saw, previously fell straight
+    through to their hash) → the stored contact name (itself either a
+    real name captured earlier, or the hash-prefix placeholder described
+    above) → the hash prefix, as an absolute last resort."""
     if _messaging is None:
         return []
     sent = _messaging.sent_messages()
@@ -1215,7 +1248,12 @@ def _conversation_entries() -> list:
         if contact and contact.get("custom_name"):
             name = contact["name"]
         else:
-            name = (peer.get("name") if peer else None) or (contact["name"] if contact else None) or h[:16]
+            name = (
+                (peer.get("name") if peer else None)
+                or _recall_announced_name(h)
+                or (contact["name"] if contact else None)
+                or h[:16]
+            )
         entries.append({
             "hash": h,
             "name": name,
