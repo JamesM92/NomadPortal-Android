@@ -13,7 +13,6 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.ExpandLess
 import androidx.compose.material.icons.filled.ExpandMore
@@ -41,11 +40,9 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.jamesm92.nomadportal.data.browsing.BrowserRepository
 import com.jamesm92.nomadportal.data.browsing.NodeInfo
-import com.jamesm92.nomadportal.data.messaging.MessagingRepository
 import com.jamesm92.nomadportal.panicwipe.PanicWipe
 import com.jamesm92.nomadportal.ui.components.AddByAddressDialog
 import com.jamesm92.nomadportal.ui.components.AdaptiveTopAppBar
-import com.jamesm92.nomadportal.ui.components.MessagesIconWithBadge
 import com.jamesm92.nomadportal.ui.components.PanicWipeLogo
 import com.jamesm92.nomadportal.ui.components.SearchField
 import com.jamesm92.nomadportal.ui.components.SortDropdown
@@ -82,16 +79,9 @@ import kotlinx.coroutines.launch
 @Composable
 fun NodeListScreen(
     repository: BrowserRepository,
-    messagingRepository: MessagingRepository,
     onOpenNode: (nodeHash: String) -> Unit,
-    onBack: () -> Unit,
-    onOpenMessages: () -> Unit,
 ) {
     val nodes by repository.discoveredNodes().collectAsState(initial = emptyList())
-    // Powers the Messages cross-nav icon's unread badge — same source
-    // ConversationListScreen itself reads, just summed here.
-    val conversations by messagingRepository.conversations().collectAsState(initial = emptyList())
-    val totalUnread = conversations.sumOf { it.unreadCount }
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
     var searchQuery by remember { mutableStateOf("") }
@@ -181,22 +171,13 @@ fun NodeListScreen(
         topBar = {
             AdaptiveTopAppBar(
                 title = { Text("Nodes") },
-                navigationIcon = {
-                    IconButton(onClick = onBack) {
-                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
-                    }
-                },
+                // No back arrow, no cross-nav icons — Nodes is now a
+                // real bottom-nav tab (NomadNavHost.kt), same as Home/
+                // Messages/Settings; switching tabs is the way back.
+                // BrowserScreen (one specific node's page) still has its
+                // own back arrow, unaffected — it's a pushed detail
+                // screen, not a top-level tab.
                 actions = {
-                    // Cross-nav to the other list screen — per explicit
-                    // request, present here (a list/hub screen) but
-                    // deliberately NOT on BrowserScreen (viewing one
-                    // specific node's page): that screen already has its
-                    // own back arrow to return here, and its address bar
-                    // row is busy enough without more icons crowding it.
-                    // Settings is deliberately NOT here either — per
-                    // explicit request, only reachable from the main
-                    // menu (Home).
-                    MessagesIconWithBadge(unreadCount = totalUnread, onClick = onOpenMessages)
                     PanicWipeLogo(
                         modifier = Modifier.padding(end = 8.dp),
                         onTripleTap = {

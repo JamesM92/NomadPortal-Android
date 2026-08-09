@@ -29,10 +29,6 @@ import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.ExpandLess
 import androidx.compose.material.icons.filled.ExpandMore
-import androidx.compose.material.icons.filled.Explore
-import androidx.compose.material.icons.filled.Settings
-import androidx.compose.material3.Badge
-import androidx.compose.material3.BadgedBox
 import androidx.compose.material3.Button
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
@@ -75,7 +71,6 @@ import com.jamesm92.nomadportal.data.messaging.materialIconFor
 import com.jamesm92.nomadportal.panicwipe.PanicWipe
 import com.jamesm92.nomadportal.ui.components.AdaptiveTopAppBar
 import com.jamesm92.nomadportal.ui.components.AppLogo
-import com.jamesm92.nomadportal.ui.components.MessagesIconWithBadge
 import com.jamesm92.nomadportal.ui.components.MicronColorPicker
 import com.jamesm92.nomadportal.ui.components.MinutesField
 import com.jamesm92.nomadportal.ui.components.SearchField
@@ -84,7 +79,6 @@ import com.jamesm92.nomadportal.ui.theme.NomadAccent2
 import com.jamesm92.nomadportal.ui.theme.NomadBg3
 import com.jamesm92.nomadportal.ui.theme.NomadError
 import com.jamesm92.nomadportal.ui.theme.NomadTextDim
-import com.jamesm92.nomadportal.ui.theme.NomadWarn
 import kotlinx.coroutines.launch
 
 /**
@@ -110,19 +104,13 @@ import kotlinx.coroutines.launch
 fun HomeScreen(
     messagingRepository: MessagingRepository,
     interfaceController: InterfaceController,
-    onOpenSettings: () -> Unit,
-    onOpenMessages: () -> Unit,
-    onOpenNodes: () -> Unit,
     onManageHostedPages: () -> Unit,
 ) {
     val context = LocalContext.current
     val focusManager = LocalFocusManager.current
     val scope = rememberCoroutineScope()
     val announceStatus by messagingRepository.announceStatus().collectAsState(initial = null)
-    val conversations by messagingRepository.conversations().collectAsState(initial = emptyList())
-    val totalUnread = conversations.sumOf { it.unreadCount }
     val hostedNodeStatus by interfaceController.hostedNodeStatus().collectAsState(initial = null)
-    val hasDownTcpConnection by interfaceController.hasDownTcpConnection().collectAsState(initial = false)
 
     Scaffold(
         topBar = {
@@ -135,13 +123,11 @@ fun HomeScreen(
                         }
                     })
                 },
-                actions = {
-                    IconButton(onClick = onOpenNodes) {
-                        Icon(Icons.Filled.Explore, contentDescription = "Browse nodes")
-                    }
-                    MessagesIconWithBadge(unreadCount = totalUnread, onClick = onOpenMessages)
-                    SettingsIconWithBadge(hasWarning = hasDownTcpConnection, onClick = onOpenSettings)
-                },
+                // Cross-nav to Nodes/Messages/Settings used to live here as
+                // 3 IconButtons — replaced by the app-wide bottom
+                // NavigationBar (NomadNavHost.kt), which also fixed a real
+                // gap this shape had: Settings was previously only
+                // reachable via Home, never directly from Messages/Nodes.
             )
         },
     ) { innerPadding ->
@@ -204,30 +190,6 @@ fun HomeScreen(
                     onManagePages = onManageHostedPages,
                 )
             }
-        }
-    }
-}
-
-/** The Settings top-bar icon, with a plain warning-colored dot (no
- * count — this is a yes/no flag, not something to tally) when
- * [hasWarning] — currently only driven by
- * [InterfaceController.hasDownTcpConnection], but kept as a generic
- * "something in Settings needs attention" signal rather than a TCP-
- * specific one, so a future second reason to flag Settings doesn't
- * need its own separate badge. Single-use (Home only) — not promoted
- * to `ui/components` alongside [MessagesIconWithBadge], which earned
- * that promotion by actually appearing on two different screens. */
-@Composable
-private fun SettingsIconWithBadge(hasWarning: Boolean, onClick: () -> Unit) {
-    IconButton(onClick = onClick) {
-        BadgedBox(
-            badge = {
-                if (hasWarning) {
-                    Badge(containerColor = NomadWarn)
-                }
-            },
-        ) {
-            Icon(Icons.Filled.Settings, contentDescription = "Settings")
         }
     }
 }

@@ -20,7 +20,6 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.CallMade
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Call
@@ -30,7 +29,6 @@ import androidx.compose.material.icons.filled.Campaign
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.ExpandLess
 import androidx.compose.material.icons.filled.ExpandMore
-import androidx.compose.material.icons.filled.Explore
 import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.filled.FavoriteBorder
 import androidx.compose.material3.AlertDialog
@@ -113,8 +111,6 @@ fun ConversationListScreen(
     repository: MessagingRepository,
     callRepository: CallRepository,
     onOpenConversation: (contactHash: String) -> Unit,
-    onBack: () -> Unit,
-    onOpenNodes: () -> Unit,
 ) {
     val conversations by repository.conversations().collectAsState(initial = emptyList())
     val scope = rememberCoroutineScope()
@@ -256,20 +252,11 @@ fun ConversationListScreen(
             Column {
                 AdaptiveTopAppBar(
                     title = { Text("Messages") },
-                    navigationIcon = {
-                        IconButton(onClick = onBack) {
-                            Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
-                        }
-                    },
+                    // No back arrow, no cross-nav icons — Messages is now
+                    // a real bottom-nav tab (NomadNavHost.kt), same as
+                    // Home/Nodes/Settings; switching tabs is the way back,
+                    // not a navigationIcon on a top-level screen.
                     actions = {
-                        // See NodeListScreen's identical comment: cross-nav
-                        // to the other list screen, present here but not
-                        // on an individual ConversationScreen. Settings is
-                        // deliberately NOT here — per explicit request,
-                        // only reachable from the main menu (Home).
-                        IconButton(onClick = onOpenNodes) {
-                            Icon(Icons.Filled.Explore, contentDescription = "Nodes")
-                        }
                         PanicWipeLogo(
                             modifier = Modifier.padding(end = 8.dp),
                             onTripleTap = {

@@ -3,14 +3,25 @@ package com.jamesm92.nomadportal.nav
 import android.net.Uri
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.padding
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Explore
+import androidx.compose.material.icons.filled.Home
+import androidx.compose.material3.Icon
+import androidx.compose.material3.NavigationBar
+import androidx.compose.material3.NavigationBarItem
+import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Modifier
+import androidx.navigation.NavGraph.Companion.findStartDestination
 import androidx.navigation.NavHostController
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
+import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import com.jamesm92.nomadportal.connectivity.InterfaceController
 import com.jamesm92.nomadportal.connectivity.TcpConnectionsRepository
@@ -24,6 +35,8 @@ import com.jamesm92.nomadportal.data.messaging.MessagingRepository
 import com.jamesm92.nomadportal.ui.browser.BrowserScreen
 import com.jamesm92.nomadportal.ui.browser.NodeListScreen
 import com.jamesm92.nomadportal.ui.calling.CallOverlay
+import com.jamesm92.nomadportal.ui.components.MessagesIconWithBadge
+import com.jamesm92.nomadportal.ui.components.SettingsIconWithBadge
 import com.jamesm92.nomadportal.ui.home.HomeScreen
 import com.jamesm92.nomadportal.ui.hosting.SiteFilesScreen
 import com.jamesm92.nomadportal.ui.hosting.SitePageEditorScreen
@@ -31,6 +44,15 @@ import com.jamesm92.nomadportal.ui.messages.ConversationListScreen
 import com.jamesm92.nomadportal.ui.messages.ConversationScreen
 import com.jamesm92.nomadportal.ui.settings.SettingsScreen
 import kotlinx.coroutines.launch
+
+// The app's 4 real top-level destinations, shown as bottom-nav tabs —
+// see NomadBottomNavigationBar's own doc comment for why (redesign
+// Phase B: this app previously had zero NavigationBar anywhere,
+// cross-nav was ad hoc top-bar IconButtons, and Settings was only
+// reachable via Home). Every other route (conversation thread, a
+// node's page, hosted-site file management) is a pushed detail screen
+// that hides the bottom bar, same as it already had its own back arrow.
+private val TOP_LEVEL_ROUTES = setOf(Routes.HOME, Routes.MESSAGES, Routes.NODES, Routes.SETTINGS)
 
 private object Routes {
     const val HOME = "home"
@@ -60,21 +82,45 @@ fun NomadNavHost(
     callRepository: CallRepository,
     navController: NavHostController = rememberNavController(),
 ) {
-    // Overlaid on top of the NavHost, not a destination of its own —
-    // matching a real phone's own "an incoming call interrupts whatever
-    // screen you're on" behavior (see CallOverlay's own doc comment).
+    // Overlaid on top of everything below, including the bottom nav bar
+    // — not a destination of its own, matching a real phone's own "an
+    // incoming call interrupts whatever screen you're on" behavior (see
+    // CallOverlay's own doc comment).
     val scope = rememberCoroutineScope()
     val callState by callRepository.callState().collectAsState(initial = CallState.IDLE)
 
+    // Powers the bottom nav's Messages/Settings badges — collected once
+    // here rather than duplicated per-screen (HomeScreen/NodeListScreen
+    // each used to compute their own copy of totalUnread independently
+    // before the redesign).
+    val conversations by messagingRepository.conversations().collectAsState(initial = emptyList())
+    val totalUnread = conversations.sumOf { it.unreadCount }
+    val hasDownTcpConnection by interfaceController.hasDownTcpConnection().collectAsState(initial = false)
+
+    val currentRoute = navController.currentBackStackEntryAsState().value?.destination?.route
+
     Box(modifier = Modifier.fillMaxSize()) {
-    NavHost(navController = navController, startDestination = Routes.HOME) {
+    Scaffold(
+        bottomBar = {
+            if (currentRoute in TOP_LEVEL_ROUTES) {
+                NomadBottomNavigationBar(
+                    navController = navController,
+                    currentRoute = currentRoute,
+                    unreadCount = totalUnread,
+                    hasDownTcpConnection = hasDownTcpConnection,
+                )
+            }
+        },
+    ) { innerPadding ->
+    NavHost(
+        navController = navController,
+        startDestination = Routes.HOME,
+        modifier = Modifier.padding(innerPadding),
+    ) {
         composable(Routes.HOME) {
             HomeScreen(
                 messagingRepository = messagingRepository,
                 interfaceController = interfaceController,
-                onOpenSettings = { navController.navigate(Routes.SETTINGS) },
-                onOpenMessages = { navController.navigate(Routes.MESSAGES) },
-                onOpenNodes = { navController.navigate(Routes.NODES) },
                 onManageHostedPages = { navController.navigate(Routes.SITE_FILES) },
             )
         }
@@ -84,7 +130,6 @@ fun NomadNavHost(
                 settingsRepository = settingsRepository,
                 messagingRepository = messagingRepository,
                 tcpConnectionsRepository = tcpConnectionsRepository,
-                onBack = { navController.popBackStack() },
             )
         }
         composable(Routes.MESSAGES) {
@@ -92,12 +137,6 @@ fun NomadNavHost(
                 repository = messagingRepository,
                 callRepository = callRepository,
                 onOpenConversation = { hash -> navController.navigate(Routes.conversation(hash)) },
-                // Always back to the main menu, not whatever screen was
-                // previously visited (e.g. Nodes, reached via its own
-                // cross-nav link) — explicit user direction: the back
-                // arrow here is "home", not "previous".
-                onBack = { navController.popBackStack(Routes.HOME, inclusive = false) },
-                onOpenNodes = { navController.navigate(Routes.NODES) },
             )
         }
         composable(Routes.CONVERSATION) { backStackEntry ->
@@ -119,11 +158,7 @@ fun NomadNavHost(
         composable(Routes.NODES) {
             NodeListScreen(
                 repository = browserRepository,
-                messagingRepository = messagingRepository,
                 onOpenNode = { hash -> navController.navigate(Routes.browser(hash)) },
-                // Same "back means home, not previous" as Messages above.
-                onBack = { navController.popBackStack(Routes.HOME, inclusive = false) },
-                onOpenMessages = { navController.navigate(Routes.MESSAGES) },
             )
         }
         composable(Routes.SITE_FILES) {
@@ -159,6 +194,7 @@ fun NomadNavHost(
             }
         }
     }
+    }
 
     CallOverlay(
         state = callState,
@@ -166,5 +202,65 @@ fun NomadNavHost(
         onHangUp = { scope.launch { callRepository.hangUp() } },
         onDismiss = { scope.launch { callRepository.dismiss() } },
     )
+    }
+}
+
+/**
+ * The app's persistent bottom navigation — Home/Messages/Nodes/Settings,
+ * the 4 real top-level destinations (redesign Phase B). Replaces what
+ * used to be ad hoc top-bar `IconButton`s scattered per-screen
+ * (inconsistently: Home had all 3 cross-nav icons, Messages/Nodes only
+ * had one each, Settings had none — reachable only via Home) with a
+ * single, always-available nav surface, per the `android-compose-app-
+ * design` skill's own Rule 0 ("3-5 top-level destinations -> a real
+ * NavigationBar, not accumulated top-bar icons").
+ *
+ * Each tab uses the standard Navigation-Compose bottom-nav click pattern
+ * (`popUpTo(startDestination) { saveState = true }` +
+ * `launchSingleTop = true` + `restoreState = true`) so switching tabs
+ * preserves each one's own scroll position/back stack instead of
+ * resetting it — the established convention for this exact UI shape,
+ * not something invented here.
+ */
+@Composable
+private fun NomadBottomNavigationBar(
+    navController: NavHostController,
+    currentRoute: String?,
+    unreadCount: Int,
+    hasDownTcpConnection: Boolean,
+) {
+    NavigationBar {
+        NavigationBarItem(
+            selected = currentRoute == Routes.HOME,
+            onClick = { navigateToTopLevelTab(navController, Routes.HOME) },
+            icon = { Icon(Icons.Filled.Home, contentDescription = null) },
+            label = { Text("Home") },
+        )
+        NavigationBarItem(
+            selected = currentRoute == Routes.MESSAGES,
+            onClick = { navigateToTopLevelTab(navController, Routes.MESSAGES) },
+            icon = { MessagesIconWithBadge(unreadCount = unreadCount) },
+            label = { Text("Messages") },
+        )
+        NavigationBarItem(
+            selected = currentRoute == Routes.NODES,
+            onClick = { navigateToTopLevelTab(navController, Routes.NODES) },
+            icon = { Icon(Icons.Filled.Explore, contentDescription = null) },
+            label = { Text("Nodes") },
+        )
+        NavigationBarItem(
+            selected = currentRoute == Routes.SETTINGS,
+            onClick = { navigateToTopLevelTab(navController, Routes.SETTINGS) },
+            icon = { SettingsIconWithBadge(hasWarning = hasDownTcpConnection) },
+            label = { Text("Settings") },
+        )
+    }
+}
+
+private fun navigateToTopLevelTab(navController: NavHostController, route: String) {
+    navController.navigate(route) {
+        popUpTo(navController.graph.findStartDestination().id) { saveState = true }
+        launchSingleTop = true
+        restoreState = true
     }
 }

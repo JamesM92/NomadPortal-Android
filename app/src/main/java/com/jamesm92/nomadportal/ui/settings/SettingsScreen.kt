@@ -23,7 +23,6 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.Delete
@@ -111,7 +110,6 @@ fun SettingsScreen(
     settingsRepository: SettingsRepository,
     messagingRepository: MessagingRepository,
     tcpConnectionsRepository: TcpConnectionsRepository,
-    onBack: () -> Unit,
 ) {
     val context = LocalContext.current
     val focusManager = LocalFocusManager.current
@@ -164,11 +162,9 @@ fun SettingsScreen(
             Column {
                 AdaptiveTopAppBar(
                     title = { Text("Settings") },
-                    navigationIcon = {
-                        IconButton(onClick = onBack) {
-                            Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
-                        }
-                    },
+                    // No back arrow — Settings is now a real bottom-nav
+                    // tab (NomadNavHost.kt), same as Home/Messages/Nodes;
+                    // switching tabs is the way back.
                     actions = {
                         PanicWipeLogo(
                             modifier = Modifier.padding(end = 8.dp),
