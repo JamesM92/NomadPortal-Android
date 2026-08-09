@@ -258,6 +258,11 @@ class RealMessagingRepository : MessagingRepository {
             // get_conversations_json's summary carries it) — optInt's
             // default covers that the same way it already covers a null.
             announceCount = if (obj.isNull("announce_count")) 0 else obj.optInt("announce_count", 0),
+            // Phase 0 voice-call support — see call_tracker.py's own doc
+            // comment. Present in both get_conversations_json's summary
+            // and get_contact_json's smaller dict, unlike announce_count
+            // above, so no absent-field fallback is needed here.
+            isCallCapable = obj.optBoolean("call_capable", false),
         )
     }
 

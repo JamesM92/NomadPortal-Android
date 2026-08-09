@@ -145,9 +145,26 @@ class LXMFPeerTracker:
         except Exception:
             return ""
 
-    def record(self, destination_hash: bytes, app_data: Optional[bytes]) -> None:
+    def record(
+        self,
+        destination_hash: bytes,
+        app_data: Optional[bytes],
+        identity_hash: Optional[bytes] = None,
+    ) -> None:
+        # identity_hash defaults to None (not required) so every existing
+        # caller/test keeps working unchanged. When supplied (the real
+        # announce handler always supplies it — see
+        # _LXMFAnnounceHandler.received_announce), it's this peer's own
+        # RNS.Identity.hash — a different value than destination_hash
+        # (which is derived from identity+aspect, so it differs per
+        # aspect even for the same identity). Stored so orchestrator.py's
+        # _conversation_entries() can correlate this LXMF peer against
+        # CallPeerTracker's "lxst.telephony" announces, which are keyed
+        # by identity hash for exactly that reason — see call_tracker.py's
+        # own doc comment.
         hash_hex = destination_hash.hex()
         name = self.decode_display_name(app_data)
+        identity_hash_hex = identity_hash.hex() if identity_hash else None
 
         now = time.time()
         with self._lock:
@@ -157,6 +174,8 @@ class LXMFPeerTracker:
                 existing["announce_count"] = existing.get("announce_count", 0) + 1
                 if name:
                     existing["name"] = name
+                if identity_hash_hex:
+                    existing["identity_hash"] = identity_hash_hex
             else:
                 self._peers[hash_hex] = {
                     "hash":           hash_hex,
@@ -164,6 +183,7 @@ class LXMFPeerTracker:
                     "first_seen":     now,
                     "last_seen":      now,
                     "announce_count": 1,
+                    "identity_hash":  identity_hash_hex,
                 }
 
         log.info("LXMF peer announce: %s (%s)", hash_hex[:16], name or "no name")
@@ -237,4 +257,5 @@ class _LXMFAnnounceHandler:
         self._tracker = tracker
 
     def received_announce(self, destination_hash, announced_identity, app_data):
-        self._tracker.record(destination_hash, app_data)
+        identity_hash = announced_identity.hash if announced_identity else None
+        self._tracker.record(destination_hash, app_data, identity_hash=identity_hash)

@@ -128,6 +128,7 @@ _message_store = None
 _contact_store = None
 _messaging = None
 _lxmf_tracker = None
+_call_tracker = None
 _prop_sync = None
 _active_interfaces: dict = {}  # toggle name -> RNS.Interface currently attached
 _started = False
@@ -176,7 +177,7 @@ def start(base_dir: str) -> None:
     config_dir/reticulum convention.
     """
     global _browser, _identity_store, _message_store, _contact_store
-    global _messaging, _lxmf_tracker, _prop_sync, _started, _base_dir
+    global _messaging, _lxmf_tracker, _call_tracker, _prop_sync, _started, _base_dir
 
     with _lock:
         if _started:
@@ -196,6 +197,7 @@ def start(base_dir: str) -> None:
     from nomadnet_web.contact_store import ContactStoreManager
     from nomadnet_web.messaging import MessagingService
     from nomadnet_web.lxmf_tracker import LXMFPeerTracker
+    from nomadnet_web.call_tracker import CallPeerTracker
     from nomadnet_web.lxmf_sync import PropagationSyncService
 
     # NodeBrowser.__init__ starts RNS.Reticulum() on its own background
@@ -225,6 +227,11 @@ def start(base_dir: str) -> None:
         contact_store=_contact_store,
     )
     _lxmf_tracker = LXMFPeerTracker(base_dir)
+    # Phase 0 of a real voice-call feature — see call_tracker.py's own
+    # doc comment. Only tracks "has this identity ever announced
+    # call-capability," surfaced as a phone icon on contact cards;
+    # nothing about placing/receiving an actual call yet.
+    _call_tracker = CallPeerTracker(base_dir)
     _prop_sync = PropagationSyncService(rns=_browser._rns, messaging_service=_messaging)
 
     # Pure local file I/O, no RNS dependency — safe here rather than
@@ -260,6 +267,7 @@ def _run_deferred_setup() -> None:
         ("LXMF auto-announce loop", start_announce_loop),
         ("LXMF propagation sync service", _prop_sync.start),
         ("LXMF tracker registration", _register_lxmf_tracker),
+        ("Call tracker registration", _register_call_tracker),
         # Fresh installs only (see _tcp_default_seeded's own doc
         # comment) — gives a brand-new user a real, working TCP
         # connection instead of the empty list they'd otherwise start
@@ -287,6 +295,11 @@ def _run_deferred_setup() -> None:
 def _register_lxmf_tracker() -> None:
     import RNS
     RNS.Transport.register_announce_handler(_lxmf_tracker.register_announce_handler())
+
+
+def _register_call_tracker() -> None:
+    import RNS
+    RNS.Transport.register_announce_handler(_call_tracker.register_announce_handler())
 
 
 def is_ready() -> bool:
@@ -1219,6 +1232,11 @@ def _conversation_entries() -> list:
     contact_list = contacts.list_contacts() if contacts else []
     peers = _lxmf_tracker.get_peers() if _lxmf_tracker else []
     peers_by_hash = {p["hash"]: p for p in peers}
+    # Phase 0 voice-call support — see call_tracker.py's own doc comment
+    # for why this is keyed by identity hash, not LXMF destination hash.
+    call_capable_identity_hashes = (
+        _call_tracker.get_call_capable_hashes() if _call_tracker else set()
+    )
 
     hashes = set()
     for m in sent:
@@ -1271,6 +1289,17 @@ def _conversation_entries() -> list:
             # only exposed here for the Messages screen's "Announces"
             # sort option, wasn't needed by anything before that.
             "announce_count": peer.get("announce_count") if peer else None,
+            # True once this peer's identity has ever announced on the
+            # lxst.telephony aspect — Phase 0 (see call_tracker.py's own
+            # doc comment): a "this contact supports calls" signal, not
+            # an actual call feature yet. peer.get("identity_hash") is
+            # None for any peer recorded before this field existed (a
+            # pre-upgrade lxmf_peers.json) or if the announce simply
+            # never carried a resolvable identity, in which case the
+            # lookup below just correctly finds nothing.
+            "call_capable": bool(
+                peer and peer.get("identity_hash") in call_capable_identity_hashes
+            ),
             "messages": all_msgs,
             "unread_count": sum(1 for m in my_received if not m["read"]),
         })
@@ -1284,12 +1313,15 @@ def get_conversations_json() -> str:
     icon/icon_mime, see contact_store.py's own doc comment), favorited,
     last_seen (unix seconds, nullable — last LXMF peer announce, not last
     message), hops (nullable), announce_count (nullable — total announces
-    heard from this peer), last_message (last entry of messages, or
-    None), unread_count. Full per-message list is included too (Kotlin
-    ignores it here) purely because computing it separately per-
-    conversation would mean re-deriving the same sent/received union
-    twice — cheap either way, these are in-memory list reads capped at
-    500+500 total (message_store.py's MAX_MESSAGES)."""
+    heard from this peer), call_capable (bool — Phase 0 voice-call
+    support, see call_tracker.py's own doc comment: true once this
+    contact's identity has ever announced on the lxst.telephony aspect),
+    last_message (last entry of messages, or None), unread_count. Full
+    per-message list is included too (Kotlin ignores it here) purely
+    because computing it separately per-conversation would mean
+    re-deriving the same sent/received union twice — cheap either way,
+    these are in-memory list reads capped at 500+500 total
+    (message_store.py's MAX_MESSAGES)."""
     import json
     entries = _conversation_entries()
     summaries = [
@@ -1305,6 +1337,7 @@ def get_conversations_json() -> str:
             "last_seen": e["last_seen"],
             "hops": e["hops"],
             "announce_count": e["announce_count"],
+            "call_capable": e["call_capable"],
             "last_message": e["messages"][-1] if e["messages"] else None,
             "unread_count": e["unread_count"],
         }
@@ -1357,6 +1390,7 @@ def get_contact_json(contact_hash: str) -> str:
                 "icon": e["icon"], "icon_mime": e["icon_mime"],
                 "icon_glyph": e["icon_glyph"], "icon_fg": e["icon_fg"], "icon_bg": e["icon_bg"],
                 "favorited": e["favorited"],
+                "call_capable": e["call_capable"],
             })
     try:
         bytes.fromhex(contact_hash)
@@ -1369,6 +1403,7 @@ def get_contact_json(contact_hash: str) -> str:
         "icon": None, "icon_mime": None,
         "icon_glyph": None, "icon_fg": None, "icon_bg": None,
         "favorited": False,
+        "call_capable": False,
     })
 
 

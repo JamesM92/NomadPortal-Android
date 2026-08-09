@@ -30,6 +30,13 @@ data class Contact(
      * ConversationListScreen's "Announces" sort option, same convention
      * as [com.jamesm92.nomadportal.data.browsing.NodeInfo.announceCount]. */
     val announceCount: Int = 0,
+    /** True once this contact's identity has ever announced on LXST's
+     * "lxst.telephony" aspect — Phase 0 of a real voice-call feature
+     * (see orchestrator.py's call_tracker.py for the real source-
+     * verified aspect string/correlation approach). Currently just a
+     * "this contact's client supports calls" signal surfaced as a phone
+     * icon on their card — not yet wired to actually start a call. */
+    val isCallCapable: Boolean = false,
 )
 
 sealed interface ContactIcon {

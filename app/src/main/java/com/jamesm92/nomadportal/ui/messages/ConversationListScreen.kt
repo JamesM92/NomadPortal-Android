@@ -19,6 +19,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Call
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.ExpandLess
 import androidx.compose.material.icons.filled.ExpandMore
@@ -571,6 +572,21 @@ private fun ConversationRow(
         // on-device report). Same fix as every other compact icon
         // control in this app (BrowserScreen's nav row, the TCP table).
         CompositionLocalProvider(LocalMinimumInteractiveComponentSize provides 0.dp) {
+            if (summary.contact.isCallCapable) {
+                // Phase 0 of a real voice-call feature (see
+                // call_tracker.py's own doc comment): plain, non-
+                // interactive for now — a "this contact's client
+                // supports calls" signal, not a working call button yet.
+                // Per explicit direction, this same icon is the intended
+                // eventual "start a call with them" tap target once
+                // there's an actual call feature to wire it to.
+                Icon(
+                    imageVector = Icons.Filled.Call,
+                    contentDescription = "Supports voice calls",
+                    tint = NomadTextDim,
+                    modifier = Modifier.size(20.dp).padding(end = 4.dp),
+                )
+            }
             IconButton(onClick = onToggleFavorite, modifier = Modifier.size(32.dp)) {
                 Icon(
                     imageVector = if (summary.contact.isFavorite) Icons.Filled.Favorite else Icons.Filled.FavoriteBorder,

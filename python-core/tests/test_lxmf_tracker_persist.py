@@ -131,6 +131,40 @@ class TestFlushBehavior:
         assert tracker._dirty is False
 
 
+class TestIdentityHashCapture:
+    """identity_hash is a new optional param on record(), added so
+    orchestrator.py's _conversation_entries() can correlate an LXMF peer
+    against CallPeerTracker's lxst.telephony announces (identity hash is
+    shared across aspects; destination hash isn't — see call_tracker.py's
+    own doc comment). Existing callers that don't pass it (every test
+    above, and any pre-upgrade caller) must keep working unchanged."""
+
+    def test_identity_hash_defaults_to_none(self, tracker):
+        tracker.record(b"\xaa" * 16, None)
+        peers = tracker.get_peers()
+        assert peers[0]["identity_hash"] is None
+
+    def test_identity_hash_is_captured_when_supplied(self, tracker):
+        tracker.record(b"\xaa" * 16, None, identity_hash=b"\xbb" * 16)
+        peers = tracker.get_peers()
+        assert peers[0]["identity_hash"] == "bb" * 16
+
+    def test_identity_hash_updates_on_existing_peer(self, tracker):
+        tracker.record(b"\xaa" * 16, None)
+        tracker.record(b"\xaa" * 16, None, identity_hash=b"\xbb" * 16)
+        peers = tracker.get_peers()
+        assert peers[0]["identity_hash"] == "bb" * 16
+
+    def test_identity_hash_not_clobbered_by_a_later_announce_without_it(self, tracker):
+        # A later announce that doesn't carry an identity_hash (shouldn't
+        # happen in practice — RNS always supplies announced_identity —
+        # but defensively) must not erase a previously-captured one.
+        tracker.record(b"\xaa" * 16, None, identity_hash=b"\xbb" * 16)
+        tracker.record(b"\xaa" * 16, None)
+        peers = tracker.get_peers()
+        assert peers[0]["identity_hash"] == "bb" * 16
+
+
 class TestPersistIntervalConstant:
     """``PERSIST_INTERVAL_S`` is load-bearing. If someone drops it to
     something small trying to be "safer", they reintroduce the
