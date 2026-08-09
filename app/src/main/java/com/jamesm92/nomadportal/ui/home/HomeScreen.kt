@@ -18,6 +18,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -56,7 +57,9 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
@@ -110,10 +113,10 @@ fun HomeScreen(
     onOpenSettings: () -> Unit,
     onOpenMessages: () -> Unit,
     onOpenNodes: () -> Unit,
-    onOpenHostedNode: (nodeHash: String) -> Unit,
     onManageHostedPages: () -> Unit,
 ) {
     val context = LocalContext.current
+    val focusManager = LocalFocusManager.current
     val scope = rememberCoroutineScope()
     val announceStatus by messagingRepository.announceStatus().collectAsState(initial = null)
     val conversations by messagingRepository.conversations().collectAsState(initial = emptyList())
@@ -145,6 +148,17 @@ fun HomeScreen(
         Column(
             modifier = Modifier
                 .fillMaxSize()
+                // Tap anywhere that isn't a field/button itself to commit
+                // + dismiss whatever text field currently has focus (e.g.
+                // the hosted-node MinutesField) -- real on-device report:
+                // without this, the *only* way to get out of one of these
+                // fields was the keyboard's own Done action; tapping
+                // elsewhere on the screen (the normal expectation) did
+                // nothing, since nothing here was otherwise claiming
+                // focus away from it. A tap that lands on a real button/
+                // field first still reaches that composable's own handler
+                // -- this only fires for taps on otherwise-empty space.
+                .pointerInput(Unit) { detectTapGestures(onTap = { focusManager.clearFocus() }) }
                 .padding(innerPadding)
                 // enableEdgeToEdge() (MainActivity) means the system no
                 // longer auto-resizes/pans the window when the IME opens
@@ -187,7 +201,6 @@ fun HomeScreen(
                     onAnnounceIntervalChange = {
                         scope.launch { interfaceController.setHostedNodeAnnounceInterval(it) }
                     },
-                    onOpen = { hash -> onOpenHostedNode(hash) },
                     onManagePages = onManageHostedPages,
                 )
             }
@@ -195,19 +208,6 @@ fun HomeScreen(
     }
 }
 
-/**
- * This device's own hosted NomadNet node: name, on/off, announce
- * interval, manual "Announce now", a way to view it (opens the same
- * browser screen used for any other node), and "Manage pages" (the
- * file nav for this node's site content — see
- * [com.jamesm92.nomadportal.ui.hosting.SiteFilesScreen]) — see this
- * file's own doc comment for why manual announcing lives here and not
- * Settings (that screen only ever owns *configuration*, never a "do it
- * now" action). A duplicate on/off toggle and announce-interval config
- * also live on Settings' Node tab, per explicit design direction —
- * flip/configure from either place, same underlying state, same
- * convention every other interface's Settings tab already follows.
- */
 /** The Settings top-bar icon, with a plain warning-colored dot (no
  * count — this is a yes/no flag, not something to tally) when
  * [hasWarning] — currently only driven by
@@ -232,6 +232,19 @@ private fun SettingsIconWithBadge(hasWarning: Boolean, onClick: () -> Unit) {
     }
 }
 
+/**
+ * This device's own hosted NomadNet node: name, on/off, announce
+ * interval, manual "Announce now", a way to view it (opens the same
+ * browser screen used for any other node), and "Manage pages" (the
+ * file nav for this node's site content — see
+ * [com.jamesm92.nomadportal.ui.hosting.SiteFilesScreen]) — see this
+ * file's own doc comment for why manual announcing lives here and not
+ * Settings (that screen only ever owns *configuration*, never a "do it
+ * now" action). Settings has no separate Node tab at all anymore (per
+ * explicit direction, removed — this section already carried everything
+ * that tab used to duplicate), unlike the four connectivity interfaces,
+ * which still each get a dedicated Settings tab of their own.
+ */
 @Composable
 private fun HostedNodeSection(
     status: HostedNodeStatus,
@@ -239,7 +252,6 @@ private fun HostedNodeSection(
     onRename: (String) -> Unit,
     onAnnounceNow: () -> Unit,
     onAnnounceIntervalChange: (seconds: Int) -> Unit,
-    onOpen: (nodeHash: String) -> Unit,
     onManagePages: () -> Unit,
 ) {
     var editingName by remember { mutableStateOf(false) }
@@ -373,9 +385,14 @@ private fun HostedNodeSection(
             horizontalArrangement = Arrangement.spacedBy(8.dp),
         ) {
             TextButton(onClick = onAnnounceNow) { Text("Announce now") }
-            status.nodeHash?.let { hash ->
-                TextButton(onClick = { onOpen(hash) }) { Text("View") }
-            }
+            // No "View" button here anymore -- "Manage pages" already
+            // opens the rich-text editor, which since the micron2compose
+            // rendering-parity work renders every unfocused block through
+            // the same real renderer BrowserScreen uses. That's already a
+            // true view, not an approximation, so a separate round-trip
+            // through the whole Link-establishment browsing path just to
+            // look at your own just-edited content was redundant -- per
+            // explicit direction, removed.
             TextButton(onClick = onManagePages) { Text("Manage pages") }
         }
     }
@@ -803,7 +820,6 @@ private fun IconAppearanceEditor(
                 selectedFg = selectedFg,
                 listState = listState,
                 onSelect = { selectedGlyph = it },
-                onSave = { onSave(selectedGlyph, selectedFg, selectedBg) },
                 onDismiss = { expandedSection = null },
             )
         }
@@ -817,10 +833,15 @@ private fun IconAppearanceEditor(
  * scrollable column, capping the list to a fixed 320dp regardless of
  * actual screen size). A real full-screen [Dialog] renders in its own
  * window above everything else, so the list can use `weight(1f)` to
- * claim all remaining vertical space instead of a bounded height guess,
- * and Save sits in a real fixed footer row at the true bottom of the
- * screen, not just below a capped-height list nested several sections
- * deep.
+ * claim all remaining vertical space instead of a bounded height guess.
+ *
+ * No Save button of its own — [onSelect] already writes straight into
+ * [IconAppearanceEditor]'s own `selectedGlyph` state on tap (not a
+ * local draft needing a separate confirm step), so the close button
+ * above is enough to return to that editor with the pick already
+ * applied; that editor's own top-of-panel Save/Cancel row is what
+ * actually commits it. A second Save here was redundant now that the
+ * top-level one exists — removed per explicit direction.
  */
 @Composable
 private fun FullScreenIconPicker(
@@ -832,7 +853,6 @@ private fun FullScreenIconPicker(
     selectedFg: Color,
     listState: LazyListState,
     onSelect: (String) -> Unit,
-    onSave: () -> Unit,
     onDismiss: () -> Unit,
 ) {
     Dialog(
@@ -926,15 +946,6 @@ private fun FullScreenIconPicker(
                             }
                         }
                     }
-                }
-
-                // A real fixed footer row — per explicit direction — not
-                // just "below the list" within a longer scrolling page.
-                Row(
-                    horizontalArrangement = Arrangement.End,
-                    modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
-                ) {
-                    Button(onClick = onSave) { Text("Save") }
                 }
             }
         }

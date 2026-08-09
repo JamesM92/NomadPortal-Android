@@ -57,7 +57,6 @@ fun NomadNavHost(
                 onOpenSettings = { navController.navigate(Routes.SETTINGS) },
                 onOpenMessages = { navController.navigate(Routes.MESSAGES) },
                 onOpenNodes = { navController.navigate(Routes.NODES) },
-                onOpenHostedNode = { hash -> navController.navigate(Routes.browser(hash)) },
                 onManageHostedPages = { navController.navigate(Routes.SITE_FILES) },
             )
         }
