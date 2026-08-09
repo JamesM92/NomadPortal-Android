@@ -1437,21 +1437,34 @@ def delete_conversation(hash_hex: str) -> bool:
 # interface carries the actual announce packet* — that's always
 # "however many are active, all of them," by RNS's own design.
 _interface_announce_config: dict = {
+    # auto_announce_interval_seconds defaults to 0 (off) on every
+    # interface, per explicit direction: a freshly created account
+    # shouldn't start out proactively broadcasting its presence on a
+    # timer before the user has actually decided they want that — same
+    # "silent by default" posture node hosting's own auto_announce
+    # already has (see nomadnet_web.site_server.SiteServer's docstring).
+    # A brand-new identity still announces once regardless (this
+    # section's own module doc comment explains why that one is a
+    # protocol requirement, not a policy choice) — this only concerns
+    # the *periodic re*-announce on top of that baseline.
+    # announce_max_seconds (the "Message" column — how stale the last
+    # announce may get before a send needs a fresh one first) is a
+    # separate concept and unaffected by this.
     "tcp": {
         "announce_max_seconds": 3 * 60 * 60,
-        "auto_announce_interval_seconds": 6 * 60 * 60,
+        "auto_announce_interval_seconds": 0,
     },
     "bluetooth_mesh": {
         "announce_max_seconds": 15 * 60,
-        "auto_announce_interval_seconds": 30 * 60,
+        "auto_announce_interval_seconds": 0,
     },
     "rnode": {
         "announce_max_seconds": 3 * 60 * 60,
-        "auto_announce_interval_seconds": 6 * 60 * 60,
+        "auto_announce_interval_seconds": 0,
     },
     "wifi_discovery": {
         "announce_max_seconds": 3 * 60 * 60,
-        "auto_announce_interval_seconds": 6 * 60 * 60,
+        "auto_announce_interval_seconds": 0,
     },
 }
 # How often the background loop wakes up to check whether any active
@@ -1465,8 +1478,11 @@ _announce_loop_started = False
 # semantics as everywhere else in this section) while remembering each
 # one's prior nonzero value in _auto_announce_last_intervals, so turning
 # it back on restores exactly what was configured before rather than
-# resetting to defaults.
-_auto_announce_master_enabled = True
+# resetting to defaults. Defaults False, matching every per-interface
+# interval above defaulting to 0 — the UI's own toggle should honestly
+# read "off" from a fresh install, not show "on" while every interface
+# underneath it is individually at 0 auto-announce anyway.
+_auto_announce_master_enabled = False
 _auto_announce_last_intervals: dict = {}
 
 
