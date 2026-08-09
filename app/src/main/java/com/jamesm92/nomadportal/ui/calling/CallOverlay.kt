@@ -1,5 +1,8 @@
 package com.jamesm92.nomadportal.ui.calling
 
+import android.Manifest
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -21,14 +24,20 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.jamesm92.nomadportal.data.calling.CallState
 import com.jamesm92.nomadportal.data.calling.CallStatusValue
+import com.jamesm92.nomadportal.permissions.hasRecordAudioPermission
 import com.jamesm92.nomadportal.ui.theme.NomadAccent2
 import com.jamesm92.nomadportal.ui.theme.NomadError
 import com.jamesm92.nomadportal.ui.theme.NomadTextDim
@@ -40,10 +49,10 @@ import kotlinx.coroutines.delay
  * "an incoming call interrupts what you were doing" behavior, per this
  * feature's own Phase 0 framing ("the icon will eventually become the
  * way to start a phone call with them"). Deliberately terse for this
- * phase — no audio, no ringtone, no per-call avatar, just enough to
- * verify a real call actually rings/connects/hangs up correctly against
- * a real peer (this phase's entire purpose, see call_manager.py's own
- * doc comment).
+ * phase — no ringtone, no per-call avatar, just enough to verify a real
+ * call actually rings/connects/hangs up correctly against a real peer
+ * (Phase 1a's own purpose) plus real two-way audio once ESTABLISHED
+ * (Phase 1b — see call_manager.py's own doc comment for both).
  */
 @Composable
 fun CallOverlay(
@@ -61,6 +70,25 @@ fun CallOverlay(
         if (state.status.isTerminal) {
             delay(2500)
             onDismiss()
+        }
+    }
+
+    // RECORD_AUDIO, requested once per call becoming active (this
+    // LaunchedEffect(Unit) re-runs every time this composable re-enters
+    // composition from the "if (!state.status.isActive) return" above --
+    // i.e. once per new call, not once per recomposition). Same "never
+    // block, always degrade gracefully on denial" rule this app already
+    // applies to Bluetooth permissions (SettingsScreen.kt) -- a denial
+    // just means CallAudioEngine's capture thread skips itself for this
+    // call (receive-only audio), never a blocked/failed call.
+    val context = LocalContext.current
+    var recordAudioGranted by remember { mutableStateOf(hasRecordAudioPermission(context)) }
+    val recordAudioLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission()
+    ) { granted -> recordAudioGranted = granted }
+    LaunchedEffect(Unit) {
+        if (!recordAudioGranted) {
+            recordAudioLauncher.launch(Manifest.permission.RECORD_AUDIO)
         }
     }
 

@@ -27,6 +27,16 @@
     <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
     <uses-permission android:name="android.permission.BLUETOOTH_ADVERTISE" />
 
+    <!-- Voice-call audio capture (Phase 1b — CallAudioEngine.kt). A
+         dangerous-protection-level runtime permission, requested from
+         CallOverlay.kt the moment a call is actually being engaged
+         with (ringing/placing) rather than proactively at app launch.
+         Same "never block, always degrade gracefully on denial" rule
+         this app already applies to Bluetooth: a denial means that
+         call is receive-only (CallAudioEngine simply skips starting
+         its capture thread), never a blocked/failed call. -->
+    <uses-permission android:name="android.permission.RECORD_AUDIO" />
+
     <application
         android:name=".NomadPortalApp"
         android:allowBackup="false"

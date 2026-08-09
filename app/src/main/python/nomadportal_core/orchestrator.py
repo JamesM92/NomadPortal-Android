@@ -234,10 +234,12 @@ def start(base_dir: str) -> None:
     # call-capability," surfaced as a phone icon on contact cards;
     # nothing about placing/receiving an actual call yet.
     _call_tracker = CallPeerTracker(base_dir)
-    # Phase 1a — the real call signalling state machine (ring/answer/
-    # hangup, no audio yet). Actually brought up (its own Destination
-    # created, ready to receive calls) in _register_call_manager below,
-    # once RNS/the local identity are both ready.
+    # Phase 1a/1b — the real call signalling state machine (ring/answer/
+    # hangup) plus the Phase 1b audio-frame relay layered on top of it
+    # (send_call_audio_frame/pop_call_audio_frame below). Actually
+    # brought up (its own Destination created, ready to receive calls)
+    # in _register_call_manager below, once RNS/the local identity are
+    # both ready.
     _call_manager = CallManager()
     _prop_sync = PropagationSyncService(rns=_browser._rns, messaging_service=_messaging)
 
@@ -1944,7 +1946,7 @@ def mark_conversation_read(contact_hash: str) -> None:
 
 
 # ---------------------------------------------------------------------
-# Voice calls (Phase 1a — signalling only, no audio yet). See
+# Voice calls (Phase 1a signalling + Phase 1b audio relay). See
 # call_manager.py's own doc comment for the real, source-verified LXST
 # wire protocol this implements, and the nomadportal-android-
 # competitor-research memory for why the `lxst` package itself isn't
@@ -2077,3 +2079,38 @@ def get_call_history_json() -> str:
         entry["remote_name"] = _resolve_call_remote_name(entry.get("remote_identity_hash"))
         entries.append(entry)
     return json.dumps(entries)
+
+
+# Phase 1b audio relay — CallAudioEngine (Kotlin) is the only caller of
+# either of these. Deliberately NOT JSON-string-returning like every
+# other bridge function above: these two run up to ~50x/sec for the
+# duration of a call (one per ~20ms Opus frame), and passing raw bytes
+# avoids base64-encoding + JSON-parsing overhead on a real-time path
+# for no benefit (there's no other consumer of this data that needs it
+# as text). Both frame arguments/return values are fully opaque here —
+# see call_manager.py's own doc comment for the codec-header-byte
+# convention Kotlin owns.
+#
+# A real gotcha found via an actual failed on-device call: Chaquopy
+# does NOT convert an incoming Kotlin ByteArray to a native Python
+# bytes automatically at this call boundary — it arrives here as a
+# java.jarray('B') proxy object, which msgpack.packb() (inside
+# CallManager.send_audio_frame) can't serialize as-is. See that
+# method's own comment for the bytes(...) fix; kept here too since it's
+# the actual reason this pair of functions isn't JSON-based like
+# everything else, and matters if either signature ever changes.
+
+def send_call_audio_frame(frame: bytes) -> bool:
+    if _call_manager is None:
+        return False
+    return _call_manager.send_audio_frame(frame)
+
+
+def pop_call_audio_frame(timeout_s: float = 0.5):
+    """Returns bytes, or None if nothing arrived within timeout_s.
+    Blocks the calling (Kotlin) thread for up to timeout_s — this is
+    CallAudioEngine's actual playback pull mechanism, not a poll loop
+    Kotlin has to pace itself."""
+    if _call_manager is None:
+        return None
+    return _call_manager.pop_audio_frame(timeout_s)

@@ -11,11 +11,15 @@ two different files), not the `lxst` package itself: importing `lxst`
 was tried and confirmed NOT viable in this Chaquopy build (a real pip-
 resolution spike hit three independent conflicts — rns version, no
 Android numpy>=2.3.4 wheel, no pycodec2 wheel at all — see the
-nomadportal-android-competitor-research memory). No audio yet — this
-phase validates the highest-interop-risk part (does a call actually
-ring/answer/hang-up correctly against a real LXST client — Sideband,
-Columba, rnphone) before adding an audio pipeline on top, same staged
-approach as call_tracker.py's Phase 0.
+nomadportal-android-competitor-research memory). Phase 1a validated the
+highest-interop-risk part (does a call actually ring/answer/hang-up
+correctly against a real LXST client — Sideband, Columba, rnphone)
+before Phase 1b added the actual audio frame relay on top, same staged
+approach as call_tracker.py's Phase 0. This file still has zero codec
+knowledge and zero Java interop — encode/decode/AudioRecord/AudioTrack
+all live in Kotlin's CallAudioEngine; this class just moves opaque
+already-encoded bytes across the Link (see send_audio_frame/
+pop_audio_frame below).
 
 Wire protocol (verified directly against LXST/Primitives/Telephony.py +
 LXST/Network.py source):
@@ -27,10 +31,16 @@ LXST/Network.py source):
   the same primitive this app already uses elsewhere, nothing exotic.
 - Every message over an active call Link is a plain ``RNS.Packet`` (NOT
   LXMF, NOT a Resource) with a msgpack-encoded dict payload:
-  ``{0x00: [signal_int, ...]}`` for signalling (this phase only),
-  ``{0x01: bytes}`` for one audio frame (not sent or handled yet —
-  ``bytes[0]`` would be a codec-type header byte: 0x00 Raw / 0x01 Opus /
-  0x02 Codec2 / 0xFF Null, ``bytes[1:]`` the encoded frame).
+  ``{0x00: [signal_int, ...]}`` for signalling,
+  ``{0x01: bytes}`` for one audio frame (Phase 1b) —
+  ``bytes[0]`` is a codec-type header byte: 0x00 Raw / 0x01 Opus /
+  0x02 Codec2 / 0xFF Null, ``bytes[1:]`` the encoded frame. This class
+  treats an audio frame as fully opaque bytes on both send and receive
+  — the codec header, encoding, and actual audio I/O all live on the
+  Kotlin side (see ``send_audio_frame``/``pop_audio_frame`` below);
+  this file only relays already-encoded bytes over the Link, same
+  reasoning as everywhere else in this codebase that Python stays out
+  of Android-native concerns.
 - Signal codes (LXST's real ``Signalling`` class): BUSY=0x00,
   REJECTED=0x01, CALLING=0x02, AVAILABLE=0x03, RINGING=0x04,
   CONNECTING=0x05, ESTABLISHED=0x06.
@@ -55,6 +65,7 @@ LXST/Network.py source):
 """
 
 import logging
+import queue
 import threading
 import time
 from typing import Callable, Optional
@@ -108,6 +119,16 @@ PATH_WAIT_TIMEOUT_S = 15
 # forever, same defensive shape as LXMFPeerTracker's own real-world
 # bound (though that one's persisted and keyed by peer, not a flat list).
 HISTORY_MAX = 50
+
+# Phase 1b: a small jitter buffer for received-but-not-yet-played audio
+# frames. 10 frames at this app's own 20ms-per-frame target (see
+# send_audio_frame's own doc comment) is ~200ms of buffered audio —
+# enough to absorb real mesh jitter without adding noticeable latency.
+# Bounded (not unbounded) specifically so a playback side that's fallen
+# behind doesn't grow this into a stale, ever-larger audio delay —
+# drop-oldest (same policy HISTORY_MAX uses) is the right failure mode
+# for live audio: a late frame is worse than a missing one.
+AUDIO_JITTER_MAX = 10
 
 
 class CallManager:
@@ -167,6 +188,17 @@ class CallManager:
         # at HISTORY_MAX; real persistence (surviving an app restart)
         # can layer on once this shape has proven out.
         self.history: list = []
+
+        # Phase 1b: received-audio-frame jitter buffer. A plain
+        # queue.Queue rather than anything lock-protected by self._lock
+        # — Queue is already internally thread-safe, and the playback
+        # side's pop_audio_frame() needs to block (with a timeout)
+        # without holding self._lock, since holding it across a
+        # timeout-length block would stall every other call operation
+        # (answer/hangup/status polling) for that long. Drained on every
+        # call end (_end_call) so a new call never plays back stale
+        # audio left over from the previous one.
+        self._audio_rx_queue: "queue.Queue" = queue.Queue(maxsize=AUDIO_JITTER_MAX)
 
     # ------------------------------------------------------------------
     # Setup
@@ -394,13 +426,38 @@ class CallManager:
         except Exception as exc:
             log.warning("Could not decode call signalling packet: %s", exc)
             return
-        if not isinstance(unpacked, dict) or 0x00 not in unpacked:
-            return  # 0x01 (audio frames) intentionally ignored this phase
-        signals = unpacked[0x00]
-        if not isinstance(signals, list):
-            signals = [signals]
-        for signal in signals:
-            self._handle_signal(signal, packet.link if hasattr(packet, "link") else self.link)
+        if not isinstance(unpacked, dict):
+            return
+        source = packet.link if hasattr(packet, "link") else self.link
+        if 0x01 in unpacked:
+            self._handle_audio_frame(unpacked[0x01], source)
+        if 0x00 in unpacked:
+            signals = unpacked[0x00]
+            if not isinstance(signals, list):
+                signals = [signals]
+            for signal in signals:
+                self._handle_signal(signal, source)
+
+    def _handle_audio_frame(self, frame, source) -> None:
+        # Deliberately much cheaper than _handle_signal: only holds the
+        # lock long enough to read status/link (never while touching the
+        # queue) — an audio frame arrives up to ~50x/sec, so this runs
+        # on the hot path.
+        with self._lock:
+            active = self.status == CallStatus.ESTABLISHED and source == self.link
+        if not active or not isinstance(frame, (bytes, bytearray)):
+            return  # stray/late frame outside an active established call
+        try:
+            self._audio_rx_queue.put_nowait(bytes(frame))
+        except queue.Full:
+            try:
+                self._audio_rx_queue.get_nowait()  # drop the oldest…
+            except queue.Empty:
+                pass
+            try:
+                self._audio_rx_queue.put_nowait(bytes(frame))  # …then queue the newest
+            except queue.Full:
+                pass  # a concurrent pop already made room; fine either way
 
     def _handle_signal(self, signal: int, source) -> None:
         with self._lock:
@@ -487,7 +544,20 @@ class CallManager:
         self.status = status
         self.ended_reason = reason
         self.link = None
+        self._drain_audio_queue()
         self._notify()
+
+    def _drain_audio_queue(self) -> None:
+        # Caller must already hold self._lock. Runs on every call end so
+        # a new call starting right after — now guaranteed prompt by
+        # _clear_terminal_state_locked(), not stuck behind the UI's own
+        # dismiss timer — never plays back audio left over from the
+        # previous one.
+        while True:
+            try:
+                self._audio_rx_queue.get_nowait()
+            except queue.Empty:
+                break
 
     def _record_history(self, status: str, reason: str) -> None:
         # Caller must already hold self._lock.
@@ -555,6 +625,61 @@ class CallManager:
             packet.send()
         except Exception as exc:
             log.warning("Could not send call signal 0x%02x: %s", signal, exc)
+
+    # ------------------------------------------------------------------
+    # Audio frame relay (Phase 1b) — CallAudioEngine (Kotlin) is the only
+    # caller of both of these. frame/return value are always opaque
+    # bytes: a 1-byte codec-type header (see this file's module doc
+    # comment) followed by an already-encoded audio frame. This class
+    # never inspects or decodes them — same "no codec knowledge in
+    # Python" split described there.
+    # ------------------------------------------------------------------
+
+    def send_audio_frame(self, frame: bytes) -> bool:
+        """Sends one already-encoded audio frame over the active call's
+        Link, mirroring _send_signal's own fire-and-forget RNS.Packet
+        pattern (create_receipt=False — a late/dropped audio frame
+        should never be retransmitted, unlike a signal). Gated on
+        ESTABLISHED as defense-in-depth: CallAudioEngine only runs
+        while established, so this should never actually be called
+        outside that window, but a stray call (e.g. a frame still
+        in-flight from Kotlin's capture thread right as the call ends)
+        should fail quietly rather than send audio on a dead/reused
+        link."""
+        with self._lock:
+            link = self.link
+            established = self.status == CallStatus.ESTABLISHED
+        if not established or link is None:
+            return False
+        try:
+            # A real bug this fixes: Chaquopy hands a Kotlin ByteArray
+            # across as a java.jarray('B') proxy object, not a native
+            # Python bytes -- confirmed via a real failed on-device call
+            # (msgpack.packb raised "unsupported type: <class
+            # 'java.jarray(\'B\')'>" on every single frame). bytes(...)
+            # converts it for real; a no-op if frame already is bytes
+            # (e.g. a caller from within this codebase, or a future
+            # test).
+            packet = self._rns.Packet(link, self._msgpack.packb({0x01: bytes(frame)}), create_receipt=False)
+            packet.send()
+            return True
+        except Exception as exc:
+            log.warning("Could not send call audio frame: %s", exc)
+            return False
+
+    def pop_audio_frame(self, timeout_s: float = 0.5) -> Optional[bytes]:
+        """Blocks the calling thread (Kotlin's playback thread, via the
+        synchronous Chaquopy call into this) for up to timeout_s waiting
+        for a received audio frame, returning None on timeout/empty —
+        this is the actual pull mechanism for playback, not a
+        poll-with-sleep loop. Deliberately does NOT acquire self._lock:
+        blocking on the queue while holding it would stall every other
+        call operation (answer/hangup/status polling) for up to
+        timeout_s on every single frame."""
+        try:
+            return self._audio_rx_queue.get(timeout=timeout_s)
+        except queue.Empty:
+            return None
 
     def _start_timeout(self, timeout_s: float, expected_status_below: str) -> None:
         call_link = self.link

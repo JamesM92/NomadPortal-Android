@@ -3,6 +3,7 @@ package com.jamesm92.nomadportal
 import android.app.Application
 import com.chaquo.python.Python
 import com.chaquo.python.android.AndroidPlatform
+import com.jamesm92.nomadportal.audio.CallAudioEngine
 import com.jamesm92.nomadportal.connectivity.InterfaceController
 import com.jamesm92.nomadportal.connectivity.RealInterfaceController
 import com.jamesm92.nomadportal.connectivity.RealTcpConnectionsRepository
@@ -46,6 +47,8 @@ class NomadPortalApp : Application() {
     lateinit var siteFileRepository: SiteFileRepository
         private set
     lateinit var callRepository: CallRepository
+        private set
+    lateinit var callAudioEngine: CallAudioEngine
         private set
 
     override fun onCreate() {
@@ -132,12 +135,16 @@ class NomadPortalApp : Application() {
         // still None.
         messagingRepository = RealMessagingRepository()
         browserRepository = RealBrowserRepository()
-        // Phase 1a of a real voice-call feature (signalling only, no
-        // audio yet — see python-core's call_manager.py). Same
+        // Phase 1a/1b of a real voice-call feature (signalling +
+        // audio — see python-core's call_manager.py). Same
         // safe-before-orchestrator.start()-finishes reasoning as the two
         // repositories above: every bridge function degrades to an
         // idle/no-op result rather than erroring while _call_manager is
         // still None.
         callRepository = RealCallRepository()
+        // Starts/stops itself automatically off callRepository's own
+        // state — see CallAudioEngine's own doc comment. No further
+        // wiring needed; constructing it is enough.
+        callAudioEngine = CallAudioEngine(this, callRepository, appScope)
     }
 }

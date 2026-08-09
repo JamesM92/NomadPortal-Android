@@ -90,6 +90,7 @@ class FakeLink:
         self._packet_cb = None
         self._remote_identified_cb = None
         self.sent_signals = []  # list of raw signal payload dicts sent over this link
+        self.sent_audio_frames = []  # list of raw frame bytes sent over this link
         self.identified_as = None
         self.link_id = id(self)
 
@@ -129,6 +130,14 @@ class FakeLink:
             fake_packet = FakePacket(self, {0x00: [signal]})
             self._packet_cb(fake_packet.data, fake_packet)
 
+    def receive_audio_frame(self, frame: bytes):
+        """Same idea as receive_signal, but for a 0x01 audio-frame
+        packet — mirrors real CallManager._packet_received's dict
+        shape."""
+        if callable(self._packet_cb):
+            fake_packet = FakePacket(self, {0x01: frame})
+            self._packet_cb(fake_packet.data, fake_packet)
+
 
 class FakePacket:
     def __init__(self, target, payload_obj, create_receipt=True):
@@ -143,6 +152,8 @@ class FakePacket:
         if isinstance(self.target, FakeLink):
             if isinstance(self.data, dict) and 0x00 in self.data:
                 self.target.sent_signals.extend(self.data[0x00])
+            if isinstance(self.data, dict) and 0x01 in self.data:
+                self.target.sent_audio_frames.append(self.data[0x01])
         return True
 
 
@@ -596,6 +607,105 @@ class TestNotActuallyBusyAfterATerminalState:
         second_link = FakeLink(FakeDestination(FakeIdentity("77" * 16), FakeDestination.IN, FakeDestination.SINGLE, "lxst", "telephony"))
         manager._incoming_link_established(second_link)
         assert Signalling.STATUS_BUSY in second_link.sent_signals
+
+
+class TestAudioFrames:
+    """Phase 1b: CallManager relays already-encoded audio frames as
+    opaque bytes over the active call's Link. These tests never touch a
+    real codec -- that's CallAudioEngine's (Kotlin) job -- only that
+    send/pop/receive/drop/drain behave correctly around them."""
+
+    def _established_incoming_call(self, manager):
+        remote_dest = FakeDestination(FakeIdentity("99" * 16), FakeDestination.IN, FakeDestination.SINGLE, "lxst", "telephony")
+        link = FakeLink(remote_dest)
+        manager._incoming_link_established(link)
+        link.fire_remote_identified(make_remote_identity())
+        manager.answer_call()
+        assert manager.status == CallStatus.ESTABLISHED
+        return link
+
+    def test_send_requires_an_established_call(self, manager):
+        assert manager.send_audio_frame(b"\x01abc") is False
+
+    def test_send_fails_while_only_ringing(self, manager):
+        remote_dest = FakeDestination(FakeIdentity("99" * 16), FakeDestination.IN, FakeDestination.SINGLE, "lxst", "telephony")
+        link = FakeLink(remote_dest)
+        manager._incoming_link_established(link)
+        link.fire_remote_identified(make_remote_identity())
+        assert manager.status == CallStatus.RINGING_INCOMING
+        assert manager.send_audio_frame(b"\x01abc") is False
+        assert link.sent_audio_frames == []
+
+    def test_send_succeeds_once_established(self, manager):
+        link = self._established_incoming_call(manager)
+        assert manager.send_audio_frame(b"\x01abc") is True
+        assert link.sent_audio_frames == [b"\x01abc"]
+
+    def test_send_converts_a_non_bytes_frame_argument(self, manager):
+        # Real bug found via an actual failed on-device call: Chaquopy
+        # hands a Kotlin ByteArray across as a java.jarray('B') proxy
+        # object, not a native Python bytes -- msgpack.packb() can't
+        # serialize that as-is. send_audio_frame's own bytes(frame) call
+        # is what fixes it; this test stands in for that proxy type with
+        # a plain list of ints (also not `bytes`, also accepted by the
+        # real bytes(...) constructor) since a java.jarray isn't
+        # constructible outside a real Chaquopy runtime.
+        link = self._established_incoming_call(manager)
+        assert manager.send_audio_frame([0x01, 0x02, 0x03]) is True
+        assert link.sent_audio_frames == [b"\x01\x02\x03"]
+
+    def test_pop_returns_none_when_empty(self, manager):
+        assert manager.pop_audio_frame(timeout_s=0.05) is None
+
+    def test_received_frame_round_trips_through_pop(self, manager):
+        link = self._established_incoming_call(manager)
+        link.receive_audio_frame(b"\x01xyz")
+        assert manager.pop_audio_frame(timeout_s=0.05) == b"\x01xyz"
+
+    def test_frame_received_outside_established_is_dropped(self, manager):
+        remote_dest = FakeDestination(FakeIdentity("99" * 16), FakeDestination.IN, FakeDestination.SINGLE, "lxst", "telephony")
+        link = FakeLink(remote_dest)
+        manager._incoming_link_established(link)
+        link.fire_remote_identified(make_remote_identity())
+        assert manager.status == CallStatus.RINGING_INCOMING  # not yet answered
+        link.receive_audio_frame(b"\x01too-early")
+        assert manager.pop_audio_frame(timeout_s=0.05) is None
+
+    def test_frame_from_a_non_active_link_is_dropped(self, manager):
+        # Same "packet.link != self.link" guard _handle_signal already
+        # relies on (source resolves to the packet's own .link, per
+        # _packet_received) -- wire the manager's own callback onto an
+        # unrelated link to simulate a stray/late packet.
+        link = self._established_incoming_call(manager)
+        stray = FakeLink(FakeDestination(FakeIdentity("55" * 16), FakeDestination.IN, FakeDestination.SINGLE, "lxst", "telephony"))
+        stray.set_packet_callback(manager._packet_received)
+        stray.receive_audio_frame(b"\x01stray")
+        assert manager.pop_audio_frame(timeout_s=0.05) is None
+
+    def test_queue_drops_oldest_when_full(self, manager):
+        from nomadnet_web.call_manager import AUDIO_JITTER_MAX
+        link = self._established_incoming_call(manager)
+        for i in range(AUDIO_JITTER_MAX + 3):
+            link.receive_audio_frame(bytes([0x01, i]))
+
+        popped = []
+        while True:
+            frame = manager.pop_audio_frame(timeout_s=0.05)
+            if frame is None:
+                break
+            popped.append(frame)
+
+        assert len(popped) == AUDIO_JITTER_MAX
+        # The oldest 3 (i=0,1,2) were dropped -- the newest AUDIO_JITTER_MAX survive.
+        assert popped[0] == bytes([0x01, 3])
+        assert popped[-1] == bytes([0x01, AUDIO_JITTER_MAX + 2])
+
+    def test_queue_is_drained_on_call_end(self, manager):
+        link = self._established_incoming_call(manager)
+        link.receive_audio_frame(b"\x01leftover")
+        manager.hang_up()
+
+        assert manager.pop_audio_frame(timeout_s=0.05) is None
 
 
 class TestStatusDict:
