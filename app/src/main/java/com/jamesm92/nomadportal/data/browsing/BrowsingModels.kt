@@ -20,6 +20,16 @@ data class NodeInfo(
      * "Announces" sort option, per this doc comment's original
      * "sortable by ... announce-frequency" design note. */
     val announceCount: Int = 0,
+    /** True for this device's own hosted node. browser.py forces
+     * `favorited = true` server-side and `set_favorite()` no-ops for
+     * this node's own index — NodeRow must not offer a togglable
+     * favorite control for it (there's nothing to toggle; it's always
+     * favorited), or an optimistic UI override gets applied that the
+     * server can never reconcile, leaving the star stuck wrong. */
+    val isHosted: Boolean = false,
+    /** True for the configured default node. Same server-forced-favorite
+     * treatment as [isHosted] — see browser.py's `get_nodes()`. */
+    val isDefault: Boolean = false,
 )
 
 /** A node hash + page path — what an address bar entry and a back/forward history slot both are. */

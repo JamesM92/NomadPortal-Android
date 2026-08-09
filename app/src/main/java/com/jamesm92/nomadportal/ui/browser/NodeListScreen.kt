@@ -385,12 +385,29 @@ private fun NodeRow(node: NodeInfo, onClick: () -> Unit, onToggleFavorite: () ->
                 overflow = TextOverflow.Ellipsis,
             )
         }
-        IconButton(onClick = onToggleFavorite) {
+        if (node.isHosted || node.isDefault) {
+            // browser.py forces favorited=true server-side for these two
+            // and set_favorite() no-ops on the hosted node's own index —
+            // there's nothing to toggle. A normal tappable IconButton here
+            // would apply an optimistic override the server can never
+            // confirm (it always reports back `true`), leaving the star
+            // visibly stuck on whatever the last tap requested. Render it
+            // as a plain, non-interactive "always favorited" indicator
+            // instead of a control that silently does nothing.
             Icon(
-                imageVector = if (node.isFavorite) Icons.Filled.Favorite else Icons.Filled.FavoriteBorder,
-                contentDescription = if (node.isFavorite) "Unfavorite" else "Favorite",
-                tint = if (node.isFavorite) MaterialTheme.colorScheme.primary else NomadTextDim,
+                imageVector = Icons.Filled.Favorite,
+                contentDescription = if (node.isHosted) "Your hosted node — always favorited" else "Default node — always favorited",
+                tint = MaterialTheme.colorScheme.primary,
+                modifier = Modifier.padding(12.dp).size(24.dp),
             )
+        } else {
+            IconButton(onClick = onToggleFavorite) {
+                Icon(
+                    imageVector = if (node.isFavorite) Icons.Filled.Favorite else Icons.Filled.FavoriteBorder,
+                    contentDescription = if (node.isFavorite) "Unfavorite" else "Favorite",
+                    tint = if (node.isFavorite) MaterialTheme.colorScheme.primary else NomadTextDim,
+                )
+            }
         }
     }
 }

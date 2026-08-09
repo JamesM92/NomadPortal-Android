@@ -58,6 +58,8 @@ class RealBrowserRepository : BrowserRepository {
                 // browser.py's last_seen is unix seconds (float); NodeInfo wants millis.
                 lastAnnounceMillis = (obj.optDouble("last_seen", 0.0) * 1000).toLong(),
                 announceCount = obj.optInt("announce_count", 0),
+                isHosted = obj.optBoolean("is_hosted", false),
+                isDefault = obj.optBoolean("is_default", false),
             )
         }
     }
