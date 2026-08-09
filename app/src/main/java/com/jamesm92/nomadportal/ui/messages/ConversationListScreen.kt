@@ -26,6 +26,7 @@ import androidx.compose.material.icons.filled.Explore
 import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.filled.FavoriteBorder
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Badge
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.LocalMinimumInteractiveComponentSize
@@ -188,6 +189,17 @@ fun ConversationListScreen(
     )
     val allUsers = rememberStableOrder(sortedConversations, key = { it.contact.lxmfHash })
 
+    // Per-row unread badges (below) only surface once a section is
+    // expanded — collapse Favorites to read General messages (or vice
+    // versa) and there was previously no way to tell an unread message
+    // was sitting in the *other*, now-hidden section at all. Summed here
+    // so the section header itself can carry the same badge whether
+    // expanded or collapsed — a real on-device report ("need to still
+    // have the notification... to let us know where the unread message
+    // is" while already on this screen).
+    val favoritesUnread = favorites.sumOf { it.unreadCount }
+    val generalUnread = generalMessages.sumOf { it.unreadCount }
+
     // Exactly one of Favorites/General messages is ever open — per
     // explicit direction: opening one always closes the other, closing
     // one always opens the other (there's no "both closed"/"both open"
@@ -333,6 +345,7 @@ fun ConversationListScreen(
                 SectionHeader(
                     title = "Favorites",
                     count = favorites.size,
+                    unreadCount = favoritesUnread,
                     expanded = favoritesOpen,
                     onToggle = { favoritesOpen = !favoritesOpen },
                 )
@@ -355,6 +368,7 @@ fun ConversationListScreen(
                 SectionHeader(
                     title = "General messages",
                     count = generalMessages.size,
+                    unreadCount = generalUnread,
                     expanded = !favoritesOpen,
                     onToggle = { favoritesOpen = !favoritesOpen },
                 )
@@ -454,6 +468,12 @@ private fun SectionHeader(
     onToggle: () -> Unit,
     modifier: Modifier = Modifier,
     collapsible: Boolean = true,
+    // Sum of unreadCount across this section's rows — shown as a badge
+    // next to the title so a collapsed section (or the Users tab, which
+    // has no per-row badges of its own to speak of) still surfaces
+    // "there's an unread message in here" without needing to expand it
+    // first. 0 renders nothing, same convention as MessagesIconWithBadge.
+    unreadCount: Int = 0,
 ) {
     Row(
         modifier = modifier
@@ -465,13 +485,18 @@ private fun SectionHeader(
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.SpaceBetween,
     ) {
-        Text(
-            text = "$title ($count)",
-            style = MaterialTheme.typography.titleLarge.copy(
-                fontSize = MaterialTheme.typography.titleLarge.fontSize * 0.85f,
-            ),
-            color = MaterialTheme.colorScheme.secondary,
-        )
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Text(
+                text = "$title ($count)",
+                style = MaterialTheme.typography.titleLarge.copy(
+                    fontSize = MaterialTheme.typography.titleLarge.fontSize * 0.85f,
+                ),
+                color = MaterialTheme.colorScheme.secondary,
+            )
+            if (unreadCount > 0) {
+                Badge { Text(if (unreadCount > 99) "99+" else unreadCount.toString()) }
+            }
+        }
         if (collapsible) {
             Icon(
                 imageVector = if (expanded) Icons.Filled.ExpandLess else Icons.Filled.ExpandMore,
