@@ -16,6 +16,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.InsertDriveFile
 import androidx.compose.material.icons.filled.AudioFile
@@ -97,7 +98,18 @@ fun MessageBubble(message: Message, modifier: Modifier = Modifier) {
                 // ATTACHMENTS field — see messaging.py's own doc
                 // comment) shouldn't render an empty text line.
                 if (message.content.isNotBlank()) {
-                    Text(text = message.content, style = MaterialTheme.typography.bodyLarge)
+                    // SelectionContainer, not just a plain Text — per a
+                    // real on-device report ("we need the ability to
+                    // highlight / copy text from a conversation"), scoped
+                    // to just the message text (not the whole bubble, so
+                    // the attachment chip/timestamp/delivery-state rows
+                    // stay purely tap-driven, not swept into a text
+                    // selection). Long-press-drag brings up the same
+                    // native Cut/Copy/Paste-family toolbar as everywhere
+                    // else text is selectable in this app.
+                    SelectionContainer {
+                        Text(text = message.content, style = MaterialTheme.typography.bodyLarge)
+                    }
                 }
                 // Timestamp + delivery status share one small metadata
                 // row below the message text, both at half the message
