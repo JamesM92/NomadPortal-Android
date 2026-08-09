@@ -279,6 +279,7 @@ class CallManager:
                 # AttributeError-ing on self._rns.Destination below.
                 log.warning("place_call failed: engine not started yet")
                 return False, "Call engine not ready yet"
+            self._clear_terminal_state_locked()
             if self.status != CallStatus.IDLE:
                 log.warning("place_call failed: already in status %s", self.status)
                 return False, "Already on a call"
@@ -338,6 +339,7 @@ class CallManager:
 
     def _incoming_link_established(self, link) -> None:
         with self._lock:
+            self._clear_terminal_state_locked()
             if self.status != CallStatus.IDLE:
                 log.info("Incoming call while line busy, signalling BUSY")
                 self._send_signal(link, Signalling.STATUS_BUSY)
@@ -350,6 +352,7 @@ class CallManager:
 
     def _caller_identified(self, link, identity) -> None:
         with self._lock:
+            self._clear_terminal_state_locked()
             if self.status != CallStatus.IDLE:
                 log.info("Caller identified while line busy, signalling BUSY")
                 self._send_signal(link, Signalling.STATUS_BUSY)
@@ -505,18 +508,42 @@ class CallManager:
 
     def reset_after_end(self) -> None:
         """Clears a terminal state (ENDED/BUSY/REJECTED/FAILED) back to
-        IDLE so a new call can be placed/received — deliberately not
-        automatic: the UI needs a moment to actually show "call ended"
-        rather than the state instantly disappearing back to idle."""
+        IDLE so the *UI* can stop showing it — deliberately not called
+        automatically from _end_call itself: CallOverlay needs a moment
+        to actually show "call ended" rather than the state instantly
+        disappearing back to idle. This is a distinct concern from
+        _clear_terminal_state_locked(), which every call-starting path
+        also calls on its own regardless of whether the UI has gotten
+        around to this yet — see that method's own doc comment."""
         with self._lock:
-            if self.status in (CallStatus.ENDED, CallStatus.BUSY, CallStatus.REJECTED, CallStatus.FAILED):
-                self.status = CallStatus.IDLE
-                self.is_incoming = False
-                self.remote_identity_hash = None
-                self.started_at = None
-                self.established_at = None
-                self._answered = False
+            if self._clear_terminal_state_locked():
                 self._notify()
+
+    def _clear_terminal_state_locked(self) -> bool:
+        """Caller must already hold self._lock. Returns True if a
+        terminal state was actually cleared.
+
+        A real bug this fixes: place_call()/_incoming_link_established()/
+        _caller_identified() all used to gate on `status != IDLE` alone
+        to decide "line busy" — but a terminal status (ENDED/BUSY/
+        REJECTED/FAILED) means the *previous* call is over, not that the
+        line is still busy. Without this, any new call arriving (or
+        being placed) in the short window before the UI calls
+        reset_after_end() (CallOverlay's own auto-dismiss delay) was
+        incorrectly signalled BUSY / refused locally, even though
+        nothing was actually happening on this end anymore. Called from
+        every call-starting path directly (not just reset_after_end(),
+        which only runs on the UI's own timer) so a new call is never
+        stuck waiting on that timer to get through."""
+        if self.status in (CallStatus.ENDED, CallStatus.BUSY, CallStatus.REJECTED, CallStatus.FAILED):
+            self.status = CallStatus.IDLE
+            self.is_incoming = False
+            self.remote_identity_hash = None
+            self.started_at = None
+            self.established_at = None
+            self._answered = False
+            return True
+        return False
 
     # ------------------------------------------------------------------
     # Internal helpers

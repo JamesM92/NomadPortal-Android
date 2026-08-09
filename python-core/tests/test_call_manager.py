@@ -545,6 +545,59 @@ class TestResetAfterEnd:
         assert manager.status == CallStatus.RINGING_INCOMING
 
 
+class TestNotActuallyBusyAfterATerminalState:
+    """Real bug: place_call()/_incoming_link_established()/
+    _caller_identified() used to gate on `status != IDLE` alone -- a
+    terminal status (ENDED/BUSY/REJECTED/FAILED) meant "the previous
+    call is over," not "the line is still busy," but was treated as
+    busy anyway for the whole window before the UI got around to
+    calling reset_after_end() (CallOverlay's own auto-dismiss delay).
+    None of these tests call reset_after_end() themselves -- the whole
+    point is that a new call must get through without it."""
+
+    def test_new_incoming_call_succeeds_right_after_a_hangup(self, manager):
+        first_link = FakeLink(FakeDestination(FakeIdentity("99" * 16), FakeDestination.IN, FakeDestination.SINGLE, "lxst", "telephony"))
+        manager._incoming_link_established(first_link)
+        first_link.fire_remote_identified(make_remote_identity())
+        manager.hang_up()
+        assert manager.status == CallStatus.ENDED  # terminal, not yet reset
+
+        second_link = FakeLink(FakeDestination(FakeIdentity("77" * 16), FakeDestination.IN, FakeDestination.SINGLE, "lxst", "telephony"))
+        manager._incoming_link_established(second_link)
+        assert Signalling.STATUS_BUSY not in second_link.sent_signals
+        assert Signalling.STATUS_AVAILABLE in second_link.sent_signals
+
+        second_link.fire_remote_identified(FakeIdentity("77" * 16))
+        assert manager.status == CallStatus.RINGING_INCOMING
+        assert manager.remote_identity_hash == "77" * 16
+
+    def test_new_outbound_call_succeeds_right_after_a_hangup(self, manager):
+        first_link = FakeLink(FakeDestination(FakeIdentity("99" * 16), FakeDestination.IN, FakeDestination.SINGLE, "lxst", "telephony"))
+        manager._incoming_link_established(first_link)
+        first_link.fire_remote_identified(make_remote_identity())
+        manager.hang_up()
+        assert manager.status == CallStatus.ENDED  # terminal, not yet reset
+
+        remote = make_remote_identity()
+        FakeRNSModule.Identity.register(remote)
+        dest = FakeDestination(remote, FakeDestination.OUT, FakeDestination.SINGLE, "lxst", "telephony")
+        FakeTransport.add_path(dest.hash)
+        success, message = manager.place_call(REMOTE_HASH)
+        assert success is True
+
+    def test_still_correctly_busy_during_a_genuinely_active_call(self, manager):
+        # Sanity check the fix didn't over-correct: a real non-terminal
+        # active call must still refuse a second one.
+        first_link = FakeLink(FakeDestination(FakeIdentity("99" * 16), FakeDestination.IN, FakeDestination.SINGLE, "lxst", "telephony"))
+        manager._incoming_link_established(first_link)
+        first_link.fire_remote_identified(make_remote_identity())
+        assert manager.status == CallStatus.RINGING_INCOMING
+
+        second_link = FakeLink(FakeDestination(FakeIdentity("77" * 16), FakeDestination.IN, FakeDestination.SINGLE, "lxst", "telephony"))
+        manager._incoming_link_established(second_link)
+        assert Signalling.STATUS_BUSY in second_link.sent_signals
+
+
 class TestStatusDict:
     def test_reflects_current_state(self, manager):
         remote_dest = FakeDestination(FakeIdentity("99" * 16), FakeDestination.IN, FakeDestination.SINGLE, "lxst", "telephony")
