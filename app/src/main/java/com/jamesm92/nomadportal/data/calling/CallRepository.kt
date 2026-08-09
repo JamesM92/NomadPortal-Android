@@ -14,6 +14,10 @@ import kotlinx.coroutines.flow.Flow
 interface CallRepository {
     fun callState(): Flow<CallState>
 
+    /** Most recent call first — see CallHistoryEntry's own doc comment
+     * for why this doesn't survive an app restart yet. */
+    fun callHistory(): Flow<List<CallHistoryEntry>>
+
     /** [addressHex] may be a destination hash (a contact's already-
      * familiar LXMF address, for manual entry — real on-device request:
      * "we need the ability to manually enter a call address, if

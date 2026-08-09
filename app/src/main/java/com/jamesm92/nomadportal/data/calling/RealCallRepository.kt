@@ -7,6 +7,7 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.withContext
+import org.json.JSONArray
 import org.json.JSONObject
 
 /**
@@ -49,6 +50,30 @@ class RealCallRepository : CallRepository {
     // RealBrowserRepository's identical *1000 conversions).
     private fun JSONObject.optTimestampMillisOrNull(key: String): Long? =
         if (isNull(key)) null else (optDouble(key, 0.0) * 1000).toLong()
+
+    override fun callHistory(): Flow<List<CallHistoryEntry>> = flow {
+        while (true) {
+            emit(fetchHistory())
+            delay(POLL_INTERVAL_MS)
+        }
+    }.flowOn(Dispatchers.IO)
+
+    private fun fetchHistory(): List<CallHistoryEntry> {
+        val array = JSONArray(orchestrator.callAttr("get_call_history_json").toString())
+        return (0 until array.length()).map { i ->
+            val obj = array.getJSONObject(i)
+            CallHistoryEntry(
+                isIncoming = obj.optBoolean("is_incoming", false),
+                remoteIdentityHash = obj.optStringOrNull("remote_identity_hash"),
+                remoteName = obj.optStringOrNull("remote_name"),
+                startedAtMillis = obj.optTimestampMillisOrNull("started_at"),
+                establishedAtMillis = obj.optTimestampMillisOrNull("established_at"),
+                endedAtMillis = obj.optTimestampMillisOrNull("ended_at"),
+                status = CallStatusValue.fromWireValue(obj.optString("status", "ended")),
+                reason = obj.optStringOrNull("reason"),
+            )
+        }
+    }
 
     override suspend fun placeCall(addressHex: String): Boolean = withContext(Dispatchers.IO) {
         val obj = JSONObject(orchestrator.callAttr("place_call_json", addressHex).toString())

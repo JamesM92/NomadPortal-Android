@@ -33,6 +33,23 @@ data class CallState(
     }
 }
 
+/**
+ * One past call — [status] is always one of CallStatusValue's four
+ * terminal values (ENDED/BUSY/REJECTED/FAILED). In-memory only on the
+ * Python side for now (see call_manager.py's CallManager.history doc
+ * comment) — doesn't survive an app restart yet.
+ */
+data class CallHistoryEntry(
+    val isIncoming: Boolean,
+    val remoteIdentityHash: String?,
+    val remoteName: String?,
+    val startedAtMillis: Long?,
+    val establishedAtMillis: Long?,
+    val endedAtMillis: Long?,
+    val status: CallStatusValue,
+    val reason: String?,
+)
+
 enum class CallStatusValue {
     IDLE, CALLING, RINGING_OUTGOING, RINGING_INCOMING, CONNECTING, ESTABLISHED,
     ENDED, BUSY, REJECTED, FAILED;

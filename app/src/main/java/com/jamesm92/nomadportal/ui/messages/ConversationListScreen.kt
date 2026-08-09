@@ -21,8 +21,11 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.CallMade
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Call
+import androidx.compose.material.icons.filled.CallMissed
+import androidx.compose.material.icons.filled.CallReceived
 import androidx.compose.material.icons.filled.Campaign
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.ExpandLess
@@ -63,7 +66,9 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.jamesm92.nomadportal.data.calling.CallHistoryEntry
 import com.jamesm92.nomadportal.data.calling.CallRepository
+import com.jamesm92.nomadportal.data.calling.CallStatusValue
 import com.jamesm92.nomadportal.data.messaging.Contact
 import com.jamesm92.nomadportal.data.messaging.ConversationSummary
 import com.jamesm92.nomadportal.data.messaging.Message
@@ -79,6 +84,7 @@ import com.jamesm92.nomadportal.ui.components.SortOption
 import com.jamesm92.nomadportal.ui.components.dismissKeyboardOnTap
 import com.jamesm92.nomadportal.ui.components.rememberStableOrder
 import com.jamesm92.nomadportal.ui.theme.NomadAccent2
+import com.jamesm92.nomadportal.ui.theme.NomadError
 import com.jamesm92.nomadportal.ui.theme.NomadTextDim
 import kotlinx.coroutines.launch
 
@@ -497,7 +503,9 @@ fun ConversationListScreen(
                     }
                 }
             } else {
+                val callHistory by callRepository.callHistory().collectAsState(initial = emptyList())
                 CallsTab(
+                    history = callHistory,
                     onCallByAddress = { showCallByAddress = true },
                     onAnnounce = { scope.launch { callRepository.announceCallAddress() } },
                 )
@@ -754,17 +762,16 @@ private fun ConversationRow(
  */
 @Composable
 private fun CallsTab(
+    history: List<CallHistoryEntry>,
     onCallByAddress: () -> Unit,
     onAnnounce: () -> Unit,
 ) {
-    // Just the two call-specific actions plus a call-history area — per
+    // The two call-specific actions plus a real call-history list — per
     // explicit direction, no separate call-capable-contacts list here
     // (that duplicated what the Users tab's own new filter checkbox
-    // already covers). The history area is an honest empty state, not
-    // fabricated placeholder rows: Phase 1a (see call_manager.py's own
-    // doc comment) doesn't persist completed calls anywhere yet — a
-    // real call log is the natural next data source once calls actually
-    // happen, not built ahead of having anything real to show.
+    // already covers) and no fabricated placeholder rows either; an
+    // empty list still renders an honest "No calls yet" until
+    // call_manager.py's CallManager.history actually has entries.
     Column(modifier = Modifier.fillMaxSize()) {
         Row(
             modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 4.dp),
@@ -799,16 +806,86 @@ private fun CallsTab(
             }
         }
         HorizontalDivider()
-        Box(modifier = Modifier.fillMaxSize().weight(1f), contentAlignment = Alignment.Center) {
+        if (history.isEmpty()) {
+            Box(modifier = Modifier.fillMaxSize().weight(1f), contentAlignment = Alignment.Center) {
+                Text(
+                    text = "No calls yet",
+                    style = MaterialTheme.typography.bodyLarge.copy(
+                        fontSize = MaterialTheme.typography.bodyLarge.fontSize * 0.85f,
+                    ),
+                    color = NomadTextDim,
+                )
+            }
+        } else {
+            LazyColumn(modifier = Modifier.weight(1f)) {
+                items(history) { entry ->
+                    CallHistoryRow(entry)
+                    HorizontalDivider()
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun CallHistoryRow(entry: CallHistoryEntry) {
+    // A call that was never answered (no establishedAtMillis) reads as
+    // "missed" when incoming, regardless of the exact terminal status
+    // (busy/rejected/failed/timed-out ended all mean the same thing to
+    // the person who never picked up) — matches how every real phone's
+    // own call log collapses those cases into one "missed call" concept.
+    val wasAnswered = entry.establishedAtMillis != null
+    val (icon, iconTint) = when {
+        !entry.isIncoming -> Icons.AutoMirrored.Filled.CallMade to NomadTextDim
+        wasAnswered -> Icons.Filled.CallReceived to NomadAccent2
+        else -> Icons.Filled.CallMissed to NomadError
+    }
+    val label = when {
+        !entry.isIncoming && wasAnswered -> "Outgoing call"
+        !entry.isIncoming -> "Outgoing call — ${statusLabel(entry)}"
+        wasAnswered -> "Incoming call"
+        else -> "Missed call"
+    }
+    Row(
+        modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(12.dp),
+    ) {
+        Icon(imageVector = icon, contentDescription = null, tint = iconTint, modifier = Modifier.size(20.dp))
+        Column(modifier = Modifier.weight(1f)) {
             Text(
-                text = "No calls yet",
+                text = entry.remoteName ?: entry.remoteIdentityHash?.take(16) ?: "Unknown",
                 style = MaterialTheme.typography.bodyLarge.copy(
                     fontSize = MaterialTheme.typography.bodyLarge.fontSize * 0.85f,
                 ),
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+            Text(
+                text = label,
+                style = MaterialTheme.typography.bodyLarge.copy(
+                    fontSize = MaterialTheme.typography.bodyLarge.fontSize * 0.7f,
+                ),
                 color = NomadTextDim,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
             )
         }
+        Text(
+            text = formatRelativeTime(entry.endedAtMillis ?: 0L),
+            style = MaterialTheme.typography.bodyLarge.copy(
+                fontSize = MaterialTheme.typography.bodyLarge.fontSize * 0.7f,
+            ),
+            color = NomadTextDim,
+        )
     }
+}
+
+private fun statusLabel(entry: CallHistoryEntry): String = when (entry.status) {
+    CallStatusValue.BUSY -> "busy"
+    CallStatusValue.REJECTED -> "rejected"
+    CallStatusValue.FAILED -> "failed"
+    else -> "no answer"
 }
 
 /** Real message preview when one exists; otherwise falls back to the LXMF

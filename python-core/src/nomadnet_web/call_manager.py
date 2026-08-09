@@ -103,6 +103,12 @@ RING_TIMEOUT_S = 60
 CONNECT_TIMEOUT_S = 20
 PATH_WAIT_TIMEOUT_S = 15
 
+# History is in-memory only (see CallManager.__init__'s own doc comment)
+# — a fixed cap keeps a long-running process from accumulating this
+# forever, same defensive shape as LXMFPeerTracker's own real-world
+# bound (though that one's persisted and keyed by peer, not a flat list).
+HISTORY_MAX = 50
+
 
 class CallManager:
     """One call at a time (matches LXST's own single-line-busy model,
@@ -148,6 +154,19 @@ class CallManager:
         # tell a stray late signalling packet from the real answer path,
         # same guard LXST's own Telephone.answer() has.
         self._answered = False
+
+        # Real call history — a real on-device incoming call that ended
+        # near-instantly (the remote's own client apparently closed the
+        # link right after RINGING, with nothing further ever logged)
+        # showed two gaps at once: no visibility into *why* it ended,
+        # and no record of it having happened at all once the overlay
+        # dismissed. _end_call() is the one choke point every terminal
+        # transition already funnels through (hangup, remote hangup,
+        # busy, rejected, timeout) — recording there covers all of them
+        # with no risk of missing a path. In-memory only for now, capped
+        # at HISTORY_MAX; real persistence (surviving an app restart)
+        # can layer on once this shape has proven out.
+        self.history: list = []
 
     # ------------------------------------------------------------------
     # Setup
@@ -383,10 +402,13 @@ class CallManager:
     def _handle_signal(self, signal: int, source) -> None:
         with self._lock:
             if source != self.link:
+                log.info("Ignoring signal 0x%02x from a non-active link", signal)
                 return
             if signal == Signalling.STATUS_BUSY:
+                log.info("Remote signalled BUSY")
                 self._end_call(CallStatus.BUSY, "Remote is busy")
             elif signal == Signalling.STATUS_REJECTED:
+                log.info("Remote signalled REJECTED")
                 self._end_call(CallStatus.REJECTED, "Call was rejected")
             elif signal == Signalling.STATUS_AVAILABLE:
                 # Caller side only: line is free, identify ourselves —
@@ -420,30 +442,66 @@ class CallManager:
             was_ringing_incoming_unanswered = (
                 self.status == CallStatus.RINGING_INCOMING and not self._answered
             )
-            if self.link is not None:
+            link = self.link
+            if link is not None:
                 if was_ringing_incoming_unanswered:
-                    self._send_signal(self.link, Signalling.STATUS_REJECTED)
+                    self._send_signal(link, Signalling.STATUS_REJECTED)
                 try:
-                    if self.link.status == self._rns.Link.ACTIVE:
-                        self.link.teardown()
+                    if link.status == self._rns.Link.ACTIVE:
+                        link.teardown()
                 except Exception:
                     pass
-            self._end_call(CallStatus.ENDED, "Call ended")
+            # link.teardown() above can synchronously invoke
+            # _link_closed on the calling thread (confirmed real against
+            # the fake test Link — RLock is what makes that safe at all,
+            # see __init__'s own comment) — which already calls
+            # _end_call and clears self.link. A real bug this exact test
+            # suite caught: without this guard, hang_up() unconditionally
+            # called _end_call again right after, double-recording one
+            # hangup as two history entries. _end_call always clears
+            # self.link, so its absence here means the callback already
+            # ran; only call it ourselves if it didn't (covers real RNS
+            # deferring the callback instead, if it does).
+            if self.link is not None:
+                self._end_call(CallStatus.ENDED, "Call ended")
             return True, "Hung up"
 
     def _link_closed(self, link) -> None:
         with self._lock:
             if link != self.link:
                 return
+            log.info("Link closed (was in status %s)", self.status)
             if self.status not in (CallStatus.ENDED, CallStatus.BUSY, CallStatus.REJECTED, CallStatus.FAILED):
                 self._end_call(CallStatus.ENDED, "Remote hung up")
 
     def _end_call(self, status: str, reason: str) -> None:
         # Caller must already hold self._lock.
+        log.info(
+            "Call ended: status=%s reason=%s remote=%s incoming=%s",
+            status, reason, self.remote_identity_hash, self.is_incoming,
+        )
+        self._record_history(status, reason)
         self.status = status
         self.ended_reason = reason
         self.link = None
         self._notify()
+
+    def _record_history(self, status: str, reason: str) -> None:
+        # Caller must already hold self._lock.
+        self.history.insert(0, {
+            "is_incoming": self.is_incoming,
+            "remote_identity_hash": self.remote_identity_hash,
+            "started_at": self.started_at,
+            "established_at": self.established_at,
+            "ended_at": time.time(),
+            "status": status,
+            "reason": reason,
+        })
+        del self.history[HISTORY_MAX:]
+
+    def get_history(self) -> list:
+        with self._lock:
+            return list(self.history)
 
     def reset_after_end(self) -> None:
         """Clears a terminal state (ENDED/BUSY/REJECTED/FAILED) back to

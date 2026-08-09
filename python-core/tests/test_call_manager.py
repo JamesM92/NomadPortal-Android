@@ -415,6 +415,112 @@ class TestHangUp:
         assert manager.status == CallStatus.ENDED
 
 
+class TestCallHistory:
+    """Real on-device gap found: an incoming call that ended near-
+    instantly left zero record of having happened once the overlay
+    dismissed, alongside zero logged reason why. _end_call() is the one
+    choke point every terminal transition already funnels through
+    (hangup, remote hangup, busy, rejected, timeout) -- these tests
+    cover that every one of those paths actually gets recorded."""
+
+    def test_starts_empty(self, manager):
+        assert manager.get_history() == []
+
+    def test_hangup_records_an_entry(self, manager):
+        remote_dest = FakeDestination(FakeIdentity("99" * 16), FakeDestination.IN, FakeDestination.SINGLE, "lxst", "telephony")
+        link = FakeLink(remote_dest)
+        manager._incoming_link_established(link)
+        link.fire_remote_identified(make_remote_identity())
+        manager.hang_up()
+
+        history = manager.get_history()
+        assert len(history) == 1
+        entry = history[0]
+        assert entry["is_incoming"] is True
+        assert entry["remote_identity_hash"] == REMOTE_HASH
+        assert entry["status"] == CallStatus.ENDED
+        assert entry["started_at"] is not None
+        assert entry["ended_at"] is not None
+
+    def test_remote_hangup_records_an_entry(self, manager):
+        remote_dest = FakeDestination(FakeIdentity("99" * 16), FakeDestination.IN, FakeDestination.SINGLE, "lxst", "telephony")
+        link = FakeLink(remote_dest)
+        manager._incoming_link_established(link)
+        link.fire_remote_identified(make_remote_identity())
+        manager.answer_call()
+
+        link.teardown()  # simulates the remote end closing the link -- the
+                          # real on-device scenario this suite exists for
+        history = manager.get_history()
+        assert len(history) == 1
+        assert history[0]["status"] == CallStatus.ENDED
+        assert history[0]["reason"] == "Remote hung up"
+        assert history[0]["established_at"] is not None
+
+    def test_busy_records_an_entry(self, manager):
+        self_call = _place_outbound(manager)
+        self_call.fire_established()
+        self_call.receive_signal(Signalling.STATUS_BUSY)
+
+        history = manager.get_history()
+        assert len(history) == 1
+        assert history[0]["status"] == CallStatus.BUSY
+        assert history[0]["is_incoming"] is False
+
+    def test_rejected_records_an_entry(self, manager):
+        self_call = _place_outbound(manager)
+        self_call.fire_established()
+        self_call.receive_signal(Signalling.STATUS_AVAILABLE)
+        self_call.receive_signal(Signalling.STATUS_RINGING)
+        self_call.receive_signal(Signalling.STATUS_REJECTED)
+
+        history = manager.get_history()
+        assert len(history) == 1
+        assert history[0]["status"] == CallStatus.REJECTED
+
+    def test_most_recent_call_is_first(self, manager):
+        for i in range(3):
+            remote_dest = FakeDestination(FakeIdentity(f"{i:02x}" * 16), FakeDestination.IN, FakeDestination.SINGLE, "lxst", "telephony")
+            link = FakeLink(remote_dest)
+            manager._incoming_link_established(link)
+            link.fire_remote_identified(FakeIdentity(f"{i:02x}" * 16))
+            manager.hang_up()
+            # Real behavior, not test housekeeping: status stays ENDED
+            # (not IDLE) until reset_after_end() runs -- without it here,
+            # the *next* loop iteration's incoming link would see a
+            # non-IDLE status and get treated as "line busy" (signalled
+            # BUSY, no call ever created), matching what the real UI
+            # does once it's shown "call ended" for a moment (see
+            # CallOverlay's own auto-dismiss).
+            manager.reset_after_end()
+
+        history = manager.get_history()
+        assert len(history) == 3
+        assert history[0]["remote_identity_hash"] == "02" * 16
+        assert history[2]["remote_identity_hash"] == "00" * 16
+
+    def test_capped_at_history_max(self, manager):
+        from nomadnet_web.call_manager import HISTORY_MAX
+        for i in range(HISTORY_MAX + 10):
+            remote_dest = FakeDestination(FakeIdentity("aa" * 16), FakeDestination.IN, FakeDestination.SINGLE, "lxst", "telephony")
+            link = FakeLink(remote_dest)
+            manager._incoming_link_established(link)
+            link.fire_remote_identified(FakeIdentity("aa" * 16))
+            manager.hang_up()
+            manager.reset_after_end()  # see test_most_recent_call_is_first's own comment
+
+        assert len(manager.get_history()) == HISTORY_MAX
+
+
+def _place_outbound(manager):
+    remote = make_remote_identity()
+    FakeRNSModule.Identity.register(remote)
+    dest = FakeDestination(remote, FakeDestination.OUT, FakeDestination.SINGLE, "lxst", "telephony")
+    FakeTransport.add_path(dest.hash)
+    manager.place_call(REMOTE_HASH)
+    return manager.link
+
+
 class TestResetAfterEnd:
     def test_reset_clears_terminal_state_to_idle(self, manager):
         remote_dest = FakeDestination(FakeIdentity("99" * 16), FakeDestination.IN, FakeDestination.SINGLE, "lxst", "telephony")

@@ -2013,18 +2013,40 @@ def announce_call_address_json() -> str:
     return json.dumps({"success": True, "message": "Announced"})
 
 
+def _resolve_call_remote_name(remote_identity_hash) -> str | None:
+    """Shared by get_call_status_json (the live call) and
+    get_call_history_json (past calls) — same fallback chain
+    _conversation_entries() uses (live peer tracker →
+    RNS.Identity.recall_app_data → stored contact name → hash prefix) so
+    a call shows a real name whenever one's resolvable, not just a hash,
+    matching this app's messaging screens.
+
+    remote_identity_hash is an *identity* hash (CallManager's own
+    domain — see call_manager.py's doc comment on why calls are
+    identity-keyed, not destination-keyed). _recall_announced_name needs
+    a *destination* hash instead, so it can only be tried once a
+    matching LXMF peer record supplies one (peer["hash"] is that peer's
+    own lxmf.delivery destination hash) — with no matching peer, there's
+    no destination hash to look up at all, not just an empty result, so
+    that fallback tier is skipped entirely rather than called with the
+    wrong hash kind."""
+    if not remote_identity_hash:
+        return None
+    peers = _lxmf_tracker.get_peers() if _lxmf_tracker else []
+    peer = next((p for p in peers if p.get("identity_hash") == remote_identity_hash), None)
+    if not peer:
+        return None
+    return peer.get("name") or _recall_announced_name(peer["hash"]) or None
+
+
 def get_call_status_json() -> str:
     """Polled by Kotlin's CallRepository — status is one of
     CallManager.CallStatus's string values ("idle", "calling",
     "ringing_outgoing", "ringing_incoming", "connecting", "established",
-    "ended", "busy", "rejected", "failed"). remote_name resolves through
-    the same fallback chain _conversation_entries() uses (live peer
-    tracker → RNS.Identity.recall_app_data → stored contact name → hash
-    prefix) so an incoming call shows a real name whenever one's
-    resolvable, not just a hash, matching this app's messaging screens.
-    started_at/established_at are unix-seconds (nullable); Kotlin
-    multiplies by 1000, same convention as every other timestamp field
-    already crossing this bridge."""
+    "ended", "busy", "rejected", "failed"). started_at/established_at
+    are unix-seconds (nullable); Kotlin multiplies by 1000, same
+    convention as every other timestamp field already crossing this
+    bridge."""
     import json
     if _call_manager is None:
         return json.dumps({
@@ -2033,21 +2055,25 @@ def get_call_status_json() -> str:
             "ended_reason": None,
         })
     status = _call_manager.status_dict()
-    remote_identity_hash = status.get("remote_identity_hash")
-    remote_name = None
-    if remote_identity_hash:
-        # remote_identity_hash is an *identity* hash (CallManager's own
-        # domain — see call_manager.py's doc comment on why calls are
-        # identity-keyed, not destination-keyed). _recall_announced_name
-        # needs a *destination* hash instead, so it can only be tried
-        # once a matching LXMF peer record supplies one (peer["hash"] is
-        # that peer's own lxmf.delivery destination hash) — with no
-        # matching peer, there's no destination hash to look up at all,
-        # not just an empty result, so that fallback tier is skipped
-        # entirely rather than called with the wrong hash kind.
-        peers = _lxmf_tracker.get_peers() if _lxmf_tracker else []
-        peer = next((p for p in peers if p.get("identity_hash") == remote_identity_hash), None)
-        if peer:
-            remote_name = peer.get("name") or _recall_announced_name(peer["hash"]) or None
-    status["remote_name"] = remote_name
+    status["remote_name"] = _resolve_call_remote_name(status.get("remote_identity_hash"))
     return json.dumps(status)
+
+
+def get_call_history_json() -> str:
+    """[CallHistoryEntry] shape: is_incoming, remote_identity_hash,
+    remote_name (nullable, same resolution as get_call_status_json),
+    started_at/established_at/ended_at (unix seconds, established_at
+    nullable — never reached ESTABLISHED for a missed/rejected/busy
+    call), status (a terminal CallStatus value: ended/busy/rejected/
+    failed), reason. Most recent call first — see CallManager.history's
+    own doc comment for why this is in-memory only (not yet persisted
+    across an app restart) and capped at HISTORY_MAX entries."""
+    import json
+    if _call_manager is None:
+        return json.dumps([])
+    entries = []
+    for entry in _call_manager.get_history():
+        entry = dict(entry)
+        entry["remote_name"] = _resolve_call_remote_name(entry.get("remote_identity_hash"))
+        entries.append(entry)
+    return json.dumps(entries)
