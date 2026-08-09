@@ -1,6 +1,7 @@
 package com.jamesm92.nomadportal.ui.messages
 
 import android.content.res.Configuration
+import android.widget.Toast
 import androidx.compose.animation.animateContentSize
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -13,6 +14,8 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
@@ -20,6 +23,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Call
+import androidx.compose.material.icons.filled.Campaign
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.ExpandLess
 import androidx.compose.material.icons.filled.ExpandMore
@@ -28,6 +32,7 @@ import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.filled.FavoriteBorder
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Badge
+import androidx.compose.material3.Checkbox
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.LocalMinimumInteractiveComponentSize
@@ -58,6 +63,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.jamesm92.nomadportal.data.calling.CallRepository
 import com.jamesm92.nomadportal.data.messaging.Contact
 import com.jamesm92.nomadportal.data.messaging.ConversationSummary
 import com.jamesm92.nomadportal.data.messaging.Message
@@ -99,6 +105,7 @@ import kotlinx.coroutines.launch
 @Composable
 fun ConversationListScreen(
     repository: MessagingRepository,
+    callRepository: CallRepository,
     onOpenConversation: (contactHash: String) -> Unit,
     onBack: () -> Unit,
     onOpenNodes: () -> Unit,
@@ -108,6 +115,8 @@ fun ConversationListScreen(
     val context = LocalContext.current
     var searchQuery by remember { mutableStateOf("") }
     var showAddByAddress by remember { mutableStateOf(false) }
+    var showCallByAddress by remember { mutableStateOf(false) }
+    var callCapableOnly by remember { mutableStateOf(false) }
     var selectedTab by remember { mutableIntStateOf(0) }
     var sortOption by remember { mutableStateOf(SortOption.RECENT) }
 
@@ -310,6 +319,24 @@ fun ConversationListScreen(
                             )
                         },
                     )
+                    Tab(
+                        selected = selectedTab == 2,
+                        onClick = { selectedTab = 2 },
+                        text = {
+                            Text(
+                                "Calls",
+                                style = MaterialTheme.typography.bodyLarge.copy(
+                                    fontSize = MaterialTheme.typography.bodyLarge.fontSize * 0.8f,
+                                    fontWeight = if (selectedTab == 2) FontWeight.Bold else FontWeight.Normal,
+                                ),
+                                color = if (selectedTab == 2) {
+                                    MaterialTheme.colorScheme.primary
+                                } else {
+                                    NomadTextDim
+                                },
+                            )
+                        },
+                    )
                 }
             }
         },
@@ -320,21 +347,41 @@ fun ConversationListScreen(
                 .padding(top = innerPadding.calculateTopPadding())
                 .dismissKeyboardOnTap(),
         ) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                SearchField(
-                    query = searchQuery,
-                    onQueryChange = { searchQuery = it },
-                    placeholder = if (selectedTab == 0) "Search chats" else "Search users",
-                    modifier = Modifier.weight(1f),
-                )
-                // Search only finds already-known contacts (message
-                // history or a live announce heard) — this is the
-                // companion entry point for an address you already know
-                // but have neither messaged nor heard announce from yet.
-                IconButton(onClick = { showAddByAddress = true }) {
-                    Icon(Icons.Filled.Add, contentDescription = "Message address")
+            // Zeroed touch-target reservation on this row's icons — real
+            // on-device report: "there is to much dead space around the
+            // icons in the messages section." Same fix as every other
+            // dense icon row in this app (ConversationRow's own trailing
+            // icons, BrowserScreen's nav row, the TCP table) — an
+            // IconButton otherwise pads itself to the ~48dp accessibility
+            // minimum regardless of the icon's own size.
+            CompositionLocalProvider(LocalMinimumInteractiveComponentSize provides 0.dp) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    SearchField(
+                        query = searchQuery,
+                        onQueryChange = { searchQuery = it },
+                        placeholder = when (selectedTab) {
+                            0 -> "Search chats"
+                            1 -> "Search users"
+                            else -> "Search calls"
+                        },
+                        modifier = Modifier.weight(1f),
+                    )
+                    // Search only finds already-known contacts (message
+                    // history or a live announce heard) — this is the
+                    // companion entry point for an address you already
+                    // know but have neither messaged nor heard announce
+                    // from yet. Chats/Users only — the Calls tab has its
+                    // own dedicated "Call an address" entry point instead
+                    // (per explicit direction, moved out of this shared
+                    // row: "the phone icon should only be in the calls
+                    // sub tab of messages").
+                    if (selectedTab != 2) {
+                        IconButton(onClick = { showAddByAddress = true }, modifier = Modifier.size(32.dp)) {
+                            Icon(Icons.Filled.Add, contentDescription = "Message address", modifier = Modifier.size(20.dp))
+                        }
+                    }
+                    SortDropdown(selected = sortOption, onSelect = { sortOption = it })
                 }
-                SortDropdown(selected = sortOption, onSelect = { sortOption = it })
             }
 
             if (selectedTab == 0) {
@@ -358,6 +405,7 @@ fun ConversationListScreen(
                                 summary = summary,
                                 onClick = { onOpenConversation(summary.contact.lxmfHash) },
                                 onToggleFavorite = { toggleFavorite(summary) },
+                                onCall = { scope.launch { callRepository.placeCall(summary.contact.lxmfHash) } },
                                 onDelete = { pendingDelete = summary.contact },
                             )
                             HorizontalDivider()
@@ -381,33 +429,78 @@ fun ConversationListScreen(
                                 summary = summary,
                                 onClick = { onOpenConversation(summary.contact.lxmfHash) },
                                 onToggleFavorite = { toggleFavorite(summary) },
+                                onCall = { scope.launch { callRepository.placeCall(summary.contact.lxmfHash) } },
                                 onDelete = { pendingDelete = summary.contact },
                             )
                             HorizontalDivider()
                         }
                     }
                 }
-            } else {
+            } else if (selectedTab == 1) {
                 // Single-section tab — nothing else competing for space,
                 // so the count header stays non-collapsible (unlike
-                // Chats' two headers above).
-                SectionHeader(
-                    title = "Users",
-                    count = allUsers.size,
-                    expanded = true,
-                    onToggle = {},
-                    collapsible = false,
-                )
+                // Chats' two headers above). callCapableOnly is a plain
+                // filter over the same list Users already renders — per
+                // explicit direction, no separate call-capable-contacts
+                // list duplicating this one; that's what the Calls tab
+                // used to do and was removed.
+                val displayedUsers = if (callCapableOnly) allUsers.filter { it.contact.isCallCapable } else allUsers
+                Row(
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                ) {
+                    Text(
+                        text = "Users (${displayedUsers.size})",
+                        style = MaterialTheme.typography.titleLarge.copy(
+                            fontSize = MaterialTheme.typography.titleLarge.fontSize * 0.85f,
+                        ),
+                        color = MaterialTheme.colorScheme.secondary,
+                    )
+                    Row(
+                        modifier = Modifier
+                            .clickable { callCapableOnly = !callCapableOnly }
+                            .padding(vertical = 4.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(4.dp),
+                    ) {
+                        // onCheckedChange = null (not a redundant second
+                        // { callCapableOnly = it }) — the enclosing Row
+                        // already owns the tap via its own .clickable, a
+                        // real on-device check showed both firing on the
+                        // same tap raced and could net-cancel back to no
+                        // visible change. null disables the Checkbox's
+                        // own independent click handling while still
+                        // rendering the correct checked state, the
+                        // standard Compose pattern for a checkbox inside
+                        // a larger clickable row.
+                        Checkbox(checked = callCapableOnly, onCheckedChange = null)
+                        Icon(Icons.Filled.Call, contentDescription = null, tint = NomadAccent2, modifier = Modifier.size(16.dp))
+                        Text(
+                            text = "Call-capable only",
+                            style = MaterialTheme.typography.bodyLarge.copy(
+                                fontSize = MaterialTheme.typography.bodyLarge.fontSize * 0.7f,
+                            ),
+                            color = NomadTextDim,
+                        )
+                    }
+                }
                 LazyColumn(modifier = Modifier.weight(1f)) {
-                    items(allUsers, key = { it.contact.lxmfHash }) { summary ->
+                    items(displayedUsers, key = { it.contact.lxmfHash }) { summary ->
                         ConversationRow(
                             summary = summary,
                             onClick = { onOpenConversation(summary.contact.lxmfHash) },
                             onToggleFavorite = { toggleFavorite(summary) },
+                            onCall = { scope.launch { callRepository.placeCall(summary.contact.lxmfHash) } },
                         )
                         HorizontalDivider()
                     }
                 }
+            } else {
+                CallsTab(
+                    onCallByAddress = { showCallByAddress = true },
+                    onAnnounce = { scope.launch { callRepository.announceCallAddress() } },
+                )
             }
         }
     }
@@ -450,6 +543,41 @@ fun ConversationListScreen(
                 // entry if one doesn't exist yet.
                 scope.launch { repository.setFavorite(hash, true) }
                 onOpenConversation(hash)
+            },
+        )
+    }
+
+    if (showCallByAddress) {
+        AddByAddressDialog(
+            title = "Call an address",
+            onDismiss = { showCallByAddress = false },
+            onConfirm = { hash ->
+                showCallByAddress = false
+                // Same convention as "Message an address" above, per
+                // explicit direction ("manually entering a phone address
+                // auto adds the contact as a favorite as well"): an
+                // address entered by hand is one the user already
+                // specifically cares about. setFavorite upserts a
+                // contact entry if one doesn't exist yet — this is also
+                // what "automatically attaches itself to the associated
+                // user if we can" (also explicitly requested) actually
+                // means here: CallManager.resolve_identity() and
+                // set_contact_favorite() both key off the same address
+                // shape (an LXMF-style destination hash), so a hash that
+                // resolves to a real identity for the call also becomes
+                // (or already was) that same contact's own entry — there
+                // isn't a separate "call contact" identity to reconcile.
+                scope.launch {
+                    // placeCall's own failure reason was previously
+                    // discarded here — a real gap found on-device: a
+                    // failed manual call gave zero visible feedback,
+                    // the dialog just closed as if it had worked.
+                    val started = callRepository.placeCall(hash)
+                    if (!started) {
+                        Toast.makeText(context, "Couldn't place that call", Toast.LENGTH_SHORT).show()
+                    }
+                    repository.setFavorite(hash, true)
+                }
             },
         )
     }
@@ -515,6 +643,7 @@ private fun ConversationRow(
     summary: ConversationSummary,
     onClick: () -> Unit,
     onToggleFavorite: () -> Unit,
+    onCall: () -> Unit,
     // Null on the Users tab — deleting a "chat" only makes sense where
     // there's actual history/state to clear, per explicit request
     // ("delete chats from our chats tab").
@@ -574,25 +703,21 @@ private fun ConversationRow(
         // control in this app (BrowserScreen's nav row, the TCP table).
         CompositionLocalProvider(LocalMinimumInteractiveComponentSize provides 0.dp) {
             if (summary.contact.isCallCapable) {
-                // Phase 0 of a real voice-call feature (see
-                // call_tracker.py's own doc comment): plain, non-
-                // interactive for now — a "this contact's client
-                // supports calls" signal, not a working call button yet.
-                // Per explicit direction, this same icon is the intended
-                // eventual "start a call with them" tap target once
-                // there's an actual call feature to wire it to — green
-                // (NomadAccent2, the same "confirmed/good" green
-                // FetchStatusDot already uses for a successful page
-                // load) rather than dimmed, since a confirmed call
-                // announce is the one case this icon is ever shown at
-                // all, and it's going to be the actual click-to-call
-                // target.
-                Icon(
-                    imageVector = Icons.Filled.Call,
-                    contentDescription = "Supports voice calls",
-                    tint = NomadAccent2,
-                    modifier = Modifier.size(20.dp).padding(end = 4.dp),
-                )
+                // Phase 1a: now a real tap-to-call target (Phase 0 shipped
+                // it as plain/non-interactive first — "the icon will
+                // eventually become the way to start a phone call with
+                // them," now true). Green (NomadAccent2, the same
+                // "confirmed/good" green FetchStatusDot uses for a
+                // successful page load) since a confirmed call announce
+                // is the only case this icon shows at all.
+                IconButton(onClick = onCall, modifier = Modifier.size(32.dp)) {
+                    Icon(
+                        imageVector = Icons.Filled.Call,
+                        contentDescription = "Call ${summary.contact.displayName}",
+                        tint = NomadAccent2,
+                        modifier = Modifier.size(20.dp),
+                    )
+                }
             }
             IconButton(onClick = onToggleFavorite, modifier = Modifier.size(32.dp)) {
                 Icon(
@@ -612,6 +737,76 @@ private fun ConversationRow(
                     )
                 }
             }
+        }
+    }
+}
+
+/**
+ * The Calls tab: the two call-specific actions that used to sit in the
+ * shared search row on every tab (moved out per explicit direction —
+ * "the phone icon should only be in the calls sub tab of messages"),
+ * plus a list of every known contact who's ever announced call support
+ * (Phase 0's own signal — see call_tracker.py), each tappable to call
+ * directly. Phase 1a is signalling only (see call_manager.py's own doc
+ * comment) — this tab surfaces what's real today (who's reachable, a
+ * way to reach someone new) without pretending to be a call log, which
+ * needs actual call sessions to exist first.
+ */
+@Composable
+private fun CallsTab(
+    onCallByAddress: () -> Unit,
+    onAnnounce: () -> Unit,
+) {
+    // Just the two call-specific actions plus a call-history area — per
+    // explicit direction, no separate call-capable-contacts list here
+    // (that duplicated what the Users tab's own new filter checkbox
+    // already covers). The history area is an honest empty state, not
+    // fabricated placeholder rows: Phase 1a (see call_manager.py's own
+    // doc comment) doesn't persist completed calls anywhere yet — a
+    // real call log is the natural next data source once calls actually
+    // happen, not built ahead of having anything real to show.
+    Column(modifier = Modifier.fillMaxSize()) {
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 4.dp),
+            horizontalArrangement = Arrangement.spacedBy(4.dp),
+        ) {
+            TextButton(onClick = onCallByAddress) {
+                Icon(
+                    imageVector = Icons.Filled.Call,
+                    contentDescription = null,
+                    tint = NomadAccent2,
+                    modifier = Modifier.size(18.dp),
+                )
+                Spacer(modifier = Modifier.width(6.dp))
+                Text("Call an address")
+            }
+            // A real periodic loop already re-announces this device's
+            // own call address automatically, but a manual trigger
+            // matters on its own too — real on-device request:
+            // "eventually the call address auto announce will need its
+            // own auto announce toggle and manual announce toggle." This
+            // is the manual half; the toggle UI is still deliberately
+            // deferred.
+            TextButton(onClick = onAnnounce) {
+                Icon(
+                    imageVector = Icons.Filled.Campaign,
+                    contentDescription = null,
+                    tint = NomadTextDim,
+                    modifier = Modifier.size(18.dp),
+                )
+                Spacer(modifier = Modifier.width(6.dp))
+                Text("Announce")
+            }
+        }
+        HorizontalDivider()
+        Box(modifier = Modifier.fillMaxSize().weight(1f), contentAlignment = Alignment.Center) {
+            Text(
+                text = "No calls yet",
+                style = MaterialTheme.typography.bodyLarge.copy(
+                    fontSize = MaterialTheme.typography.bodyLarge.fontSize * 0.85f,
+                ),
+                color = NomadTextDim,
+            )
         }
     }
 }
