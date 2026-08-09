@@ -306,9 +306,7 @@ private fun SectionHeader(
     ) {
         Text(
             text = "$title ($count)",
-            style = MaterialTheme.typography.titleLarge.copy(
-                fontSize = MaterialTheme.typography.titleLarge.fontSize * 0.85f,
-            ),
+            style = MaterialTheme.typography.titleMedium,
             color = MaterialTheme.colorScheme.secondary,
         )
         if (collapsible) {
@@ -338,16 +336,13 @@ private fun NodeRow(node: NodeInfo, onClick: () -> Unit, onToggleFavorite: () ->
     ) {
         FetchStatusDot(node.lastFetchOk)
         Column(modifier = Modifier.weight(1f)) {
-            // Sizes are fractions of the theme's own bodyLarge size, not
-            // fixed sp values — so this row's relative "smaller than
-            // normal body text" density holds regardless of the user's
-            // Settings → text size multiplier (NomadPortalTheme's
-            // textScale), rather than needing its own separate setting.
+            // bodyMedium/bodySmall (real type-scale roles, not fractions
+            // of bodyLarge) — still scale with the user's Settings → text
+            // size multiplier exactly like bodyLarge does, since every
+            // role goes through the same `* scale` in nomadTypography().
             Text(
                 text = node.displayName,
-                style = MaterialTheme.typography.bodyLarge.copy(
-                    fontSize = MaterialTheme.typography.bodyLarge.fontSize * 0.85f,
-                ),
+                style = MaterialTheme.typography.bodyMedium,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
             )
@@ -358,9 +353,7 @@ private fun NodeRow(node: NodeInfo, onClick: () -> Unit, onToggleFavorite: () ->
                 // than the misleading "-1 hops".
                 text = "${if (node.hopCount < 0) "?" else node.hopCount.toString()} hop${if (node.hopCount == 1) "" else "s"}" +
                     " · ${formatRelativeTime(node.lastAnnounceMillis)} · ${node.hash.take(8)}…",
-                style = MaterialTheme.typography.bodyLarge.copy(
-                    fontSize = MaterialTheme.typography.bodyLarge.fontSize * 0.7f,
-                ),
+                style = MaterialTheme.typography.bodySmall,
                 color = NomadTextDim,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,

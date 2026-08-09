@@ -112,16 +112,17 @@ fun MessageBubble(message: Message, modifier: Modifier = Modifier) {
                     }
                 }
                 // Timestamp + delivery status share one small metadata
-                // row below the message text, both at half the message
-                // text's size — they're secondary information, not
+                // row below the message text — secondary information, not
                 // something that should compete with the content itself
-                // for visual weight.
+                // for visual weight. labelSmall, not the original half-size
+                // multiplier (~8sp) — that computed smaller than any real
+                // M3 role goes, a genuine legibility fix picked up for
+                // free by moving onto the real type scale, not a
+                // deliberate size this row still needs to hit.
                 Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
                     Text(
                         text = formatMessageTimestamp(message.timestampMillis),
-                        style = MaterialTheme.typography.bodyLarge.copy(
-                            fontSize = MaterialTheme.typography.bodyLarge.fontSize * 0.5f,
-                        ),
+                        style = MaterialTheme.typography.labelSmall,
                         color = NomadTextDim,
                     )
                     message.deliveryState?.let { state ->
@@ -131,9 +132,7 @@ fun MessageBubble(message: Message, modifier: Modifier = Modifier) {
                                 DeliveryState.DELIVERED -> "Delivered"
                                 DeliveryState.FAILED -> "Failed"
                             },
-                            style = MaterialTheme.typography.bodyLarge.copy(
-                                fontSize = MaterialTheme.typography.bodyLarge.fontSize * 0.5f,
-                            ),
+                            style = MaterialTheme.typography.labelSmall,
                             color = NomadTextDim,
                         )
                     }
@@ -254,17 +253,13 @@ private fun AttachmentContent(attachment: Attachment, modifier: Modifier = Modif
                 Column {
                     Text(
                         text = attachment.filename,
-                        style = MaterialTheme.typography.bodyLarge.copy(
-                            fontSize = MaterialTheme.typography.bodyLarge.fontSize * 0.85f,
-                        ),
+                        style = MaterialTheme.typography.bodyMedium,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
                     )
                     Text(
                         text = formatFileSize(attachment.sizeBytes),
-                        style = MaterialTheme.typography.bodyLarge.copy(
-                            fontSize = MaterialTheme.typography.bodyLarge.fontSize * 0.6f,
-                        ),
+                        style = MaterialTheme.typography.labelSmall,
                         color = NomadTextDim,
                     )
                 }

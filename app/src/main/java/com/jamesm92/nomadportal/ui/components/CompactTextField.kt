@@ -57,7 +57,7 @@ fun CompactTextField(
         onValueChange = onValueChange,
         modifier = modifier,
         textStyle = TextStyle(
-            fontSize = MaterialTheme.typography.bodyLarge.fontSize * 0.8f,
+            fontSize = MaterialTheme.typography.bodyMedium.fontSize,
             textAlign = textAlign,
             color = MaterialTheme.colorScheme.onSurface,
         ),
@@ -80,7 +80,7 @@ fun CompactTextField(
                         Text(
                             it,
                             style = TextStyle(
-                                fontSize = MaterialTheme.typography.bodyLarge.fontSize * 0.8f,
+                                fontSize = MaterialTheme.typography.bodyMedium.fontSize,
                                 color = NomadTextDim,
                             ),
                         )

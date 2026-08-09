@@ -65,8 +65,7 @@ fun MinutesField(
         value = text,
         onValueChange = { new -> if (new.length <= 5 && new.all { it.isDigit() }) text = new },
         modifier = modifier.onFocusChanged { if (!it.isFocused) commit() },
-        textStyle = MaterialTheme.typography.bodyLarge.copy(
-            fontSize = MaterialTheme.typography.bodyLarge.fontSize * 0.75f,
+        textStyle = MaterialTheme.typography.labelMedium.copy(
             textAlign = TextAlign.Center,
             color = MaterialTheme.colorScheme.onSurface,
         ),

@@ -67,6 +67,7 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import com.jamesm92.nomadportal.connectivity.InterfaceController
 import com.jamesm92.nomadportal.connectivity.TcpConnection
 import com.jamesm92.nomadportal.connectivity.TcpConnectionsRepository
@@ -187,15 +188,34 @@ fun SettingsScreen(
                             onClick = { selectedTab = index },
                             text = {
                                 // 6 tabs sharing one row leaves little
-                                // width each — smaller fontSize plus an
-                                // explicit maxLines=1/no-wrap keeps every
-                                // label ("Bluetooth" is the longest) on
-                                // one line instead of wrapping to two and
-                                // blowing out the tab row's height.
+                                // width each — a deliberate, scoped
+                                // exception below the type scale, not a
+                                // reintroduction of the bodyLarge-fraction
+                                // anti-pattern the rest of this app's
+                                // typography was migrated off of. Real
+                                // on-device check: labelSmall (11sp, M3's
+                                // own smallest defined role) still
+                                // truncates "Bluetooth" — no real semantic
+                                // role fits here, so this stays a named,
+                                // commented exception (matching the
+                                // android-compose-app-design skill's own
+                                // allowance for information-dense UI, e.g.
+                                // a compact table) rather than force a
+                                // role that visibly breaks. 9.6sp is this
+                                // row's original tuned value (confirmed via
+                                // git — unchanged by this migration).
+                                // maxLines=1/softWrap=false's actual job
+                                // was always "truncate rather than wrap to
+                                // 2 lines and blow out the row's height,"
+                                // not "guarantee zero truncation" — even
+                                // pre-migration, "Bluetooth" ellipsizing
+                                // was the accepted worst case, confirmed
+                                // directly against the pre-Phase-T code,
+                                // not assumed.
                                 Text(
                                     label,
-                                    style = MaterialTheme.typography.bodyLarge.copy(
-                                        fontSize = MaterialTheme.typography.bodyLarge.fontSize * 0.6f,
+                                    style = MaterialTheme.typography.labelSmall.copy(
+                                        fontSize = 9.6.sp,
                                         fontWeight = if (selectedTab == index) FontWeight.Bold else FontWeight.Normal,
                                     ),
                                     color = if (selectedTab == index) {
@@ -580,9 +600,7 @@ private fun SectionHeaderWithKillSwitch(title: String, onKill: () -> Unit) {
             Text(
                 "Kill",
                 color = MaterialTheme.colorScheme.error,
-                style = MaterialTheme.typography.bodyLarge.copy(
-                    fontSize = MaterialTheme.typography.bodyLarge.fontSize * 0.85f,
-                ),
+                style = MaterialTheme.typography.bodyMedium,
             )
         }
     }
@@ -627,18 +645,14 @@ private fun AddressRow(label: String, value: String?, placeholder: String = "Not
     Column(modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp)) {
         Text(
             text = label,
-            style = MaterialTheme.typography.bodyLarge.copy(
-                fontSize = MaterialTheme.typography.bodyLarge.fontSize * 0.8f,
-            ),
+            style = MaterialTheme.typography.bodySmall,
             color = NomadTextDim,
         )
         Row(verticalAlignment = Alignment.CenterVertically) {
             Text(
                 text = value ?: placeholder,
                 fontFamily = if (value != null) NomadMono else null,
-                style = MaterialTheme.typography.bodyLarge.copy(
-                    fontSize = MaterialTheme.typography.bodyLarge.fontSize * 0.85f,
-                ),
+                style = MaterialTheme.typography.bodyMedium,
                 color = if (value != null) MaterialTheme.colorScheme.onSurface else NomadTextDim,
                 modifier = Modifier.weight(1f),
             )
@@ -675,9 +689,7 @@ private fun AddressRow(label: String, value: String?, placeholder: String = "Not
  */
 @Composable
 private fun TcpConnectionsTableHeader() {
-    val labelStyle = MaterialTheme.typography.bodyLarge.copy(
-        fontSize = MaterialTheme.typography.bodyLarge.fontSize * 0.7f,
-    )
+    val labelStyle = MaterialTheme.typography.labelSmall
     Row(
         modifier = Modifier.fillMaxWidth().padding(start = 16.dp, end = 16.dp, top = 4.dp),
         horizontalArrangement = Arrangement.spacedBy(4.dp),
@@ -867,13 +879,15 @@ private fun InterfaceAnnounceTab(
     onAnnounceMaxChange: (seconds: Int) -> Unit,
     onAutoAnnounceIntervalChange: (seconds: Int) -> Unit,
 ) {
-    // Smaller than InterfaceAnnounceTab's original 0.85f/0.7f — per
-    // explicit feedback that the settings *sub-tabs* specifically (not
-    // Main) run oversized; this composable is sub-tab-only (Main never
-    // renders per-interface fields), so it's safe to shrink further
-    // without touching Main's own text sizes.
-    val labelStyle = MaterialTheme.typography.bodyLarge.copy(fontSize = MaterialTheme.typography.bodyLarge.fontSize * 0.75f)
-    val hintStyle = MaterialTheme.typography.bodyLarge.copy(fontSize = MaterialTheme.typography.bodyLarge.fontSize * 0.65f)
+    // Smaller than Main's own text — per explicit feedback that the
+    // settings *sub-tabs* specifically (not Main) run oversized; this
+    // composable is sub-tab-only (Main never renders per-interface
+    // fields), so it's safe to shrink further without touching Main's
+    // own text sizes. labelMedium/labelSmall (not a hand-derived
+    // fraction of bodyLarge) — two distinct label-tier roles preserves
+    // the original "label bigger than hint" relationship exactly.
+    val labelStyle = MaterialTheme.typography.labelMedium
+    val hintStyle = MaterialTheme.typography.labelSmall
 
     Column(modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 6.dp)) {
         Text("Message (minutes)", style = labelStyle)

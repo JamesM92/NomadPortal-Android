@@ -404,7 +404,7 @@ private fun PanelFrame(enabled: Boolean, disabledHint: String, content: @Composa
         if (enabled) {
             content()
         } else {
-            Text(disabledHint, style = MaterialTheme.typography.bodyLarge.copy(fontSize = MaterialTheme.typography.bodyLarge.fontSize * 0.85f), color = NomadTextDim)
+            Text(disabledHint, style = MaterialTheme.typography.bodyMedium, color = NomadTextDim)
         }
     }
 }
@@ -435,7 +435,7 @@ private fun LinkPanel(enabled: Boolean, initialLabel: String, onInsert: (destina
         Column {
             Text(
                 "Same-node page (e.g. /page/other.mu) or another node's hash:path address",
-                style = MaterialTheme.typography.bodyLarge.copy(fontSize = MaterialTheme.typography.bodyLarge.fontSize * 0.75f),
+                style = MaterialTheme.typography.bodySmall,
                 color = NomadTextDim,
             )
             Row(
@@ -513,7 +513,7 @@ private fun StructurePanel(
             } else {
                 Text(
                     "Tap into a paragraph first to set its heading level.",
-                    style = MaterialTheme.typography.bodyLarge.copy(fontSize = MaterialTheme.typography.bodyLarge.fontSize * 0.85f),
+                    style = MaterialTheme.typography.bodyMedium,
                     color = NomadTextDim,
                 )
             }
@@ -695,7 +695,7 @@ private fun RawPassthroughBlockRow(
     Column(modifier = modifier.padding(horizontal = 8.dp, vertical = 4.dp)) {
         Text(
             text = "Editing raw markup — a table/literal block/comment/link this editor doesn't richly model",
-            style = MaterialTheme.typography.bodyLarge.copy(fontSize = MaterialTheme.typography.bodyLarge.fontSize * 0.6f),
+            style = MaterialTheme.typography.labelSmall,
             color = NomadTextDim,
         )
         BasicTextField(

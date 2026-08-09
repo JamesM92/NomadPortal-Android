@@ -64,9 +64,7 @@ fun SortDropdown(
             // carries that context for accessibility.
             Text(
                 text = selected.label,
-                style = MaterialTheme.typography.bodyLarge.copy(
-                    fontSize = MaterialTheme.typography.bodyLarge.fontSize * 0.75f,
-                ),
+                style = MaterialTheme.typography.labelMedium,
                 color = NomadTextDim,
             )
             Icon(

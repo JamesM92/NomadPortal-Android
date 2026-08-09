@@ -63,7 +63,6 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import com.jamesm92.nomadportal.data.calling.CallHistoryEntry
 import com.jamesm92.nomadportal.data.calling.CallRepository
 import com.jamesm92.nomadportal.data.calling.CallStatusValue
@@ -282,8 +281,7 @@ fun ConversationListScreen(
                         text = {
                             Text(
                                 "Chats",
-                                style = MaterialTheme.typography.bodyLarge.copy(
-                                    fontSize = MaterialTheme.typography.bodyLarge.fontSize * 0.8f,
+                                style = MaterialTheme.typography.labelMedium.copy(
                                     fontWeight = if (selectedTab == 0) FontWeight.Bold else FontWeight.Normal,
                                 ),
                                 color = if (selectedTab == 0) {
@@ -300,8 +298,7 @@ fun ConversationListScreen(
                         text = {
                             Text(
                                 "Users",
-                                style = MaterialTheme.typography.bodyLarge.copy(
-                                    fontSize = MaterialTheme.typography.bodyLarge.fontSize * 0.8f,
+                                style = MaterialTheme.typography.labelMedium.copy(
                                     fontWeight = if (selectedTab == 1) FontWeight.Bold else FontWeight.Normal,
                                 ),
                                 color = if (selectedTab == 1) {
@@ -318,8 +315,7 @@ fun ConversationListScreen(
                         text = {
                             Text(
                                 "Calls",
-                                style = MaterialTheme.typography.bodyLarge.copy(
-                                    fontSize = MaterialTheme.typography.bodyLarge.fontSize * 0.8f,
+                                style = MaterialTheme.typography.labelMedium.copy(
                                     fontWeight = if (selectedTab == 2) FontWeight.Bold else FontWeight.Normal,
                                 ),
                                 color = if (selectedTab == 2) {
@@ -445,9 +441,7 @@ fun ConversationListScreen(
                 ) {
                     Text(
                         text = "Users (${displayedUsers.size})",
-                        style = MaterialTheme.typography.titleLarge.copy(
-                            fontSize = MaterialTheme.typography.titleLarge.fontSize * 0.85f,
-                        ),
+                        style = MaterialTheme.typography.titleMedium,
                         color = MaterialTheme.colorScheme.secondary,
                     )
                     Row(
@@ -471,9 +465,7 @@ fun ConversationListScreen(
                         Icon(Icons.Filled.Call, contentDescription = null, tint = NomadAccent2, modifier = Modifier.size(16.dp))
                         Text(
                             text = "Call-capable only",
-                            style = MaterialTheme.typography.bodyLarge.copy(
-                                fontSize = MaterialTheme.typography.bodyLarge.fontSize * 0.7f,
-                            ),
+                            style = MaterialTheme.typography.labelSmall,
                             color = NomadTextDim,
                         )
                     }
@@ -613,9 +605,7 @@ private fun SectionHeader(
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             Text(
                 text = "$title ($count)",
-                style = MaterialTheme.typography.titleLarge.copy(
-                    fontSize = MaterialTheme.typography.titleLarge.fontSize * 0.85f,
-                ),
+                style = MaterialTheme.typography.titleMedium,
                 color = MaterialTheme.colorScheme.secondary,
             )
             if (unreadCount > 0) {
@@ -659,17 +649,13 @@ private fun ConversationRow(
         Column(modifier = Modifier.weight(1f)) {
             Text(
                 text = summary.contact.displayName,
-                style = MaterialTheme.typography.bodyLarge.copy(
-                    fontSize = MaterialTheme.typography.bodyLarge.fontSize * 0.85f,
-                ),
+                style = MaterialTheme.typography.bodyMedium,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
             )
             Text(
                 text = subtitleFor(summary.contact, summary.lastMessage),
-                style = MaterialTheme.typography.bodyLarge.copy(
-                    fontSize = MaterialTheme.typography.bodyLarge.fontSize * 0.7f,
-                ),
+                style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
@@ -685,7 +671,7 @@ private fun ConversationRow(
             ) {
                 Text(
                     text = summary.unreadCount.toString(),
-                    style = MaterialTheme.typography.bodyLarge.copy(fontSize = 12.sp),
+                    style = MaterialTheme.typography.labelMedium,
                     color = MaterialTheme.colorScheme.onPrimary,
                 )
             }
@@ -797,9 +783,7 @@ private fun CallsTab(
             Box(modifier = Modifier.fillMaxSize().weight(1f), contentAlignment = Alignment.Center) {
                 Text(
                     text = "No calls yet",
-                    style = MaterialTheme.typography.bodyLarge.copy(
-                        fontSize = MaterialTheme.typography.bodyLarge.fontSize * 0.85f,
-                    ),
+                    style = MaterialTheme.typography.bodyMedium,
                     color = NomadTextDim,
                 )
             }
@@ -842,17 +826,13 @@ private fun CallHistoryRow(entry: CallHistoryEntry) {
         Column(modifier = Modifier.weight(1f)) {
             Text(
                 text = entry.remoteName ?: entry.remoteIdentityHash?.take(16) ?: "Unknown",
-                style = MaterialTheme.typography.bodyLarge.copy(
-                    fontSize = MaterialTheme.typography.bodyLarge.fontSize * 0.85f,
-                ),
+                style = MaterialTheme.typography.bodyMedium,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
             )
             Text(
                 text = label,
-                style = MaterialTheme.typography.bodyLarge.copy(
-                    fontSize = MaterialTheme.typography.bodyLarge.fontSize * 0.7f,
-                ),
+                style = MaterialTheme.typography.labelSmall,
                 color = NomadTextDim,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
@@ -860,9 +840,7 @@ private fun CallHistoryRow(entry: CallHistoryEntry) {
         }
         Text(
             text = formatRelativeTime(entry.endedAtMillis ?: 0L),
-            style = MaterialTheme.typography.bodyLarge.copy(
-                fontSize = MaterialTheme.typography.bodyLarge.fontSize * 0.7f,
-            ),
+            style = MaterialTheme.typography.labelSmall,
             color = NomadTextDim,
         )
     }

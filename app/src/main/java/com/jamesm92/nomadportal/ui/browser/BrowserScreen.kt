@@ -411,9 +411,7 @@ fun BrowserScreen(
                 showRawView && rawSource != null -> Text(
                     text = rawSource!!,
                     fontFamily = NomadMono,
-                    style = MaterialTheme.typography.bodyLarge.copy(
-                        fontSize = MaterialTheme.typography.bodyLarge.fontSize * 0.8f,
-                    ),
+                    style = MaterialTheme.typography.bodyMedium,
                     modifier = Modifier
                         .fillMaxSize()
                         .verticalScroll(rememberScrollState())
@@ -452,7 +450,7 @@ fun BrowserScreen(
                     val textMeasurer = rememberTextMeasurer()
                     val listState = rememberLazyListState()
                     val horizontalScrollState = rememberScrollState()
-                    val bodyFontSize = MaterialTheme.typography.bodyLarge.fontSize * 0.8f
+                    val bodyFontSize = MaterialTheme.typography.bodyMedium.fontSize
                     val contentWidth = remember(result, bodyFontSize) {
                         var maxWidthPx = 0
                         for (block in result!!.blocks) {
@@ -566,11 +564,11 @@ fun BrowserScreen(
                         // this ambient LocalTextStyle uniformly, headings
                         // distinguished only by their own fg/bg color
                         // band. This is how body (and heading) text size
-                        // is controlled here. Scaled off the theme's own
-                        // bodyLarge size so it still tracks the user's
-                        // Settings → text size multiplier.
+                        // is controlled here. bodyFontSize (bodyMedium's
+                        // real size) still tracks the user's Settings →
+                        // text size multiplier, same as every other role.
                         CompositionLocalProvider(
-                            LocalTextStyle provides MaterialTheme.typography.bodyLarge.copy(fontSize = bodyFontSize),
+                            LocalTextStyle provides MaterialTheme.typography.bodyMedium.copy(fontSize = bodyFontSize),
                         ) {
                             MicronPage(
                                 result = result!!,
@@ -619,8 +617,7 @@ private fun CompactAddressField(
     onGo: () -> Unit,
 ) {
     val interactionSource = remember { MutableInteractionSource() }
-    val textStyle = MaterialTheme.typography.bodyLarge.copy(
-        fontSize = MaterialTheme.typography.bodyLarge.fontSize * 0.8f,
+    val textStyle = MaterialTheme.typography.bodyMedium.copy(
         color = MaterialTheme.colorScheme.onSurface,
     )
     BasicTextField(

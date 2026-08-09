@@ -244,9 +244,7 @@ private fun HostedNodeSection(
             // see it.
             Text(
                 text = "Off — this device isn't serving any pages right now. You can still edit pages below.",
-                style = MaterialTheme.typography.bodyLarge.copy(
-                    fontSize = MaterialTheme.typography.bodyLarge.fontSize * 0.85f,
-                ),
+                style = MaterialTheme.typography.bodyMedium,
                 color = NomadTextDim,
                 modifier = Modifier.padding(top = 4.dp),
             )
@@ -267,9 +265,7 @@ private fun HostedNodeSection(
                     value = nameDraft,
                     onValueChange = { nameDraft = it },
                     singleLine = true,
-                    textStyle = MaterialTheme.typography.bodyLarge.copy(
-                        fontSize = MaterialTheme.typography.bodyLarge.fontSize * 0.9f,
-                    ),
+                    textStyle = MaterialTheme.typography.bodyMedium,
                     modifier = Modifier.weight(1f, fill = false),
                 )
                 IconButton(onClick = {
@@ -300,9 +296,7 @@ private fun HostedNodeSection(
         status.nodeHash?.let { hash ->
             Text(
                 text = hash,
-                style = MaterialTheme.typography.bodyLarge.copy(
-                    fontSize = MaterialTheme.typography.bodyLarge.fontSize * 0.55f,
-                ),
+                style = MaterialTheme.typography.labelSmall,
                 color = NomadTextDim,
                 maxLines = 1,
                 softWrap = false,
@@ -316,9 +310,7 @@ private fun HostedNodeSection(
             } else {
                 "Never announced yet"
             },
-            style = MaterialTheme.typography.bodyLarge.copy(
-                fontSize = MaterialTheme.typography.bodyLarge.fontSize * 0.7f,
-            ),
+            style = MaterialTheme.typography.labelSmall,
             color = NomadTextDim,
             modifier = Modifier.padding(top = 4.dp),
         )
@@ -330,9 +322,7 @@ private fun HostedNodeSection(
         ) {
             Text(
                 text = "Auto-announce (min)",
-                style = MaterialTheme.typography.bodyLarge.copy(
-                    fontSize = MaterialTheme.typography.bodyLarge.fontSize * 0.75f,
-                ),
+                style = MaterialTheme.typography.labelMedium,
             )
             MinutesField(
                 seconds = status.announceIntervalSeconds,
@@ -459,17 +449,13 @@ private fun IdentitySection(
 
         Text(
             text = status.lxmfAddress?.let { "LXMF: ${it.take(16)}…" } ?: "LXMF address not ready yet",
-            style = MaterialTheme.typography.bodyLarge.copy(
-                fontSize = MaterialTheme.typography.bodyLarge.fontSize * 0.8f,
-            ),
+            style = MaterialTheme.typography.bodySmall,
             color = NomadTextDim,
         )
         Text(
             text = status.lastAnnounceAtMillis?.let { "Last announced ${formatSince(it)} ago" }
                 ?: "Never announced yet",
-            style = MaterialTheme.typography.bodyLarge.copy(
-                fontSize = MaterialTheme.typography.bodyLarge.fontSize * 0.8f,
-            ),
+            style = MaterialTheme.typography.bodySmall,
             color = NomadTextDim,
         )
 
@@ -480,9 +466,7 @@ private fun IdentitySection(
         if (status.sendBlocked) {
             Text(
                 text = status.sendBlockedReason ?: "Sending is currently blocked.",
-                style = MaterialTheme.typography.bodyLarge.copy(
-                    fontSize = MaterialTheme.typography.bodyLarge.fontSize * 0.85f,
-                ),
+                style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.error,
                 modifier = Modifier.padding(top = 4.dp),
             )
@@ -893,9 +877,7 @@ private fun FullScreenIconPicker(
                                 }
                                 Text(
                                     text = name.replace('_', ' ').replace('-', ' '),
-                                    style = MaterialTheme.typography.bodyLarge.copy(
-                                        fontSize = MaterialTheme.typography.bodyLarge.fontSize * 0.85f,
-                                    ),
+                                    style = MaterialTheme.typography.bodyMedium,
                                     modifier = Modifier.weight(1f),
                                 )
                                 if (isSelected) {

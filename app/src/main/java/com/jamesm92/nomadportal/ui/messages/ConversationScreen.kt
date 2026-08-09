@@ -250,9 +250,7 @@ fun ConversationScreen(
                                     value = nameDraft,
                                     onValueChange = { nameDraft = it },
                                     singleLine = true,
-                                    textStyle = MaterialTheme.typography.bodyLarge.copy(
-                                        fontSize = MaterialTheme.typography.bodyLarge.fontSize * 0.9f,
-                                    ),
+                                    textStyle = MaterialTheme.typography.bodyMedium,
                                     modifier = Modifier.weight(1f, fill = false),
                                 )
                                 IconButton(onClick = {
@@ -277,9 +275,7 @@ fun ConversationScreen(
                             } else {
                                 Text(
                                     text = liveContact.displayName,
-                                    style = MaterialTheme.typography.bodyLarge.copy(
-                                        fontSize = MaterialTheme.typography.bodyLarge.fontSize * 0.9f,
-                                    ),
+                                    style = MaterialTheme.typography.bodyMedium,
                                     maxLines = 1,
                                     overflow = TextOverflow.Ellipsis,
                                     modifier = Modifier.weight(1f, fill = false),
@@ -314,11 +310,11 @@ fun ConversationScreen(
                 // ellipsis to always stay a single line.
                 Text(
                     text = liveContact.lxmfHash,
-                    style = MaterialTheme.typography.bodyLarge.copy(
-                        // ~50% larger than the original 0.55x — per
-                        // explicit on-device feedback.
-                        fontSize = MaterialTheme.typography.bodyLarge.fontSize * 0.825f,
-                    ),
+                    // bodyMedium, not a smaller label role — this was
+                    // deliberately sized up from an original 0.55x
+                    // multiplier per explicit on-device feedback; bodyMedium
+                    // (14sp) preserves that "needs to read clearly" intent.
+                    style = MaterialTheme.typography.bodyMedium,
                     color = NomadTextDim,
                     maxLines = 1,
                     softWrap = false,
@@ -360,9 +356,7 @@ fun ConversationScreen(
             (blockedNote ?: sendError)?.let { note ->
                 Text(
                     text = note,
-                    style = MaterialTheme.typography.bodyLarge.copy(
-                        fontSize = MaterialTheme.typography.bodyLarge.fontSize * 0.85f,
-                    ),
+                    style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.error,
                     modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 4.dp),
                 )
@@ -475,9 +469,7 @@ fun ConversationScreen(
                                 Text(tier.label, style = MaterialTheme.typography.bodyLarge)
                                 Text(
                                     text = tier.description,
-                                    style = MaterialTheme.typography.bodyLarge.copy(
-                                        fontSize = MaterialTheme.typography.bodyLarge.fontSize * 0.75f,
-                                    ),
+                                    style = MaterialTheme.typography.bodySmall,
                                     color = NomadTextDim,
                                 )
                             }

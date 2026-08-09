@@ -63,8 +63,7 @@ fun SearchField(
     val focusManager = LocalFocusManager.current
     val keyboardController = LocalSoftwareKeyboardController.current
     val interactionSource = remember { MutableInteractionSource() }
-    val textStyle = MaterialTheme.typography.bodyLarge.copy(
-        fontSize = MaterialTheme.typography.bodyLarge.fontSize * 0.8f,
+    val textStyle = MaterialTheme.typography.bodyMedium.copy(
         color = MaterialTheme.colorScheme.onSurface,
     )
 
@@ -101,9 +100,7 @@ fun SearchField(
                     placeholder = {
                         Text(
                             placeholder,
-                            style = MaterialTheme.typography.bodyLarge.copy(
-                                fontSize = MaterialTheme.typography.bodyLarge.fontSize * 0.8f,
-                            ),
+                            style = MaterialTheme.typography.bodyMedium,
                         )
                     },
                     leadingIcon = {

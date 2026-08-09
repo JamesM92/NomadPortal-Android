@@ -77,23 +77,21 @@ fun AppLogo(
             onClick = handleTap,
         ),
     ) {
-        // Small + tight spacing on purpose — Home's top bar also carries
-        // the Nodes/Messages/Settings action icons in the same row. A
-        // real on-device check showed the row was already right at its
-        // width limit for the bare 11-character wordmark alone (NomadMono
-        // is a real monospace face, wider per character than a
-        // proportional font at the same size — titleLarge's 22sp times
-        // 11 characters plus 3 action icons' touch targets leaves almost
-        // no slack on a normal phone width), so even a small icon pushed
-        // it into truncation. Shrinking the wordmark itself (not just the
-        // icon) is what actually buys back real headroom.
+        // Small + tight spacing on purpose — a real on-device check
+        // showed the row was right at its width limit for the bare
+        // 11-character wordmark alone at titleLarge (NomadMono is a real
+        // monospace face, wider per character than a proportional font
+        // at the same size), back when Home's top bar also carried the
+        // Nodes/Messages/Settings action icons in this same row (since
+        // replaced by the bottom NavigationBar — see NomadNavHost.kt —
+        // which freed up real width here). titleMedium is smaller still
+        // than the size that check landed on, so this keeps comfortable
+        // headroom rather than needing to re-derive it.
         TentPortalMark(markSize = 26.dp)
         Spacer(modifier = Modifier.width(5.dp))
         Text(
             text = text,
-            style = MaterialTheme.typography.titleLarge.copy(
-                fontSize = MaterialTheme.typography.titleLarge.fontSize * 0.82f,
-            ),
+            style = MaterialTheme.typography.titleMedium,
             color = MaterialTheme.colorScheme.primary,
             maxLines = 1,
             softWrap = false,
