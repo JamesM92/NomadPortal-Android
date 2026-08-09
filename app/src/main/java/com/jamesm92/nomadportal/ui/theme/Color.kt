@@ -20,3 +20,10 @@ val NomadError = Color(0xFFC85B5B)
 // Chat bubble tokens (porting-notes.md: sent/received message bubbles).
 val NomadSentBubble = Color(0xFF173040)
 val NomadSentBubbleBorder = Color(0xFF2A5570)
+
+// Not a porting-notes.md token — new, added for the app's own logo mark
+// (AppLogo.kt's tent-and-portal icon) only. Kept in the same muted/
+// desaturated brightness range as the tokens above (one channel near
+// 0xC8, the others lower) so it reads as part of the same palette family
+// rather than a jarring one-off accent.
+val NomadPortalPurple = Color(0xFF9B6BC8)
