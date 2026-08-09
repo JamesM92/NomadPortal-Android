@@ -1,5 +1,34 @@
 # NomadPortal-Android
 
+> 🛑 **This project is not actively maintained.**
+> [Columba](https://github.com/torlando-tech/columba) has significantly
+> more community acceptance, polish, and maintainer resources behind it —
+> if you're looking for a native Android client for Reticulum/NomadNet/
+> LXMF, **use Columba instead.**
+
+Two design choices from this project worth carrying forward:
+
+- NomadNet sites are their own top-level **Sites tab**, a full sibling
+  of Messages rather than folded into the contacts/chat list —
+  browsing/hosted-page sites and LXMF messaging peers are two
+  genuinely different kinds of thing on the network, and keeping them
+  visually and structurally separate avoided conflating them.
+- Each site carries a **last-fetch status indicator** right in the
+  list, not just a bare address — visible at a glance without opening
+  the page. Four real states, not just ok/fail: green (loaded last
+  time), a half-filled amber dot (failed just now, but *has* worked
+  before — a genuinely different signal from never having worked at
+  all), solid red (never once loaded), and dim grey (never fetched
+  yet).
+
+| Bottom nav — Sites as a peer of Messages | Sites — Favorites, all 4 fetch-status states | Sites — Announces heard |
+|---|---|---|
+| ![Home screen with a 4-tab bottom nav: Home, Messages, Sites, Settings](docs/screenshots/home-bottom-nav.png) | ![Sites tab, Favorites section: 4 rows showing all 4 fetch-status dot states — solid green (loaded ok), dim grey (never fetched), a half-filled amber dot (worked before, failed just now), and solid red (never worked) — plus hop count and last-announce time](docs/screenshots/sites-favorites.png) | ![Sites tab, Announces heard section: real sites heard on the mesh, not yet fetched, each showing a dim status dot](docs/screenshots/sites-announces.png) |
+
+| Messages — Chats, with favorites and unread | Messages — Users heard on the mesh |
+|---|---|
+| ![Messages tab, Chats sub-tab: 2 favorited real conversations, one with a call-capable icon, plus a General messages section with an unread badge](docs/screenshots/messages-chats.png) | ![Messages tab, Users sub-tab: real LXMF peers heard on the mesh, each with a generated identicon, name, and hop count, entirely separate from the Sites list](docs/screenshots/messages-users.png) |
+
 > ⚠️ **This project is "vibe coded"** — built in collaboration with an AI
 > assistant. The author is not a security expert, and this code (including
 > the parts that handle cryptographic identity, permissions, and untrusted
