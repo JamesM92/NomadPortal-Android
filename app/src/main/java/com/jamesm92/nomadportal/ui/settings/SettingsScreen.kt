@@ -889,7 +889,7 @@ private fun InterfaceAnnounceTab(
     val labelStyle = MaterialTheme.typography.labelMedium
     val hintStyle = MaterialTheme.typography.labelSmall
 
-    Column(modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 6.dp)) {
+    Column(modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp)) {
         Text("Message (minutes)", style = labelStyle)
         Text(
             "How stale the last announce can get before a send needs a fresh one first.",

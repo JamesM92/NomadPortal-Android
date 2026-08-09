@@ -852,7 +852,7 @@ private fun FullScreenIconPicker(
                                             Color.Transparent
                                         },
                                     )
-                                    .padding(vertical = 6.dp, horizontal = 4.dp),
+                                    .padding(vertical = 4.dp, horizontal = 4.dp),
                                 verticalAlignment = Alignment.CenterVertically,
                                 horizontalArrangement = Arrangement.spacedBy(12.dp),
                             ) {

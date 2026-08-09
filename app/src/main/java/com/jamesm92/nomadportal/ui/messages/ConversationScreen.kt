@@ -458,7 +458,7 @@ fun ConversationScreen(
                                     pendingImageUri = null
                                     sendImageAttachment(uri, tier)
                                 }
-                                .padding(vertical = 6.dp),
+                                .padding(vertical = 4.dp),
                             verticalAlignment = Alignment.CenterVertically,
                         ) {
                             RadioButton(selected = tier == ImageSizeTier.MEDIUM, onClick = {

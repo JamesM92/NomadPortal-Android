@@ -54,7 +54,7 @@ fun SortDropdown(
         Row(
             modifier = Modifier
                 .clickable { expanded = true }
-                .padding(horizontal = 8.dp, vertical = 6.dp),
+                .padding(horizontal = 8.dp, vertical = 4.dp),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(2.dp),
         ) {

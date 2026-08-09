@@ -298,9 +298,11 @@ private fun SectionHeader(
         modifier = modifier
             .fillMaxWidth()
             .then(if (collapsible) Modifier.clickable(onClick = onToggle) else Modifier)
-            // Tighter than before (was 12.dp) — this is a section
-            // divider, not a screen title, doesn't need that much room.
-            .padding(horizontal = 16.dp, vertical = 6.dp),
+            // 4dp (the redesign's own "tight/inline" grid tier) — was
+            // 12.dp originally, then a not-quite-grid-aligned 6.dp; this
+            // is a section divider, not a screen title, doesn't need
+            // that much room.
+            .padding(horizontal = 16.dp, vertical = 4.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.SpaceBetween,
     ) {
@@ -327,10 +329,12 @@ private fun NodeRow(node: NodeInfo, onClick: () -> Unit, onToggleFavorite: () ->
             .fillMaxWidth()
             .animateContentSize()
             .clickable(onClick = onClick)
-            // Tighter than before (was 12.dp) — a HorizontalDivider
-            // between rows now provides visual separation, so padding
-            // alone doesn't need to carry that job too.
-            .padding(horizontal = 16.dp, vertical = 6.dp),
+            // 4dp (the redesign's own "tight/inline" grid tier) — was
+            // 12.dp originally, then a not-quite-grid-aligned 6.dp; a
+            // HorizontalDivider between rows now provides visual
+            // separation, so padding alone doesn't need to carry that
+            // job too.
+            .padding(horizontal = 16.dp, vertical = 4.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(12.dp),
     ) {
