@@ -72,6 +72,7 @@ import com.jamesm92.nomadportal.ui.components.SortDropdown
 import com.jamesm92.nomadportal.ui.components.SortOption
 import com.jamesm92.nomadportal.ui.components.dismissKeyboardOnTap
 import com.jamesm92.nomadportal.ui.components.rememberStableOrder
+import com.jamesm92.nomadportal.ui.theme.NomadAccent2
 import com.jamesm92.nomadportal.ui.theme.NomadTextDim
 import kotlinx.coroutines.launch
 
@@ -579,11 +580,17 @@ private fun ConversationRow(
                 // supports calls" signal, not a working call button yet.
                 // Per explicit direction, this same icon is the intended
                 // eventual "start a call with them" tap target once
-                // there's an actual call feature to wire it to.
+                // there's an actual call feature to wire it to — green
+                // (NomadAccent2, the same "confirmed/good" green
+                // FetchStatusDot already uses for a successful page
+                // load) rather than dimmed, since a confirmed call
+                // announce is the one case this icon is ever shown at
+                // all, and it's going to be the actual click-to-call
+                // target.
                 Icon(
                     imageVector = Icons.Filled.Call,
                     contentDescription = "Supports voice calls",
-                    tint = NomadTextDim,
+                    tint = NomadAccent2,
                     modifier = Modifier.size(20.dp).padding(end = 4.dp),
                 )
             }
