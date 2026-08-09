@@ -1,7 +1,13 @@
 package com.jamesm92.nomadportal.nav
 
 import android.net.Uri
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.ui.Modifier
 import androidx.navigation.NavHostController
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
@@ -11,16 +17,20 @@ import com.jamesm92.nomadportal.connectivity.TcpConnectionsRepository
 import com.jamesm92.nomadportal.data.SettingsRepository
 import com.jamesm92.nomadportal.data.browsing.BrowserRepository
 import com.jamesm92.nomadportal.data.browsing.PageAddress
+import com.jamesm92.nomadportal.data.calling.CallRepository
+import com.jamesm92.nomadportal.data.calling.CallState
 import com.jamesm92.nomadportal.data.hosting.SiteFileRepository
 import com.jamesm92.nomadportal.data.messaging.MessagingRepository
 import com.jamesm92.nomadportal.ui.browser.BrowserScreen
 import com.jamesm92.nomadportal.ui.browser.NodeListScreen
+import com.jamesm92.nomadportal.ui.calling.CallOverlay
 import com.jamesm92.nomadportal.ui.home.HomeScreen
 import com.jamesm92.nomadportal.ui.hosting.SiteFilesScreen
 import com.jamesm92.nomadportal.ui.hosting.SitePageEditorScreen
 import com.jamesm92.nomadportal.ui.messages.ConversationListScreen
 import com.jamesm92.nomadportal.ui.messages.ConversationScreen
 import com.jamesm92.nomadportal.ui.settings.SettingsScreen
+import kotlinx.coroutines.launch
 
 private object Routes {
     const val HOME = "home"
@@ -47,8 +57,16 @@ fun NomadNavHost(
     settingsRepository: SettingsRepository,
     tcpConnectionsRepository: TcpConnectionsRepository,
     siteFileRepository: SiteFileRepository,
+    callRepository: CallRepository,
     navController: NavHostController = rememberNavController(),
 ) {
+    // Overlaid on top of the NavHost, not a destination of its own —
+    // matching a real phone's own "an incoming call interrupts whatever
+    // screen you're on" behavior (see CallOverlay's own doc comment).
+    val scope = rememberCoroutineScope()
+    val callState by callRepository.callState().collectAsState(initial = CallState.IDLE)
+
+    Box(modifier = Modifier.fillMaxSize()) {
     NavHost(navController = navController, startDestination = Routes.HOME) {
         composable(Routes.HOME) {
             HomeScreen(
@@ -72,6 +90,7 @@ fun NomadNavHost(
         composable(Routes.MESSAGES) {
             ConversationListScreen(
                 repository = messagingRepository,
+                callRepository = callRepository,
                 onOpenConversation = { hash -> navController.navigate(Routes.conversation(hash)) },
                 // Always back to the main menu, not whatever screen was
                 // previously visited (e.g. Nodes, reached via its own
@@ -139,5 +158,13 @@ fun NomadNavHost(
                 )
             }
         }
+    }
+
+    CallOverlay(
+        state = callState,
+        onAnswer = { scope.launch { callRepository.answerCall() } },
+        onHangUp = { scope.launch { callRepository.hangUp() } },
+        onDismiss = { scope.launch { callRepository.dismiss() } },
+    )
     }
 }

@@ -129,6 +129,7 @@ _contact_store = None
 _messaging = None
 _lxmf_tracker = None
 _call_tracker = None
+_call_manager = None
 _prop_sync = None
 _active_interfaces: dict = {}  # toggle name -> RNS.Interface currently attached
 _started = False
@@ -177,7 +178,7 @@ def start(base_dir: str) -> None:
     config_dir/reticulum convention.
     """
     global _browser, _identity_store, _message_store, _contact_store
-    global _messaging, _lxmf_tracker, _call_tracker, _prop_sync, _started, _base_dir
+    global _messaging, _lxmf_tracker, _call_tracker, _call_manager, _prop_sync, _started, _base_dir
 
     with _lock:
         if _started:
@@ -198,6 +199,7 @@ def start(base_dir: str) -> None:
     from nomadnet_web.messaging import MessagingService
     from nomadnet_web.lxmf_tracker import LXMFPeerTracker
     from nomadnet_web.call_tracker import CallPeerTracker
+    from nomadnet_web.call_manager import CallManager
     from nomadnet_web.lxmf_sync import PropagationSyncService
 
     # NodeBrowser.__init__ starts RNS.Reticulum() on its own background
@@ -232,6 +234,11 @@ def start(base_dir: str) -> None:
     # call-capability," surfaced as a phone icon on contact cards;
     # nothing about placing/receiving an actual call yet.
     _call_tracker = CallPeerTracker(base_dir)
+    # Phase 1a — the real call signalling state machine (ring/answer/
+    # hangup, no audio yet). Actually brought up (its own Destination
+    # created, ready to receive calls) in _register_call_manager below,
+    # once RNS/the local identity are both ready.
+    _call_manager = CallManager()
     _prop_sync = PropagationSyncService(rns=_browser._rns, messaging_service=_messaging)
 
     # Pure local file I/O, no RNS dependency — safe here rather than
@@ -283,6 +290,19 @@ def _run_deferred_setup() -> None:
         # after an app restart, same role wait_ready()'s own doc comment
         # describes for the old single-connection design.
         ("TCP connections sync", _sync_tcp_interfaces),
+        # Call engine startup fires one bootstrap announce (mirrors LXMF
+        # delivery setup's own one-time announce) — deliberately placed
+        # *after* TCP sync above, not before: a real bug, caught via a
+        # real failed test call, was this step originally running before
+        # any interface was attached, so its bootstrap announce had
+        # nothing to actually transmit over and likely never reached the
+        # mesh at all. LXMF's own bootstrap announce sits earlier in this
+        # same list (before TCP sync too) but gets away with it because
+        # start_announce_loop's periodic re-announcing eventually
+        # recovers; the call engine had no equivalent recovery path until
+        # the step below was added.
+        ("Call engine startup", _start_call_manager),
+        ("Call engine auto-announce loop", start_call_announce_loop),
     ]
     for name, fn in steps:
         try:
@@ -300,6 +320,64 @@ def _register_lxmf_tracker() -> None:
 def _register_call_tracker() -> None:
     import RNS
     RNS.Transport.register_announce_handler(_call_tracker.register_announce_handler())
+
+
+def _start_call_manager() -> None:
+    """Brings up this device's own lxst.telephony Destination so it can
+    receive calls, and fires one bootstrap announce (same "at least once
+    at startup" convention as _init_user_router's own LXMF delivery
+    announce). start_call_announce_loop (registered as the very next
+    deferred step) covers periodic re-announcing beyond that.
+
+    A dedicated Settings toggle for the recurring interval (mirroring
+    _interface_announce_config's existing per-interface pattern) is
+    still deliberately NOT built — per explicit direction ("eventually
+    the call address auto announce will need its own auto announce
+    toggle and manual announce toggle"), the underlying mechanism (an
+    actual working periodic announce) came first since it's a real
+    prerequisite for testing calls at all; the toggle UI is next.
+    """
+    if _identity_store is None or _call_manager is None:
+        return
+    entry = _identity_store.get_for_user("")
+    if entry is None:
+        log.warning("Call engine startup skipped — no local identity yet")
+        return
+    identity = _identity_store.load_rns_identity(entry["id"])
+    if identity is None:
+        log.warning("Call engine startup skipped — could not load local identity")
+        return
+    import RNS
+    _call_manager.start(RNS, identity)
+    _call_manager.announce()
+
+
+# Matches LXST's own real Telephone.ANNOUNCE_INTERVAL/ANNOUNCE_INTERVAL_MIN
+# defaults (verified against source) — not an arbitrary choice here.
+CALL_ANNOUNCE_INTERVAL_S = 60 * 60 * 3   # 3 hours
+CALL_ANNOUNCE_INTERVAL_MIN_S = 60 * 5    # 5 minutes
+_call_announce_loop_started = False
+
+
+def _call_announce_loop() -> None:
+    while True:
+        time.sleep(ANNOUNCE_LOOP_TICK)
+        if _call_manager is None or _call_manager._destination is None:
+            continue
+        last = _call_manager.last_announce_at
+        if last is None or time.time() - last >= CALL_ANNOUNCE_INTERVAL_S:
+            _call_manager.announce()
+
+
+def start_call_announce_loop() -> None:
+    """Idempotent — a second call is a no-op. Same daemon-thread shape as
+    start_announce_loop (LXMF's own equivalent)."""
+    global _call_announce_loop_started
+    with _lock:
+        if _call_announce_loop_started:
+            return
+        _call_announce_loop_started = True
+    threading.Thread(target=_call_announce_loop, daemon=True, name="call-auto-announce").start()
 
 
 def is_ready() -> bool:
@@ -1863,3 +1941,113 @@ def mark_conversation_read(contact_hash: str) -> None:
     for m in _messaging.received_messages():
         if m["source"] == contact_hash and not m.get("read", False):
             _messaging.mark_read(m["id"])
+
+
+# ---------------------------------------------------------------------
+# Voice calls (Phase 1a — signalling only, no audio yet). See
+# call_manager.py's own doc comment for the real, source-verified LXST
+# wire protocol this implements, and the nomadportal-android-
+# competitor-research memory for why the `lxst` package itself isn't
+# used directly (a real pip-resolution spike showed it isn't installable
+# in this Chaquopy build).
+# ---------------------------------------------------------------------
+
+def place_call_json(address_hex: str) -> str:
+    """address_hex may be a destination hash (a contact's already-
+    familiar LXMF address, typed/pasted by hand for someone who's never
+    announced call-capability specifically — real on-device request:
+    "we need the ability to manually enter a call address, if somebody
+    hasnt annoucned it") or an identity hash (what the Phase 0 phone-
+    icon tap already has on hand for a confirmed call-capable contact).
+    See CallManager.resolve_identity()'s own doc comment for why both
+    shapes just work without the caller needing to know which one it's
+    passing.
+
+    Blocking — does real path-lookup network I/O, same "don't call this
+    from Android's main thread" rule as every other network-touching
+    bridge function here."""
+    import json
+    if _call_manager is None:
+        return json.dumps({"success": False, "message": "Call engine not ready yet"})
+    success, message = _call_manager.place_call(address_hex)
+    return json.dumps({"success": success, "message": message})
+
+
+def answer_call_json() -> str:
+    import json
+    if _call_manager is None:
+        return json.dumps({"success": False, "message": "Call engine not ready yet"})
+    success, message = _call_manager.answer_call()
+    return json.dumps({"success": success, "message": message})
+
+
+def hang_up_call_json() -> str:
+    import json
+    if _call_manager is None:
+        return json.dumps({"success": False, "message": "Call engine not ready yet"})
+    success, message = _call_manager.hang_up()
+    return json.dumps({"success": success, "message": message})
+
+
+def dismiss_call_json() -> str:
+    """Clears a terminal call state (ended/busy/rejected/failed) back to
+    idle — a separate step from hang_up_call_json deliberately, so the
+    UI can show "call ended"/"busy"/"rejected" for a moment rather than
+    the state instantly disappearing the instant the call actually
+    ends. Kotlin calls this once the user's dismissed that screen."""
+    import json
+    if _call_manager is not None:
+        _call_manager.reset_after_end()
+    return json.dumps({"success": True})
+
+
+def announce_call_address_json() -> str:
+    """Manual announce trigger for this device's own telephony
+    Destination — the "manual announce toggle" half of what's still
+    deliberately deferred (see _start_call_manager's own doc comment
+    for the recurring-schedule half, not yet built)."""
+    import json
+    if _call_manager is None:
+        return json.dumps({"success": False, "message": "Call engine not ready yet"})
+    _call_manager.announce()
+    return json.dumps({"success": True, "message": "Announced"})
+
+
+def get_call_status_json() -> str:
+    """Polled by Kotlin's CallRepository — status is one of
+    CallManager.CallStatus's string values ("idle", "calling",
+    "ringing_outgoing", "ringing_incoming", "connecting", "established",
+    "ended", "busy", "rejected", "failed"). remote_name resolves through
+    the same fallback chain _conversation_entries() uses (live peer
+    tracker → RNS.Identity.recall_app_data → stored contact name → hash
+    prefix) so an incoming call shows a real name whenever one's
+    resolvable, not just a hash, matching this app's messaging screens.
+    started_at/established_at are unix-seconds (nullable); Kotlin
+    multiplies by 1000, same convention as every other timestamp field
+    already crossing this bridge."""
+    import json
+    if _call_manager is None:
+        return json.dumps({
+            "status": "idle", "is_incoming": False, "remote_identity_hash": None,
+            "remote_name": None, "started_at": None, "established_at": None,
+            "ended_reason": None,
+        })
+    status = _call_manager.status_dict()
+    remote_identity_hash = status.get("remote_identity_hash")
+    remote_name = None
+    if remote_identity_hash:
+        # remote_identity_hash is an *identity* hash (CallManager's own
+        # domain — see call_manager.py's doc comment on why calls are
+        # identity-keyed, not destination-keyed). _recall_announced_name
+        # needs a *destination* hash instead, so it can only be tried
+        # once a matching LXMF peer record supplies one (peer["hash"] is
+        # that peer's own lxmf.delivery destination hash) — with no
+        # matching peer, there's no destination hash to look up at all,
+        # not just an empty result, so that fallback tier is skipped
+        # entirely rather than called with the wrong hash kind.
+        peers = _lxmf_tracker.get_peers() if _lxmf_tracker else []
+        peer = next((p for p in peers if p.get("identity_hash") == remote_identity_hash), None)
+        if peer:
+            remote_name = peer.get("name") or _recall_announced_name(peer["hash"]) or None
+    status["remote_name"] = remote_name
+    return json.dumps(status)

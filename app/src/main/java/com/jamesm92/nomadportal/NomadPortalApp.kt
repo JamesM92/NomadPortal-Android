@@ -8,6 +8,8 @@ import com.jamesm92.nomadportal.connectivity.RealInterfaceController
 import com.jamesm92.nomadportal.connectivity.RealTcpConnectionsRepository
 import com.jamesm92.nomadportal.connectivity.TcpConnectionsRepository
 import com.jamesm92.nomadportal.data.SettingsRepository
+import com.jamesm92.nomadportal.data.calling.CallRepository
+import com.jamesm92.nomadportal.data.calling.RealCallRepository
 import com.jamesm92.nomadportal.data.browsing.BrowserRepository
 import com.jamesm92.nomadportal.data.browsing.RealBrowserRepository
 import com.jamesm92.nomadportal.data.hosting.RealSiteFileRepository
@@ -42,6 +44,8 @@ class NomadPortalApp : Application() {
     lateinit var browserRepository: BrowserRepository
         private set
     lateinit var siteFileRepository: SiteFileRepository
+        private set
+    lateinit var callRepository: CallRepository
         private set
 
     override fun onCreate() {
@@ -128,5 +132,12 @@ class NomadPortalApp : Application() {
         // still None.
         messagingRepository = RealMessagingRepository()
         browserRepository = RealBrowserRepository()
+        // Phase 1a of a real voice-call feature (signalling only, no
+        // audio yet — see python-core's call_manager.py). Same
+        // safe-before-orchestrator.start()-finishes reasoning as the two
+        // repositories above: every bridge function degrades to an
+        // idle/no-op result rather than erroring while _call_manager is
+        // still None.
+        callRepository = RealCallRepository()
     }
 }
