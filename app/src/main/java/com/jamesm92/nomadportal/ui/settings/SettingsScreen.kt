@@ -5,6 +5,7 @@ import android.content.res.Configuration
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -59,7 +60,9 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.ClipEntry
 import androidx.compose.ui.platform.LocalClipboard
 import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextAlign
@@ -111,6 +114,7 @@ fun SettingsScreen(
     onBack: () -> Unit,
 ) {
     val context = LocalContext.current
+    val focusManager = LocalFocusManager.current
     val scope = rememberCoroutineScope()
 
     val textScale by settingsRepository.textScale.collectAsState(initial = SettingsRepository.DEFAULT_TEXT_SCALE)
@@ -122,7 +126,6 @@ fun SettingsScreen(
     val rNodeEnabled by interfaceController.rNodeEnabled.collectAsState()
     val wifiDiscoveryEnabled by interfaceController.wifiDiscoveryEnabled.collectAsState()
     val nodeHostingEnabled by interfaceController.nodeHostingEnabled.collectAsState()
-    val hostedNodeStatus by interfaceController.hostedNodeStatus().collectAsState(initial = null)
 
     var bluetoothGranted by remember { mutableStateOf(hasBluetoothPermissions(context)) }
     val permissionLauncher = rememberLauncherForActivityResult(
@@ -144,13 +147,17 @@ fun SettingsScreen(
     // request — flip it from either place, same underlying state) plus
     // that interface's own Message/Auto policy; TCP's tab additionally
     // carries the full connection list (add/remove/enable/disable —
-    // replaces the old single-hardcoded-hub design). Node is the hosted-
-    // node's own duplicate toggle, same pattern, plus its own announce-
-    // interval config (a genuinely separate schedule from the four
-    // interfaces above — see HostedNodeStatus's own doc comment).
+    // replaces the old single-hardcoded-hub design). There's no "Node"
+    // tab here (removed per explicit direction: "everything related to
+    // it is already on the home page... the different interfaces need
+    // room to manage their different settings, the node doesnt really
+    // need that") — Home's own HostedNodeSection already carries the
+    // on/off toggle, rename, manual "Announce now", and the auto-announce
+    // interval field; unlike the four interfaces above, the hosted node
+    // had nothing here that wasn't already a plain duplicate of Home.
     var selectedTab by remember { mutableIntStateOf(0) }
     val isLandscape = LocalConfiguration.current.orientation == Configuration.ORIENTATION_LANDSCAPE
-    val tabLabels = listOf("Main", "TCP", "Bluetooth", "RNode", "LAN", "Node")
+    val tabLabels = listOf("Main", "TCP", "Bluetooth", "RNode", "LAN")
 
     Scaffold(
         topBar = {
@@ -212,7 +219,17 @@ fun SettingsScreen(
         },
     ) { innerPadding ->
         val listState = rememberLazyListState()
-        Box(modifier = Modifier.fillMaxSize().padding(innerPadding)) {
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                // Same fix as HomeScreen's own tap-outside-to-commit --
+                // real on-device report: the TCP table / MinutesField
+                // cells here have no other way to lose focus besides the
+                // keyboard's own Done action, since nothing was otherwise
+                // claiming focus away from them on an outside tap.
+                .pointerInput(Unit) { detectTapGestures(onTap = { focusManager.clearFocus() }) }
+                .padding(innerPadding),
+        ) {
             LazyColumn(modifier = Modifier.fillMaxSize(), state = listState) {
             when (selectedTab) {
                 0 -> {
@@ -324,18 +341,14 @@ fun SettingsScreen(
                             onScaleChange = { scope.launch { settingsRepository.setTextScale(it) } },
                         )
                     }
-
-                    item { HorizontalDivider() }
-                    item { SectionHeader("Permissions") }
-                    item {
-                        Text(
-                            text = "Every permission this app requests is optional. Denying any of them " +
-                                "leaves the related feature off — the rest of the app keeps working. " +
-                                "This app never requests location permission, under any circumstances.",
-                            style = MaterialTheme.typography.bodyLarge,
-                            modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
-                        )
-                    }
+                    // No "Permissions" section here anymore — per explicit
+                    // direction, that static blurb didn't need to persist
+                    // in a settings menu at all. Its content now lives in
+                    // the seeded index.mu (_DEFAULT_INDEX in
+                    // site_server.py's ">>Permissions" section) instead;
+                    // a future "welcome new user" screen (deferred until
+                    // closer to release) is the other place this was
+                    // considered for.
                 }
                 1 -> {
                     // TCP: duplicate master toggle, the full connection
@@ -485,34 +498,6 @@ fun SettingsScreen(
                                             AnnounceStatus.INTERFACE_WIFI_DISCOVERY, it,
                                         )
                                     }
-                                },
-                            )
-                        }
-                    }
-                }
-                else -> {
-                    // Node (hosted NomadNet node) — a duplicate toggle
-                    // (flip from either here or Home, same underlying
-                    // state, matching every other interface tab's own
-                    // convention) plus this node's own announce-interval
-                    // config. Renaming and manual "Announce now" live on
-                    // Home instead, per explicit direction — this screen
-                    // only ever owns configuration, never a "do it now"
-                    // action (see this file's own doc comment).
-                    item {
-                        ToggleRow(
-                            label = "Host a NomadNet node",
-                            checked = nodeHostingEnabled,
-                            onCheckedChange = { scope.launch { interfaceController.setNodeHostingEnabled(it) } },
-                        )
-                    }
-                    hostedNodeStatus?.takeIf { it.enabled }?.let { status ->
-                        item { HorizontalDivider() }
-                        item {
-                            HostedNodeAnnounceTab(
-                                announceIntervalSeconds = status.announceIntervalSeconds,
-                                onAnnounceIntervalChange = {
-                                    scope.launch { interfaceController.setHostedNodeAnnounceInterval(it) }
                                 },
                             )
                         }
@@ -925,34 +910,4 @@ private fun InterfaceAnnounceTab(
     }
 }
 
-/**
- * The hosted node's own announce config — narrower than
- * [InterfaceAnnounceTab] (no "Message (minutes)" field: that concept
- * is about *this device's own identity* announce staleness blocking a
- * *send*, which doesn't apply to a hosted node at all). Just the one
- * auto-announce interval, 0 disables it — same convention throughout.
- */
-@Composable
-private fun HostedNodeAnnounceTab(
-    announceIntervalSeconds: Int,
-    onAnnounceIntervalChange: (seconds: Int) -> Unit,
-) {
-    val labelStyle = MaterialTheme.typography.bodyLarge.copy(fontSize = MaterialTheme.typography.bodyLarge.fontSize * 0.75f)
-    val hintStyle = MaterialTheme.typography.bodyLarge.copy(fontSize = MaterialTheme.typography.bodyLarge.fontSize * 0.65f)
-
-    Column(modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 6.dp)) {
-        Text("Auto-announce (minutes)", style = labelStyle)
-        Text(
-            "How often this node proactively re-announces on its own. 0 disables auto-announce — the node still answers direct requests either way, it just won't broadcast itself.",
-            style = hintStyle,
-            color = NomadTextDim,
-        )
-        MinutesField(
-            seconds = announceIntervalSeconds,
-            allowZero = true,
-            onCommit = onAnnounceIntervalChange,
-            modifier = Modifier.width(64.dp).padding(top = 4.dp),
-        )
-    }
-}
 
