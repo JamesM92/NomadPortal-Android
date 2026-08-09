@@ -6,11 +6,14 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.FormatAlignLeft
@@ -44,6 +47,7 @@ import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.input.TextFieldValue
@@ -168,7 +172,15 @@ fun RichTextPageEditor(
         if (destination.isBlank()) return
         val (start, end) = focusedSelection.let { it.min to it.max }
         val effectiveLabel = label.ifBlank { "link" }
-        val linkText = "[$effectiveLabel`$destination]"
+        // Real Micron link syntax needs a *leading backtick* before the
+        // bracket ("`[label`url]") -- confirmed directly against
+        // micron2compose's own InlineParser.kt dispatch, which only
+        // recognizes '[' as a link start when the preceding character is
+        // a backtick escape (`c == '`'` then `nc == '['`). A bare
+        // "[label`url]" with no leading backtick is just literal visible
+        // text to any real Micron parser, which is exactly the "renders
+        // as plain text" bug this fixes.
+        val linkText = "`[$effectiveLabel`$destination]"
         val newText = block.text.replaceRange(start, end, linkText)
         val newStyles = adjustCharStyles(block.charStyles, block.text, newText)
         updateBlock(id) { it.copy(text = newText, charStyles = newStyles) }
@@ -181,6 +193,44 @@ fun RichTextPageEditor(
         onBlocksChange(blocks.filterNot { it.id == id })
         focusedBlockId = null
         focusedSelection = TextRange.Zero
+    }
+
+    // The focused block always gets scrolled to a fixed clearance below
+    // the toolbar rather than letting it land flush against the very
+    // top of the list -- real on-device report: Android's own native
+    // Cut/Copy/Paste/Translate selection popup was rendering directly
+    // on top of (and blocking taps to) this editor's own custom
+    // formatting toolbar whenever the selection was near the top of
+    // the screen. Compose has no direct way to tell that system popup
+    // which side to prefer or where to draw itself, but ensuring
+    // there's always genuine vertical room above the focused block
+    // means the platform's own above/below placement logic always has
+    // somewhere clear to put it, on either side, without needing to
+    // predict or fight that placement heuristic directly -- and unlike
+    // suppressing the popup outright, Cut/Copy/Paste/Translate all
+    // keep working normally.
+    // Starts scrolled past the leading spacer (item 0) so the very first
+    // block sits flush under the toolbar by default, same as before the
+    // spacer existed -- the spacer is scroll *headroom* for the
+    // clearance trick below, not something that should visibly push
+    // every block down all the time. A plain `LaunchedEffect(Unit) {
+    // scrollToItem(1) }` here rather than `rememberLazyListState`'s own
+    // `initialFirstVisibleItemIndex` param -- confirmed via real
+    // on-device testing that the latter doesn't reliably stick (still
+    // showed the spacer's full height as visible content), while an
+    // explicit imperative scroll once real items exist does.
+    val listState = rememberLazyListState()
+    val toolbarClearancePx = with(LocalDensity.current) { TOOLBAR_CLEARANCE.roundToPx() }
+    LaunchedEffect(Unit) {
+        if (blocks.isNotEmpty()) listState.scrollToItem(1)
+    }
+    LaunchedEffect(focusedBlockId) {
+        val index = blocks.indexOfFirst { it.id == focusedBlockId }
+        if (index >= 0) {
+            // +1: LazyColumn item index, not `blocks` list index -- the
+            // leading Spacer below occupies index 0.
+            listState.animateScrollToItem(index + 1, scrollOffset = -toolbarClearancePx)
+        }
     }
 
     Column(modifier = modifier) {
@@ -258,7 +308,19 @@ fun RichTextPageEditor(
 
         HorizontalDivider()
 
-        LazyColumn(modifier = Modifier.fillMaxWidth().weight(1f)) {
+        LazyColumn(state = listState, modifier = Modifier.fillMaxWidth().weight(1f)) {
+            // Always-present leading spacer, exactly TOOLBAR_CLEARANCE
+            // tall -- without real scrollable headroom above it, the
+            // *first* block on a page (or the only block, on a short
+            // one) has nowhere to scroll "into" when focused, so the
+            // LaunchedEffect(focusedBlockId) scroll below is a no-op for
+            // exactly the case that matters most (a short/new page,
+            // confirmed by real on-device testing: the native selection
+            // toolbar still collided with this editor's own toolbar for
+            // a single-block page before this spacer existed). This
+            // makes the clearance trick work uniformly regardless of
+            // which block is focused.
+            item { Spacer(modifier = Modifier.height(TOOLBAR_CLEARANCE)) }
             items(blocks, key = { it.id }) { block ->
                 BlockRow(
                     block = block,
@@ -471,6 +533,13 @@ private fun StructurePanel(
  * every single line. */
 private val FOCUSED_ROW_TINT = NomadAccent.copy(alpha = 0.08f)
 
+/** How much vertical clearance the focused block is scrolled to keep
+ * below the toolbar row (see [RichTextPageEditor]'s own doc comment on
+ * why) — generous enough to clear the tab row plus a typical expanded
+ * panel underneath it, not just the tab row alone, since a panel can
+ * be open at the same time a block is focused. */
+private val TOOLBAR_CLEARANCE = 160.dp
+
 @Composable
 private fun BlockRow(
     block: MicronBlock,
@@ -570,15 +639,24 @@ private fun ParagraphBlockRow(
         BasicTextField(
             value = fieldValue,
             onValueChange = { new ->
+                // No onFocus() here, deliberately -- onValueChange fires on
+                // *every* keystroke and every selection-only change (e.g.
+                // dragging to highlight text, no text edit at all), and
+                // onFocus() resets focusedSelection to zero (needed when
+                // actually switching to a *different* block, see this
+                // field's own onFocusChanged below, which is the real
+                // focus-gain signal and only fires once). Calling it here
+                // too meant every keystroke briefly zeroed the selection
+                // right before this function's own onSelectionChange call
+                // set the correct value moments later -- a real regression
+                // that broke both continued typing (past the first
+                // character) and drag-to-select, confirmed on-device.
                 val newText = new.annotatedString.text
-                val updatedStyles = if (newText != block.text) {
-                    adjustCharStyles(block.charStyles, block.text, newText)
-                } else {
-                    block.charStyles
-                }
-                onFocus()
                 onSelectionChange(new.selection)
-                onChange(block.copy(text = newText, charStyles = updatedStyles))
+                if (newText != block.text) {
+                    val updatedStyles = adjustCharStyles(block.charStyles, block.text, newText)
+                    onChange(block.copy(text = newText, charStyles = updatedStyles))
+                }
             },
             textStyle = MaterialTheme.typography.bodyLarge.copy(
                 textAlign = textAlign,
