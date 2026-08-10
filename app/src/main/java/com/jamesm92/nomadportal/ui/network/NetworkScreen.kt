@@ -24,6 +24,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import com.jamesm92.nomadportal.connectivity.BluetoothMeshStatus
 import com.jamesm92.nomadportal.connectivity.InterfaceController
 import com.jamesm92.nomadportal.connectivity.TcpConnection
 import com.jamesm92.nomadportal.connectivity.TcpConnectionsRepository
@@ -44,18 +45,20 @@ import com.jamesm92.nomadportal.ui.theme.NomadWarn
  * interface's own on/off switch stays exactly where it already is, in
  * Settings' per-interface sections.
  *
- * **Honest about what's actually live**: TCP is the only interface with
- * real per-connection status ([TcpConnection.online], the RNS interface's
- * own connected/disconnected state) — Bluetooth mesh/RNode/local network
- * discovery only ever show their on/off toggle state here, not live
- * neighbor/link data, because nothing in this app's Kotlin layer
- * currently subscribes to that (Bluetooth mesh's own `RnsBleBridge.events`
- * already carries real neighbor-sighting data with RSSI —
- * [com.jamesm92.nomadportal.connectivity.BluetoothMeshManager] doesn't
- * expose it to anything yet; a real, well-scoped follow-up, not attempted
- * in this pass). This matches this app's own "authoritative toggle, never
- * fabricate a status" convention elsewhere (e.g.
- * [com.jamesm92.nomadportal.data.messaging.AnnounceStatus.hostedNodeHash]
+ * **Honest about what's actually live**: TCP has real per-connection
+ * status ([TcpConnection.online]). Bluetooth mesh now does too —
+ * [com.jamesm92.nomadportal.connectivity.BluetoothMeshManager] derives a
+ * real [BluetoothMeshStatus] (neighbor count + last-activity time) from
+ * the transport's own [com.jamesm92.rnsble.interop.PacketEvent.NeighborSeen]
+ * events, closing the gap this screen's own original pass left open (see
+ * that class's doc comment for what "neighbor" means/doesn't prove here —
+ * a link-layer sighting within a rolling window, not a confirmed GATT
+ * link or an RNS-level contact). RNode/local network discovery still only
+ * show their on/off toggle state — RNode has no real transport wired in
+ * at all yet, and local network discovery has no per-peer status concept
+ * the way a mesh or TCP connection does. This matches this app's own
+ * "authoritative toggle, never fabricate a status" convention elsewhere
+ * (e.g. [com.jamesm92.nomadportal.data.messaging.AnnounceStatus.hostedNodeHash]
  * staying honestly null rather than inventing a value).
  */
 @Composable
@@ -68,6 +71,8 @@ fun NetworkScreen(
     val rNodeEnabled by interfaceController.rNodeEnabled.collectAsState()
     val wifiDiscoveryEnabled by interfaceController.wifiDiscoveryEnabled.collectAsState()
     val tcpConnections by tcpConnectionsRepository.connections().collectAsState(initial = emptyList())
+    val bluetoothMeshStatus by interfaceController.bluetoothMeshStatus()
+        .collectAsState(initial = BluetoothMeshStatus(neighborCount = 0, lastActivityAtMillis = null))
 
     Scaffold(
         topBar = { AdaptiveTopAppBar(title = { Text("Network") }) },
@@ -75,8 +80,8 @@ fun NetworkScreen(
         LazyColumn(modifier = Modifier.fillMaxSize().padding(innerPadding)) {
             item {
                 Text(
-                    text = "Live per-connection status is only available for TCP right now. " +
-                        "Other interfaces show on/off state only. Toggles live in Settings.",
+                    text = "Live per-connection status is available for TCP and Bluetooth mesh. " +
+                        "RNode and local network discovery show on/off state only. Toggles live in Settings.",
                     style = MaterialTheme.typography.labelSmall,
                     color = NomadTextDim,
                     modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp),
@@ -110,6 +115,15 @@ fun NetworkScreen(
                 InterfaceStatusRow(
                     label = "Bluetooth mesh",
                     enabled = bluetoothMeshEnabled,
+                    detail = if (!bluetoothMeshEnabled) {
+                        null
+                    } else if (bluetoothMeshStatus.neighborCount == 0) {
+                        "On · no neighbors seen yet"
+                    } else {
+                        "On · ${bluetoothMeshStatus.neighborCount} neighbor" +
+                            (if (bluetoothMeshStatus.neighborCount == 1) "" else "s") +
+                            " seen · last ${formatRelativeTime(bluetoothMeshStatus.lastActivityAtMillis)}"
+                    },
                 )
             }
             item { HorizontalDivider() }
@@ -197,5 +211,22 @@ private fun TcpConnectionStatusRow(connection: TcpConnection) {
 private fun StatusDot(color: Color, size: androidx.compose.ui.unit.Dp = 10.dp) {
     Canvas(modifier = Modifier.size(size).clip(CircleShape)) {
         drawCircle(color = color)
+    }
+}
+
+/** Same bucketing convention as every other screen's own local copy of
+ * this (NodeListScreen/ConversationListScreen/Settings' hosted-site row)
+ * — kept local rather than shared since each has its own "never/null"
+ * fallback tailored to what it's describing. [millis] null here means
+ * "no neighbor sighting since Bluetooth mesh last started," distinct
+ * from those other screens' "never heard an announce at all." */
+private fun formatRelativeTime(millis: Long?): String {
+    if (millis == null) return "n/a"
+    val diffSeconds = ((System.currentTimeMillis() - millis) / 1000).coerceAtLeast(0)
+    return when {
+        diffSeconds < 60 -> "just now"
+        diffSeconds < 3600 -> "${diffSeconds / 60}m ago"
+        diffSeconds < 86_400 -> "${diffSeconds / 3600}h ago"
+        else -> "${diffSeconds / 86_400}d ago"
     }
 }

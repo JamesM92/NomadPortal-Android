@@ -173,6 +173,8 @@ class RealInterfaceController(
         }
     }.flowOn(Dispatchers.IO)
 
+    override fun bluetoothMeshStatus(): Flow<BluetoothMeshStatus> = bluetoothMesh.status
+
     private fun fetchHasDownTcpConnection(): Boolean {
         val obj = JSONObject(orchestrator.callAttr("get_tcp_connections_json").toString())
         if (!obj.optBoolean("master_enabled", true)) return false

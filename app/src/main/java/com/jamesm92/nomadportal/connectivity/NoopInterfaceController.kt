@@ -90,4 +90,9 @@ class NoopInterfaceController(
     // No real TCP connections tracked here — persisted-intent-only,
     // matching this class's own convention throughout.
     override fun hasDownTcpConnection(): Flow<Boolean> = flowOf(false)
+
+    // No real Bluetooth mesh transport here — persisted-intent-only,
+    // matching this class's own convention throughout.
+    override fun bluetoothMeshStatus(): Flow<BluetoothMeshStatus> =
+        flowOf(BluetoothMeshStatus(neighborCount = 0, lastActivityAtMillis = null))
 }

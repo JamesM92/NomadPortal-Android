@@ -27,6 +27,25 @@ data class HostedNodeStatus(
 }
 
 /**
+ * Live Bluetooth-mesh neighbor status — real data, not fabricated:
+ * [BluetoothMeshManager] derives this from [com.jamesm92.rnsble.interop.PacketEvent.NeighborSeen]
+ * events the RNS_BLE_Wrapper transport already emits (RSSI included) but
+ * that nothing in this app surfaced anywhere before
+ * [com.jamesm92.nomadportal.ui.network.NetworkScreen] existed. A
+ * "neighbor" here means a link-layer peer ID sighted within
+ * [BluetoothMeshManager]'s own rolling window (see that class's doc
+ * comment) — not the same thing as an RNS-level LXMF contact/announce,
+ * and not proof of an actual established GATT link, just "heard
+ * recently." [NoopInterfaceController]/before Bluetooth mesh starts
+ * always reports zero/null here rather than a fabricated count.
+ */
+data class BluetoothMeshStatus(
+    val neighborCount: Int,
+    /** Null if no neighbor has been sighted since Bluetooth mesh last started. */
+    val lastActivityAtMillis: Long?,
+)
+
+/**
  * The single authoritative control point for which RNS interfaces are
  * actually live, and whether this device hosts a NomadNet node.
  *
@@ -127,4 +146,11 @@ interface InterfaceController {
      * list, or every connection individually disabled).
      */
     fun hasDownTcpConnection(): Flow<Boolean>
+
+    /** Live Bluetooth-mesh neighbor status — see [BluetoothMeshStatus]'s
+     * own doc comment for exactly what "neighbor" means here and what
+     * this does/doesn't prove. Always zero/null when Bluetooth mesh
+     * hasn't started (or on [NoopInterfaceController]) — never
+     * fabricated. */
+    fun bluetoothMeshStatus(): Flow<BluetoothMeshStatus>
 }

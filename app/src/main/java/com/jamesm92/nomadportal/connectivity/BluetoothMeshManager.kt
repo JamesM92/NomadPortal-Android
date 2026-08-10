@@ -8,9 +8,15 @@ import android.os.IBinder
 import android.util.Log
 import com.chaquo.python.Python
 import com.jamesm92.rnsble.config.RnsBleConfig
+import com.jamesm92.rnsble.interop.PacketEvent
 import com.jamesm92.rnsble.service.RnsBleForegroundService
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
@@ -39,6 +45,17 @@ import kotlinx.coroutines.withContext
  * the bind actually completes. `stop()` is the deterministic half —
  * detaches the Python interface synchronously before this call returns,
  * so the Settings toggle visually flipping off is trustworthy.
+ *
+ * Also owns [status] — real neighbor-sighting data from the bridge's own
+ * [PacketEvent.NeighborSeen] events (a Columba UI/UX parity-audit
+ * follow-up: [com.jamesm92.nomadportal.ui.network.NetworkScreen]'s
+ * original pass had nothing but on/off toggle state for this interface,
+ * since nothing subscribed to these events before). Deliberately a
+ * light, local rolling-window aggregation ([NEIGHBOR_STALE_AFTER_MS]) —
+ * this class has no access to `MeshTransport`'s own internal
+ * `NeighborTracker` state across the Chaquopy/service boundary, only the
+ * flattened event stream, so it keeps its own small last-seen map rather
+ * than trying to mirror that class exactly.
  */
 class BluetoothMeshManager(
     private val context: Context,
@@ -49,6 +66,22 @@ class BluetoothMeshManager(
     private val orchestrator by lazy {
         Python.getInstance().getModule("nomadportal_core.orchestrator")
     }
+
+    private var eventsJob: Job? = null
+
+    // Neighbor peer ID -> last time it was sighted. Plain, not thread-
+    // safe-hardened (ConcurrentHashMap etc.) — every read/write here
+    // happens on `scope`'s own dispatcher via the single events-collecting
+    // coroutine and the sweep loop below, never concurrently from two
+    // different threads.
+    private val neighborLastSeenAt = mutableMapOf<String, Long>()
+    // Separate from neighborLastSeenAt's own max — that map gets pruned
+    // of stale entries (see the sweep loop below), but "when did activity
+    // last happen at all" shouldn't reset to null just because every
+    // neighbor has since gone quiet.
+    private var lastActivityAtMillis: Long? = null
+    private val _status = MutableStateFlow(BluetoothMeshStatus(neighborCount = 0, lastActivityAtMillis = null))
+    val status: StateFlow<BluetoothMeshStatus> = _status.asStateFlow()
 
     private val serviceConnection = object : ServiceConnection {
         override fun onServiceConnected(name: ComponentName?, binder: IBinder?) {
@@ -72,11 +105,48 @@ class BluetoothMeshManager(
                     Log.w(TAG, "Failed to attach Bluetooth-mesh interface: ${e.message}")
                 }
             }
+            eventsJob?.cancel()
+            eventsJob = scope.launch {
+                launch {
+                    bridge.events.collect { event ->
+                        if (event is PacketEvent.NeighborSeen) {
+                            val now = System.currentTimeMillis()
+                            neighborLastSeenAt[event.neighborId] = now
+                            lastActivityAtMillis = now
+                            publishStatus()
+                        }
+                    }
+                }
+                // Periodic sweep so a neighbor that's gone quiet eventually
+                // drops out of the count, rather than only ever growing —
+                // same shape as MeshTransport's own stale-reassembly sweep
+                // (15s tick) on the RNS_BLE_Wrapper side, not copied
+                // exactly since that class's internals aren't reachable
+                // from here.
+                while (true) {
+                    delay(NEIGHBOR_SWEEP_INTERVAL_MS)
+                    val cutoff = System.currentTimeMillis() - NEIGHBOR_STALE_AFTER_MS
+                    val staleRemoved = neighborLastSeenAt.entries.removeIf { it.value < cutoff }
+                    if (staleRemoved) publishStatus()
+                }
+            }
         }
 
         override fun onServiceDisconnected(name: ComponentName?) {
             bound = false
+            eventsJob?.cancel()
+            eventsJob = null
+            neighborLastSeenAt.clear()
+            lastActivityAtMillis = null
+            publishStatus()
         }
+    }
+
+    private fun publishStatus() {
+        _status.value = BluetoothMeshStatus(
+            neighborCount = neighborLastSeenAt.size,
+            lastActivityAtMillis = lastActivityAtMillis,
+        )
     }
 
     /** Starts the foreground service and binds to it — the actual RNS
@@ -109,9 +179,25 @@ class BluetoothMeshManager(
             bound = false
         }
         context.stopService(Intent(context, RnsBleForegroundService::class.java))
+        // unbindService() doesn't reliably trigger onServiceDisconnected
+        // for a normal client-initiated unbind (that callback is really
+        // for unexpected disconnection/process death) — reset status
+        // explicitly here too, rather than depending on it.
+        eventsJob?.cancel()
+        eventsJob = null
+        neighborLastSeenAt.clear()
+        lastActivityAtMillis = null
+        publishStatus()
     }
 
     private companion object {
         const val TAG = "BluetoothMeshManager"
+        const val NEIGHBOR_SWEEP_INTERVAL_MS = 15_000L
+        // A neighbor not re-sighted within this window drops out of
+        // status's neighborCount — deliberately not trying to match
+        // RnsBleConfig's own neighborRollingWindowMs exactly (that config
+        // isn't reachable from this side of the Chaquopy/service
+        // boundary), just a reasonable, honestly-approximate window.
+        const val NEIGHBOR_STALE_AFTER_MS = 60_000L
     }
 }
