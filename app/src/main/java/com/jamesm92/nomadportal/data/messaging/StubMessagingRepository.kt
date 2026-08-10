@@ -108,6 +108,13 @@ class StubMessagingRepository(private val scope: CoroutineScope) : MessagingRepo
         }
     }
 
+    override suspend fun setDisappearingTimer(contactHash: String, seconds: Int): Boolean {
+        contacts.value = contacts.value.map {
+            if (it.lxmfHash == contactHash) it.copy(disappearingSeconds = seconds) else it
+        }
+        return true
+    }
+
     override suspend fun setContactName(contactHash: String, name: String): Boolean {
         val trimmed = name.trim()
         if (trimmed.isEmpty()) return false

@@ -4,6 +4,7 @@ import json
 import logging
 import os
 import threading
+import time
 
 log = logging.getLogger(__name__)
 MAX_MESSAGES = 500
@@ -73,6 +74,34 @@ class MessageStore:
             removed = before - len(self._sent) - len(self._received)
             snapshot = self._snapshot()
         self._persist(snapshot)
+        return removed
+
+    def purge_expired(self, now: float = None) -> list:
+        """Removes every sent/received entry whose `expires_at` (a unix
+        timestamp messaging.py stamps at send/receive time, per the
+        conversation's disappearing-messages setting at that moment —
+        absent/None means "never expires", the default for every
+        message stored before this feature existed too, no migration
+        needed) has passed. Returns the removed entries so the caller
+        can clean up anything else keyed off them — this module has no
+        concept of attachment files on disk, that's messaging.py's job
+        (see its own purge_expired_messages doc comment for why that
+        part matters more here than it does for delete_conversation)."""
+        if now is None:
+            now = time.time()
+        with self._lock:
+            def _expired(m):
+                exp = m.get("expires_at")
+                return exp is not None and exp <= now
+            removed = [m for m in self._sent if _expired(m)] + [m for m in self._received if _expired(m)]
+            if removed:
+                self._sent     = [m for m in self._sent     if not _expired(m)]
+                self._received = [m for m in self._received if not _expired(m)]
+                snapshot = self._snapshot()
+            else:
+                snapshot = None
+        if snapshot is not None:
+            self._persist(snapshot)
         return removed
 
     def mark_read(self, msg_id: str, owner: str = "") -> None:

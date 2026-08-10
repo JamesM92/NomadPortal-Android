@@ -105,4 +105,22 @@ interface MessagingRepository {
      * icon, per [materialIconFor]'s own doc comment). Returns true on
      * success. */
     suspend fun setIconAppearance(glyphName: String, foreground: Color, background: Color): Boolean
+
+    /**
+     * Sets this conversation's disappearing-messages duration —
+     * [seconds] of 0 turns it off. Purely forward-looking: only messages
+     * sent/received *after* this call get a timer, matching Signal's
+     * own "not retroactive" behavior; nothing about already-stored
+     * messages changes.
+     *
+     * **Local-only, not enforced with the recipient** — LXMF has no
+     * protocol mechanism to communicate a disappearing timer to the
+     * other party's device at all, so their own copy of this
+     * conversation is entirely outside this app's control regardless
+     * of what's set here. Any UI exposing this must make that
+     * unmistakable, not just imply Signal-equivalent behavior.
+     *
+     * Returns true on success.
+     */
+    suspend fun setDisappearingTimer(contactHash: String, seconds: Int): Boolean
 }

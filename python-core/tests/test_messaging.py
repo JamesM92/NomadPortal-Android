@@ -17,6 +17,7 @@ entry dict and calling ``save_sent`` — which is deterministic and runs
 before the (stubbed-out) thread would begin.
 """
 
+import time
 import types
 
 import pytest
@@ -111,3 +112,125 @@ def test_empty_content_stores_empty_not_none(service):
     entry = service._msg_store.saved[0]
     assert entry["content"] == ""
     assert entry["preview"] == ""
+
+
+# ---------------------------------------------------------------------------
+# Disappearing messages
+# ---------------------------------------------------------------------------
+#
+# expires_at is stamped once, synchronously, inside the same _send() prefix
+# already under test above — no need for a separate delivery-thread stub.
+# The receive-side stamping in _on_delivery() isn't covered here (no
+# existing test in this file exercises _on_delivery at all — it needs a
+# real-shaped LXMF Message object, out of scope for this synchronous-prefix
+# style of test); purge_expired_messages()'s attachment-cleanup path is
+# covered separately below, against a real tmp_path file.
+
+
+class _StubContactStore:
+    """Records the one dict test cases care about; .get() mirrors
+    contact_store.ContactStore.get()'s "None if never created" contract."""
+
+    def __init__(self, entries: dict):
+        self._entries = entries
+
+    def get(self, hash_hex):
+        return self._entries.get(hash_hex)
+
+
+class _StubContactMgr:
+    def __init__(self, entries: dict):
+        self._store = _StubContactStore(entries)
+
+    def for_user(self, user_sub):
+        return self._store
+
+
+def test_send_stamps_expires_at_when_disappearing_timer_is_on(service):
+    service._contact_mgr = _StubContactMgr({DEST_HASH: {"disappearing_seconds": 300}})
+
+    before = time.time()
+    ok, _ = service.send_message(DEST_HASH, "hello", user_sub="u1")
+    assert ok
+
+    entry = service._msg_store.saved[0]
+    assert entry["expires_at"] is not None
+    assert before + 300 <= entry["expires_at"] <= time.time() + 300
+
+
+def test_send_leaves_expires_at_null_when_timer_is_off(service):
+    service._contact_mgr = _StubContactMgr({DEST_HASH: {"disappearing_seconds": 0}})
+
+    ok, _ = service.send_message(DEST_HASH, "hello", user_sub="u1")
+    assert ok
+    assert service._msg_store.saved[0]["expires_at"] is None
+
+
+def test_send_leaves_expires_at_null_with_no_contact_store_entry(service):
+    # No ContactStore entry yet at all for this hash (message-history-only
+    # contact) — same None-safe handling as every other contact lookup in
+    # this file, not a crash.
+    service._contact_mgr = _StubContactMgr({})
+
+    ok, _ = service.send_message(DEST_HASH, "hello", user_sub="u1")
+    assert ok
+    assert service._msg_store.saved[0]["expires_at"] is None
+
+
+class _StubMessageStoreWithExpiry(_StubMessageStore):
+    """Adds purge_expired() on top of the existing save_sent()-only stub —
+    a real MessageStore.purge_expired() shape is exercised separately in
+    test_message_store.py-equivalent coverage; this just hands back
+    whatever the test pre-seeds, so purge_expired_messages()'s own
+    attachment-cleanup logic can be tested in isolation."""
+
+    def __init__(self, to_remove):
+        super().__init__()
+        self._to_remove = to_remove
+
+    def purge_expired(self):
+        return self._to_remove
+
+
+def test_purge_expired_messages_removes_attachment_file(tmp_path):
+    attachment_path = tmp_path / "expired_photo.jpg"
+    attachment_path.write_bytes(b"fake image bytes")
+    assert attachment_path.exists()
+
+    svc = MessagingService(
+        storage_path=str(tmp_path),
+        message_store=_StubMessageStoreWithExpiry(
+            [{"id": "m1", "attachment": {"path": str(attachment_path)}}]
+        ),
+    )
+    removed_count = svc.purge_expired_messages()
+
+    assert removed_count == 1
+    assert not attachment_path.exists()
+
+
+def test_purge_expired_messages_tolerates_missing_attachment_file(tmp_path):
+    # Already gone (or never existed) — must not raise, just skip it.
+    svc = MessagingService(
+        storage_path=str(tmp_path),
+        message_store=_StubMessageStoreWithExpiry(
+            [{"id": "m1", "attachment": {"path": str(tmp_path / "already_gone.jpg")}}]
+        ),
+    )
+    assert svc.purge_expired_messages() == 1
+
+
+def test_purge_expired_messages_handles_no_attachment(tmp_path):
+    svc = MessagingService(
+        storage_path=str(tmp_path),
+        message_store=_StubMessageStoreWithExpiry([{"id": "m1", "attachment": None}]),
+    )
+    assert svc.purge_expired_messages() == 1
+
+
+def test_purge_expired_messages_with_nothing_expired(tmp_path):
+    svc = MessagingService(
+        storage_path=str(tmp_path),
+        message_store=_StubMessageStoreWithExpiry([]),
+    )
+    assert svc.purge_expired_messages() == 0

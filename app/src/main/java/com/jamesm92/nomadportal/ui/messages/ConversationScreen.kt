@@ -28,12 +28,15 @@ import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Image
+import androidx.compose.material.icons.filled.Timer
+import androidx.compose.material.icons.filled.TimerOff
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.RadioButton
@@ -51,6 +54,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -59,6 +63,7 @@ import com.jamesm92.nomadportal.data.messaging.Contact
 import com.jamesm92.nomadportal.data.messaging.ImageSizeTier
 import com.jamesm92.nomadportal.data.messaging.MAX_ATTACHMENT_BYTES
 import com.jamesm92.nomadportal.data.messaging.MessagingRepository
+import com.jamesm92.nomadportal.data.SettingsRepository
 import com.jamesm92.nomadportal.data.messaging.compressImageForSend
 import com.jamesm92.nomadportal.data.messaging.readAttachmentForSend
 import com.jamesm92.nomadportal.panicwipe.PanicWipe
@@ -98,6 +103,7 @@ import kotlinx.coroutines.withContext
 @Composable
 fun ConversationScreen(
     repository: MessagingRepository,
+    settingsRepository: SettingsRepository,
     contact: Contact,
     onBack: () -> Unit,
 ) {
@@ -209,6 +215,36 @@ fun ConversationScreen(
         repository.markRead(contact.lxmfHash)
     }
 
+    // Disappearing messages — see MessagingRepository.setDisappearingTimer's
+    // own doc comment for the local-only caveat this whole feature carries.
+    var timerMenuExpanded by remember { mutableStateOf(false) }
+    val hasSeenDisappearingNotice by settingsRepository.hasSeenDisappearingMessagesNotice
+        .collectAsState(initial = true) // true (not false) as the loading-state default -- avoids
+        // ever flashing the explanatory dialog for a returning user whose real "already seen"
+        // value just hasn't resolved from DataStore yet (same defensive-default reasoning as
+        // NomadNavHost's own hasCompletedOnboarding gate, just inline here since a wrongly-shown
+        // dialog is a much smaller mistake than a wrongly-shown onboarding flow would be).
+    // Holds the just-picked duration while the one-time explanatory dialog
+    // is up, so its confirm button knows what to actually apply.
+    var pendingDisappearingSeconds by remember { mutableStateOf<Int?>(null) }
+
+    fun applyDisappearingTimer(seconds: Int) {
+        scope.launch {
+            if (repository.setDisappearingTimer(contact.lxmfHash, seconds)) {
+                liveContact = liveContact.copy(disappearingSeconds = seconds)
+            }
+        }
+    }
+
+    fun pickDisappearingTimer(seconds: Int) {
+        timerMenuExpanded = false
+        if (seconds > 0 && !hasSeenDisappearingNotice) {
+            pendingDisappearingSeconds = seconds
+        } else {
+            applyDisappearingTimer(seconds)
+        }
+    }
+
     val listState = rememberLazyListState()
     // Index 0 is the visual bottom (reverseLayout = true below) — scroll
     // there whenever the message count changes so a freshly sent or
@@ -292,6 +328,35 @@ fun ConversationScreen(
                         }
                     },
                     actions = {
+                        Box {
+                            IconButton(onClick = { timerMenuExpanded = true }) {
+                                Icon(
+                                    imageVector = if (liveContact.disappearingSeconds > 0) Icons.Filled.Timer else Icons.Filled.TimerOff,
+                                    contentDescription = if (liveContact.disappearingSeconds > 0) {
+                                        "Disappearing messages: ${disappearingTimerLabel(liveContact.disappearingSeconds)}"
+                                    } else {
+                                        "Disappearing messages off"
+                                    },
+                                    tint = if (liveContact.disappearingSeconds > 0) MaterialTheme.colorScheme.primary else LocalContentColor.current,
+                                )
+                            }
+                            DropdownMenu(
+                                expanded = timerMenuExpanded,
+                                onDismissRequest = { timerMenuExpanded = false },
+                            ) {
+                                DISAPPEARING_TIMER_OPTIONS.forEach { seconds ->
+                                    DropdownMenuItem(
+                                        text = {
+                                            Text(
+                                                disappearingTimerLabel(seconds),
+                                                fontWeight = if (seconds == liveContact.disappearingSeconds) FontWeight.Bold else null,
+                                            )
+                                        },
+                                        onClick = { pickDisappearingTimer(seconds) },
+                                    )
+                                }
+                            }
+                        }
                         PanicWipeLogo(
                             modifier = Modifier.padding(end = 8.dp),
                             onTripleTap = {
@@ -483,6 +548,41 @@ fun ConversationScreen(
             },
         )
     }
+
+    // Shown exactly once, ever, app-wide, the first time a non-Off
+    // duration is picked in any conversation — never again after (see
+    // hasSeenDisappearingMessagesNotice's own doc comment). This is the
+    // one thing about this whole feature that isn't optional: LXMF has
+    // no way to communicate or enforce a timer to the other party's
+    // device, so saying so plainly here (not just implying
+    // Signal-equivalent behavior) matters more than the feature itself.
+    pendingDisappearingSeconds?.let { seconds ->
+        AlertDialog(
+            onDismissRequest = { pendingDisappearingSeconds = null },
+            title = { Text("Disappearing messages") },
+            text = {
+                Text(
+                    "This only affects your own device. Messages you send or " +
+                        "receive here will delete themselves — including any " +
+                        "attachment — after ${disappearingTimerLabel(seconds).lowercase()}. " +
+                        "There's no way for this app to make that happen on " +
+                        "${liveContact.displayName}'s device too — LXMF has no " +
+                        "way to send them that instruction. Their own copy of " +
+                        "this conversation is entirely up to them.",
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    scope.launch { settingsRepository.setSeenDisappearingMessagesNotice(true) }
+                    applyDisappearingTimer(seconds)
+                    pendingDisappearingSeconds = null
+                }) { Text("Turn on") }
+            },
+            dismissButton = {
+                TextButton(onClick = { pendingDisappearingSeconds = null }) { Text("Cancel") }
+            },
+        )
+    }
 }
 
 private fun sendDraft(
@@ -508,4 +608,18 @@ private fun sendDraft(
             onError(e.message ?: "Failed to send message")
         }
     }
+}
+
+/** 0 = off, then a reduced Signal-style preset set — see
+ * MessagingRepository.setDisappearingTimer's own doc comment for why
+ * there's no custom/arbitrary duration input in v1. */
+private val DISAPPEARING_TIMER_OPTIONS = listOf(0, 5 * 60, 60 * 60, 24 * 60 * 60, 7 * 24 * 60 * 60)
+
+private fun disappearingTimerLabel(seconds: Int): String = when (seconds) {
+    0 -> "Off"
+    5 * 60 -> "5 minutes"
+    60 * 60 -> "1 hour"
+    24 * 60 * 60 -> "1 day"
+    7 * 24 * 60 * 60 -> "1 week"
+    else -> "${seconds}s"
 }

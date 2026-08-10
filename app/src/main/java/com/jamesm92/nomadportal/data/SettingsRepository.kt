@@ -42,6 +42,14 @@ class SettingsRepository(context: Context) {
     // until the user actually reaches/skips the end of that flow once.
     val hasCompletedOnboarding: Flow<Boolean> = boolFlow(KEY_ONBOARDING_COMPLETE, default = false)
 
+    // Gates ConversationScreen's one-time "this only affects your own
+    // device" explanation dialog -- shown the first time ever a user
+    // picks a non-Off disappearing-messages duration (any conversation),
+    // never again after. Same "explain once, don't re-nag" shape as
+    // onboarding's own SafetyStep already established for panic-wipe.
+    val hasSeenDisappearingMessagesNotice: Flow<Boolean> =
+        boolFlow(KEY_DISAPPEARING_MESSAGES_NOTICE_SEEN, default = false)
+
     // User-adjustable app-wide text scale, applied by NomadPortalTheme to
     // NomadTypography (see Theme.kt) — a multiplier, not an absolute size,
     // so it scales consistently with whatever base sizes the theme
@@ -59,6 +67,8 @@ class SettingsRepository(context: Context) {
     suspend fun setWifiDiscoveryEnabled(enabled: Boolean) = setBool(KEY_WIFI_DISCOVERY, enabled)
     suspend fun setNodeHostingEnabled(enabled: Boolean) = setBool(KEY_NODE_HOSTING, enabled)
     suspend fun setOnboardingComplete(completed: Boolean) = setBool(KEY_ONBOARDING_COMPLETE, completed)
+    suspend fun setSeenDisappearingMessagesNotice(seen: Boolean) =
+        setBool(KEY_DISAPPEARING_MESSAGES_NOTICE_SEEN, seen)
 
     suspend fun setTextScale(scale: Float) {
         dataStore.edit { it[KEY_TEXT_SCALE] = scale.coerceIn(MIN_TEXT_SCALE, MAX_TEXT_SCALE) }
@@ -83,5 +93,6 @@ class SettingsRepository(context: Context) {
         private val KEY_NODE_HOSTING = booleanPreferencesKey("node_hosting_enabled")
         private val KEY_TEXT_SCALE = floatPreferencesKey("text_scale")
         private val KEY_ONBOARDING_COMPLETE = booleanPreferencesKey("onboarding_complete")
+        private val KEY_DISAPPEARING_MESSAGES_NOTICE_SEEN = booleanPreferencesKey("disappearing_messages_notice_seen")
     }
 }

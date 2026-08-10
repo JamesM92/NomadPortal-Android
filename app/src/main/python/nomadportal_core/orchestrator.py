@@ -250,6 +250,12 @@ def start(base_dir: str) -> None:
     # steps below).
     _load_tcp_connections()
 
+    # Same "pure local file I/O, no RNS dependency" reasoning as
+    # _load_tcp_connections() above — disappearing-messages purging
+    # never touches the network, so there's no reason to make it wait
+    # for RNS to come up via the deferred-setup steps list below.
+    start_disappearing_sweep_loop()
+
     threading.Thread(
         target=_run_deferred_setup, daemon=True, name="nomadportal-deferred-init"
     ).start()
@@ -1177,9 +1183,13 @@ def _make_auto_interface():
 
 def get_nodes_json() -> str:
     """[NodeInfo] shape: hash, name, hops (nullable), last_load_ok
-    (nullable), favorited, last_seen (unix seconds — Kotlin multiplies by
-    1000). See browser.py's get_nodes() for the full dict shape; unused
-    keys are just ignored on the Kotlin side rather than filtered here."""
+    (nullable), ever_load_ok (bool — true once a fetch has ever
+    succeeded, regardless of last_load_ok's current value; lets the UI's
+    status dot distinguish "failed just now but has worked before" from
+    "never once worked"), favorited, last_seen (unix seconds — Kotlin
+    multiplies by 1000). See browser.py's get_nodes() for the full dict
+    shape; unused keys are just ignored on the Kotlin side rather than
+    filtered here."""
     import json
     if _browser is None:
         return "[]"
@@ -1334,12 +1344,12 @@ def _conversation_entries() -> list:
         peer = peers_by_hash.get(h)
         my_sent = [
             {"id": m["id"], "content": m["content"], "ts": m["sent_at"], "is_sent": True, "state": m["state"],
-             "attachment": m.get("attachment")}
+             "attachment": m.get("attachment"), "expires_at": m.get("expires_at")}
             for m in sent if m["dest"] == h
         ]
         my_received = [
             {"id": m["id"], "content": m["content"], "ts": m["received_at"], "is_sent": False, "state": None,
-             "read": m.get("read", False), "attachment": m.get("attachment")}
+             "read": m.get("read", False), "attachment": m.get("attachment"), "expires_at": m.get("expires_at")}
             for m in received if m["source"] == h
         ]
         all_msgs = sorted(my_sent + my_received, key=lambda m: m["ts"])
@@ -1361,6 +1371,9 @@ def _conversation_entries() -> list:
             "icon_fg": contact.get("icon_fg") if contact else None,
             "icon_bg": contact.get("icon_bg") if contact else None,
             "favorited": bool(contact.get("favorited")) if contact else False,
+            # 0 = off. Purely a going-forward setting — see
+            # set_disappearing_timer's own doc comment.
+            "disappearing_seconds": contact.get("disappearing_seconds", 0) if contact else 0,
             "last_seen": peer.get("last_seen") if peer else None,
             "hops": peer.get("hops") if peer else None,
             # How many times this peer's LXMF delivery identity has
@@ -1391,7 +1404,8 @@ def get_conversations_json() -> str:
     icon_mime (nullable), icon_glyph/icon_fg/icon_bg (FIELD_ICON_APPEARANCE
     descriptor, all-or-nothing nullable trio — mutually exclusive with
     icon/icon_mime, see contact_store.py's own doc comment), favorited,
-    last_seen (unix seconds, nullable — last LXMF peer announce, not last
+    disappearing_seconds (0 = off — see set_disappearing_timer's own doc
+    comment), last_seen (unix seconds, nullable — last LXMF peer announce, not last
     message), hops (nullable), announce_count (nullable — total announces
     heard from this peer), call_capable (bool — Phase 0 voice-call
     support, see call_tracker.py's own doc comment: true once this
@@ -1414,6 +1428,7 @@ def get_conversations_json() -> str:
             "icon_fg": e["icon_fg"],
             "icon_bg": e["icon_bg"],
             "favorited": e["favorited"],
+            "disappearing_seconds": e["disappearing_seconds"],
             "last_seen": e["last_seen"],
             "hops": e["hops"],
             "announce_count": e["announce_count"],
@@ -1433,6 +1448,13 @@ def get_messages_json(contact_hash: str) -> str:
     id can be rewritten by message_store.py after delivery (client UUID
     -> real LXMF hash) — don't rely on it as a stable diffing key across
     polls for outbound messages.
+
+    `expires_at` (unix seconds, nullable): stamped once at send/receive
+    time from the conversation's disappearing_seconds setting at that
+    exact moment — null means "never expires" (every message stored
+    before this feature existed too). The disappearing-messages sweep
+    loop (see start_disappearing_sweep_loop) is what actually removes
+    an expired message; this field is just the schedule.
 
     `attachment`, when present (null otherwise): {kind: "file"|"image",
     filename, mime, size, path}. `path` is an absolute on-device path —
@@ -1470,6 +1492,7 @@ def get_contact_json(contact_hash: str) -> str:
                 "icon": e["icon"], "icon_mime": e["icon_mime"],
                 "icon_glyph": e["icon_glyph"], "icon_fg": e["icon_fg"], "icon_bg": e["icon_bg"],
                 "favorited": e["favorited"],
+                "disappearing_seconds": e["disappearing_seconds"],
                 "call_capable": e["call_capable"],
             })
     try:
@@ -1483,6 +1506,7 @@ def get_contact_json(contact_hash: str) -> str:
         "icon": None, "icon_mime": None,
         "icon_glyph": None, "icon_fg": None, "icon_bg": None,
         "favorited": False,
+        "disappearing_seconds": 0,
         "call_capable": False,
     })
 
@@ -1518,6 +1542,29 @@ def set_contact_favorite(hash_hex: str, value: bool) -> bool:
                 best_name = peer.get("name") or ""
         store.upsert(hash_hex, name=best_name)
     return store.set_favorite(hash_hex, value)
+
+
+def set_disappearing_timer(hash_hex: str, seconds: int) -> bool:
+    """Per-conversation disappearing-messages duration (0 = off) — exact
+    upsert-then-set shape as set_contact_favorite above, including the
+    same live-peer-name preservation (see that function's own doc
+    comment for the real bug this avoids: a bare upsert() with no name
+    permanently blocks the real announced name from ever showing).
+    Purely forward-looking: messaging.py stamps each message's own
+    expires_at once at send/receive time from whatever this is set to
+    right then — changing it here never retroactively re-times
+    messages already stored."""
+    if _contact_store is None:
+        return False
+    store = _contact_store.for_user("")
+    if store.get(hash_hex) is None:
+        best_name = ""
+        if _lxmf_tracker is not None:
+            peer = next((p for p in _lxmf_tracker.get_peers() if p["hash"] == hash_hex), None)
+            if peer:
+                best_name = peer.get("name") or ""
+        store.upsert(hash_hex, name=best_name)
+    return store.set_disappearing_timer(hash_hex, seconds)
 
 
 def set_contact_name(hash_hex: str, name: str) -> bool:
@@ -1721,6 +1768,41 @@ def start_announce_loop() -> None:
             return
         _announce_loop_started = True
     threading.Thread(target=_announce_loop, daemon=True, name="lxmf-auto-announce").start()
+
+
+# Disappearing messages — a periodic local sweep, not tied to any RNS
+# event, so a plain sleep-loop (not an RNS callback) is the right shape
+# here, same as _announce_loop above. 30s tick: frequent enough that
+# even the shortest preset (5 minutes) disappears close to on-schedule,
+# without waking up needlessly often for something that's off by
+# default in every conversation.
+DISAPPEARING_SWEEP_TICK = 30
+
+_disappearing_sweep_started = False
+
+
+def _disappearing_sweep_loop() -> None:
+    while True:
+        time.sleep(DISAPPEARING_SWEEP_TICK)
+        if _messaging is None:
+            continue
+        try:
+            _messaging.purge_expired_messages()
+        except Exception:
+            log.exception("Disappearing-messages sweep failed")
+
+
+def start_disappearing_sweep_loop() -> None:
+    """Idempotent — a second call is a no-op. Same daemon-thread shape as
+    start_announce_loop above."""
+    global _disappearing_sweep_started
+    with _lock:
+        if _disappearing_sweep_started:
+            return
+        _disappearing_sweep_started = True
+    threading.Thread(
+        target=_disappearing_sweep_loop, daemon=True, name="disappearing-messages-sweep",
+    ).start()
 
 
 def get_announce_status_json() -> str:

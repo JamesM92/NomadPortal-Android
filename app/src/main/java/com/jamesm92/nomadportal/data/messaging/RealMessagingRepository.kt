@@ -147,6 +147,11 @@ class RealMessagingRepository : MessagingRepository {
             ).toBoolean()
         }
 
+    override suspend fun setDisappearingTimer(contactHash: String, seconds: Int): Boolean =
+        withContext(Dispatchers.IO) {
+            orchestrator.callAttr("set_disappearing_timer", contactHash, seconds).toBoolean()
+        }
+
     private fun fetchAnnounceStatus(): AnnounceStatus {
         val obj = JSONObject(orchestrator.callAttr("get_announce_status_json").toString())
         val interfacesObj = obj.getJSONObject("interfaces")
@@ -252,6 +257,7 @@ class RealMessagingRepository : MessagingRepository {
             displayName = obj.optString("name").ifBlank { hash.take(16) },
             icon = icon,
             isFavorite = obj.optBoolean("favorited", false),
+            disappearingSeconds = obj.optInt("disappearing_seconds", 0),
             lastAnnounceMillis = if (obj.isNull("last_seen")) 0L else (obj.optDouble("last_seen", 0.0) * 1000).toLong(),
             hopCount = if (obj.isNull("hops")) -1 else obj.optInt("hops", -1),
             // Absent entirely from get_contact_json's smaller dict (only
@@ -282,6 +288,7 @@ class RealMessagingRepository : MessagingRepository {
                 else -> null
             },
             attachment = obj.optJSONObject("attachment")?.let(::parseAttachment),
+            expiresAtMillis = if (obj.isNull("expires_at")) null else (obj.optDouble("expires_at", 0.0) * 1000).toLong(),
         )
     }
 

@@ -162,6 +162,45 @@ class MessagingService:
         # identity-material-specific concern.
         self._attachments_dir = os.path.join(self._storage, "attachments")
 
+    def _disappearing_seconds_for(self, hash_hex: str, user_sub: str) -> int:
+        """The conversation's current disappearing-messages duration
+        (0 = off) — read once at message-creation time so `_send`/
+        `_on_delivery` can stamp that message's own `expires_at`. Same
+        None-safe "no ContactStore entry yet" handling as every other
+        contact lookup in this file (a message-history-only or
+        announce-only contact has no entry until something explicitly
+        creates one — see set_contact_favorite's own doc comment for
+        the general shape of this gap)."""
+        if not self._contact_mgr or not hash_hex:
+            return 0
+        entry = self._contact_mgr.for_user(user_sub).get(hash_hex)
+        return entry.get("disappearing_seconds", 0) if entry else 0
+
+    def purge_expired_messages(self) -> int:
+        """Sweeps every disappearing message whose timer has elapsed —
+        called periodically by orchestrator.py's disappearing-messages
+        sweep loop. Unlike delete_conversation (a known, pre-existing,
+        out-of-scope gap: it drops the messages.json entry but never
+        unlinks the attachment file on disk), this genuinely removes
+        the backing attachment bytes too — a message advertised to the
+        user as "disappearing" has to actually disappear, not just stop
+        showing up in the list. Returns the number of messages purged."""
+        if not self._msg_store:
+            return 0
+        removed = self._msg_store.purge_expired()
+        for entry in removed:
+            attachment = entry.get("attachment")
+            path = attachment.get("path") if attachment else None
+            if not path:
+                continue
+            try:
+                os.remove(path)
+            except OSError as exc:
+                log.debug("Could not remove expired attachment: %s", exc)
+        if removed:
+            log.info("Disappearing-messages sweep: purged %d message(s)", len(removed))
+        return len(removed)
+
     def _save_attachment(
         self, msg_id: str, filename: str, data: bytes, kind: str,
         image_format: Optional[str] = None,
@@ -636,15 +675,23 @@ class MessagingService:
         except Exception as exc:
             log.debug("Attachment extraction skipped: %s", exc)
 
+        disappearing_seconds = self._disappearing_seconds_for(source_hex, user_sub)
+        received_at = time.time()
         entry = {
             "id":          msg_id,
             "source":      source_hex,
             "title":       _decode(message.title),
             "content":     _decode(message.content),
-            "received_at": time.time(),
+            "received_at": received_at,
             "read":        False,
             "owner":       user_sub,
             "attachment":  attachment_meta,
+            # Stamped once, here, from the conversation's setting at
+            # this exact moment — not retroactive to a later setting
+            # change. None (the default for every message that predates
+            # this feature too, no migration needed) means "never
+            # expires" — see message_store.py's purge_expired.
+            "expires_at":  received_at + disappearing_seconds if disappearing_seconds > 0 else None,
         }
 
         log.info(
@@ -711,6 +758,8 @@ class MessagingService:
             except ValueError as exc:
                 return False, str(exc)
 
+        disappearing_seconds = self._disappearing_seconds_for(dest_hash_hex, user_sub)
+        sent_at = time.time()
         entry = {
             "id":      msg_id,
             "dest":    dest_hash_hex,
@@ -727,9 +776,13 @@ class MessagingService:
             "content": content or "",
             "preview": (content or "")[:120],
             "state":   "queued",
-            "sent_at": time.time(),
+            "sent_at": sent_at,
             "owner":   user_sub,
             "attachment": attachment_meta,
+            # See _on_delivery()'s identical field for the full rationale
+            # — stamped once from this conversation's setting right now,
+            # never retroactively re-timed.
+            "expires_at": sent_at + disappearing_seconds if disappearing_seconds > 0 else None,
         }
         if self._msg_store:
             self._msg_store.save_sent(entry)

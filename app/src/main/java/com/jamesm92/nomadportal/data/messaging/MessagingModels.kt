@@ -37,6 +37,16 @@ data class Contact(
      * "this contact's client supports calls" signal surfaced as a phone
      * icon on their card — not yet wired to actually start a call. */
     val isCallCapable: Boolean = false,
+    /** Per-conversation disappearing-messages duration, in seconds — 0 =
+     * off. **Local-only**: LXMF has no wire mechanism to communicate or
+     * enforce this to the other party's device (confirmed directly
+     * against messaging.py's real announce/message-field handling — a
+     * NomadNet/LXMF protocol fact, not an implementation gap this app
+     * could close). This governs only when a message disappears from
+     * *this* device's own storage; the recipient's own copy is entirely
+     * outside this app's control. See
+     * [MessagingRepository.setDisappearingTimer]. */
+    val disappearingSeconds: Int = 0,
 )
 
 sealed interface ContactIcon {
@@ -111,6 +121,15 @@ data class Message(
     /** Only meaningful when [isSent] is true — null for received messages. */
     val deliveryState: DeliveryState? = null,
     val attachment: Attachment? = null,
+    /** When this message disappears from this device, or null if it
+     * never will — stamped once, at send/receive time, from whatever
+     * [Contact.disappearingSeconds] was set to *at that exact moment*
+     * (not retroactive to a later setting change — see messaging.py's
+     * own doc comment on why). A background sweep on the Python side
+     * (orchestrator's disappearing-messages sweep loop) is what
+     * actually removes an expired message; this field is just the
+     * schedule. */
+    val expiresAtMillis: Long? = null,
 )
 
 data class ConversationSummary(

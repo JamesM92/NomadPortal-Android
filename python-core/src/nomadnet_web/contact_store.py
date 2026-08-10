@@ -41,12 +41,13 @@ class ContactStore:
             entry = self._data.get(hash_hex)
             if entry is None:
                 entry = {
-                    "hash":      hash_hex,
-                    "name":      name or hash_hex[:16],
-                    "note":      note,
-                    "favorited": False,
-                    "created":   time.time(),
-                    "updated":   time.time(),
+                    "hash":                  hash_hex,
+                    "name":                  name or hash_hex[:16],
+                    "note":                  note,
+                    "favorited":             False,
+                    "disappearing_seconds":  0,
+                    "created":               time.time(),
+                    "updated":               time.time(),
                 }
                 self._data[hash_hex] = entry
                 log.info("Added contact %s", hash_hex[:16])
@@ -76,12 +77,13 @@ class ContactStore:
             entry = self._data.get(hash_hex)
             if entry is None:
                 entry = {
-                    "hash":      hash_hex,
-                    "name":      name,
-                    "note":      "",
-                    "favorited": False,
-                    "created":   time.time(),
-                    "updated":   time.time(),
+                    "hash":                  hash_hex,
+                    "name":                  name,
+                    "note":                  "",
+                    "favorited":             False,
+                    "disappearing_seconds":  0,
+                    "created":               time.time(),
+                    "updated":               time.time(),
                 }
                 self._data[hash_hex] = entry
                 log.info("Added contact (custom name) %s", hash_hex[:16])
@@ -108,12 +110,13 @@ class ContactStore:
             entry = self._data.get(hash_hex)
             if entry is None:
                 entry = {
-                    "hash":      hash_hex,
-                    "name":      hash_hex[:16],
-                    "note":      "",
-                    "favorited": False,
-                    "created":   time.time(),
-                    "updated":   time.time(),
+                    "hash":                  hash_hex,
+                    "name":                  hash_hex[:16],
+                    "note":                  "",
+                    "favorited":             False,
+                    "disappearing_seconds":  0,
+                    "created":               time.time(),
+                    "updated":               time.time(),
                 }
                 self._data[hash_hex] = entry
                 log.info("Added contact (icon) %s", hash_hex[:16])
@@ -133,12 +136,13 @@ class ContactStore:
             entry = self._data.get(hash_hex)
             if entry is None:
                 entry = {
-                    "hash":      hash_hex,
-                    "name":      hash_hex[:16],
-                    "note":      "",
-                    "favorited": False,
-                    "created":   time.time(),
-                    "updated":   time.time(),
+                    "hash":                  hash_hex,
+                    "name":                  hash_hex[:16],
+                    "note":                  "",
+                    "favorited":             False,
+                    "disappearing_seconds":  0,
+                    "created":               time.time(),
+                    "updated":               time.time(),
                 }
                 self._data[hash_hex] = entry
                 log.info("Added contact (icon appearance) %s", hash_hex[:16])
@@ -160,6 +164,26 @@ class ContactStore:
             if entry is None:
                 return False
             entry["favorited"] = favorited
+            entry["updated"] = time.time()
+            snapshot = dict(self._data)
+        self._persist(snapshot)
+        return True
+
+    def set_disappearing_timer(self, hash_hex: str, seconds: int) -> bool:
+        """Per-conversation disappearing-messages duration — 0 means off.
+        Purely a *going-forward* setting: messaging.py reads this once
+        per message at send/receive time and stamps that message's own
+        `expires_at`, so changing this later never retroactively
+        re-times messages already stored (see message_store.py's
+        `purge_expired` and messaging.py's own doc comments). Same
+        entry-must-already-exist contract as set_favorite — the caller
+        (orchestrator.set_disappearing_timer) upserts first, exactly
+        like set_contact_favorite already does."""
+        with self._lock:
+            entry = self._data.get(hash_hex)
+            if entry is None:
+                return False
+            entry["disappearing_seconds"] = max(0, int(seconds))
             entry["updated"] = time.time()
             snapshot = dict(self._data)
         self._persist(snapshot)

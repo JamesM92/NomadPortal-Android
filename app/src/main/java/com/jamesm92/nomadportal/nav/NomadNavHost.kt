@@ -181,6 +181,7 @@ fun NomadNavHost(
             } else {
                 ConversationScreen(
                     repository = messagingRepository,
+                    settingsRepository = settingsRepository,
                     contact = contact,
                     onBack = { navController.popBackStack() },
                 )
@@ -277,7 +278,7 @@ private fun NomadBottomNavigationBar(
             selected = currentRoute == Routes.NODES,
             onClick = { navigateToTopLevelTab(navController, Routes.NODES) },
             icon = { Icon(Icons.Filled.Explore, contentDescription = null) },
-            label = { Text("Nodes") },
+            label = { Text("Sites") },
         )
         NavigationBarItem(
             selected = currentRoute == Routes.SETTINGS,
