@@ -133,20 +133,24 @@ def _complementary_rgb(r: int, g: int, b: int) -> tuple:
 
 def _default_icon_appearance(identity) -> dict:
     """A fun, deterministic default icon derived from the hash of this
-    identity's own LXMF address, per explicit design direction: hex[4:7]
-    (3 digits, 0-4095) selects an icon — modulo _ICON_NAMES' length,
-    since 4096 doesn't divide evenly into it — hex[7:10] is the
-    background color in Micron's own compact-hex format (see
-    _hex_shorthand_to_rgb), and the foreground is that background's true
-    complementary color (see _complementary_rgb), computed rather than
-    hash-derived. Shape matches entry["icon"] elsewhere in this file
+    identity's own LXMF address. Per explicit design direction, the
+    glyph deliberately **reuses the exact same hex[0:3] nibbles**
+    _default_display_name picks the adverb/adjective/animal from
+    (not a disjoint range) — the icon and the name are meant to read as
+    two views of the same identity, not two independently-rolled
+    values. hex[7:10] is the background color in Micron's own
+    compact-hex format (see _hex_shorthand_to_rgb), and the foreground
+    is that background's true complementary color (see
+    _complementary_rgb), computed rather than hash-derived — color
+    stays on its own independent slice, only the glyph pick overlaps
+    with the name. Shape matches entry["icon"] elsewhere in this file
     ({"glyph", "fg", "bg"}) — this is only ever the *initial* value; the
     user's own later edit via Home's glyph editor (set_icon_appearance)
     overwrites it same as any other rename would.
     """
     h = _dest_hash_hex(identity)
     try:
-        glyph = _ICON_NAMES[int(h[4:7], 16) % len(_ICON_NAMES)]
+        glyph = _ICON_NAMES[int(h[0:3], 16) % len(_ICON_NAMES)]
         bg_r, bg_g, bg_b = _hex_shorthand_to_rgb(h[7:10])
         fg_r, fg_g, fg_b = _complementary_rgb(bg_r, bg_g, bg_b)
         return {
