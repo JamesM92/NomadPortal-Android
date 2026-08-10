@@ -40,9 +40,9 @@ fun LinkWarningDialog(
             title = { Text("Download file?") },
             text = {
                 Text(
-                    "This node offers a file for download:\n\n${warning.fileName}\n\n" +
+                    "This site offers a file for download:\n\n${warning.fileName}\n\n" +
                         "No virus scan is available on this device — only download files " +
-                        "from nodes you trust (porting-notes.md §4)."
+                        "from sites you trust (porting-notes.md §4)."
                 )
             },
             confirmButton = { TextButton(onClick = onConfirm) { Text("Download") } },

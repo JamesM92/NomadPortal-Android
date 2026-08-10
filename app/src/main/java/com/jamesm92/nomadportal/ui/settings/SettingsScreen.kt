@@ -311,7 +311,7 @@ fun SettingsScreen(
                     item { SectionHeader("Hosting") }
                     item {
                         ToggleRow(
-                            label = "Host a NomadNet node",
+                            label = "Host a NomadNet site",
                             checked = nodeHostingEnabled,
                             onCheckedChange = { scope.launch { interfaceController.setNodeHostingEnabled(it) } },
                         )
@@ -342,9 +342,9 @@ fun SettingsScreen(
                         }
                         item {
                             AddressRow(
-                                label = "Node address",
+                                label = "Site address",
                                 value = status.hostedNodeHash,
-                                placeholder = "Not currently hosting a node",
+                                placeholder = "Not currently hosting a site",
                             )
                         }
                     }

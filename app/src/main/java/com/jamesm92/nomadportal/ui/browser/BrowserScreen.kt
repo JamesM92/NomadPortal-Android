@@ -251,7 +251,7 @@ fun BrowserScreen(
                     },
                     navigationIcon = {
                         IconButton(onClick = onBack) {
-                            Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back to nodes")
+                            Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back to sites")
                         }
                     },
                     actions = {
@@ -346,7 +346,7 @@ fun BrowserScreen(
                         ) {
                             Icon(
                                 imageVector = if (currentNodeFavorited) Icons.Filled.Favorite else Icons.Filled.FavoriteBorder,
-                                contentDescription = if (currentNodeFavorited) "Unfavorite this node" else "Favorite this node",
+                                contentDescription = if (currentNodeFavorited) "Unfavorite this site" else "Favorite this site",
                                 tint = if (currentNodeFavorited) MaterialTheme.colorScheme.primary else NomadTextDim,
                                 modifier = Modifier.size(16.dp),
                             )
@@ -384,9 +384,9 @@ fun BrowserScreen(
                             Icon(
                                 imageVector = Icons.Filled.Fingerprint,
                                 contentDescription = if (identified) {
-                                    "Identifying to this node — tap to browse anonymously"
+                                    "Identifying to this site — tap to browse anonymously"
                                 } else {
-                                    "Browsing anonymously — tap to identify to this node"
+                                    "Browsing anonymously — tap to identify to this site"
                                 },
                                 tint = if (identified) MaterialTheme.colorScheme.primary else NomadTextDim,
                                 modifier = Modifier.size(16.dp),

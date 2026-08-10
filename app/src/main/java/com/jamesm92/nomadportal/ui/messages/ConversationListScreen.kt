@@ -292,23 +292,13 @@ fun ConversationListScreen(
                             )
                         },
                     )
-                    Tab(
-                        selected = selectedTab == 1,
-                        onClick = { selectedTab = 1 },
-                        text = {
-                            Text(
-                                "Users",
-                                style = MaterialTheme.typography.labelMedium.copy(
-                                    fontWeight = if (selectedTab == 1) FontWeight.Bold else FontWeight.Normal,
-                                ),
-                                color = if (selectedTab == 1) {
-                                    MaterialTheme.colorScheme.primary
-                                } else {
-                                    NomadTextDim
-                                },
-                            )
-                        },
-                    )
+                    // Declaration order here is purely the visual left-to-
+                    // right tab order (Chats/Calls/Users, per explicit
+                    // direction) — deliberately NOT reordering the
+                    // selectedTab index values themselves (Users is still
+                    // 1, Calls is still 2), so the content `if/else if/else`
+                    // chain below stays untouched and keyed exactly as
+                    // before; only which Tab() renders in which slot moved.
                     Tab(
                         selected = selectedTab == 2,
                         onClick = { selectedTab = 2 },
@@ -319,6 +309,23 @@ fun ConversationListScreen(
                                     fontWeight = if (selectedTab == 2) FontWeight.Bold else FontWeight.Normal,
                                 ),
                                 color = if (selectedTab == 2) {
+                                    MaterialTheme.colorScheme.primary
+                                } else {
+                                    NomadTextDim
+                                },
+                            )
+                        },
+                    )
+                    Tab(
+                        selected = selectedTab == 1,
+                        onClick = { selectedTab = 1 },
+                        text = {
+                            Text(
+                                "Users",
+                                style = MaterialTheme.typography.labelMedium.copy(
+                                    fontWeight = if (selectedTab == 1) FontWeight.Bold else FontWeight.Normal,
+                                ),
+                                color = if (selectedTab == 1) {
                                     MaterialTheme.colorScheme.primary
                                 } else {
                                     NomadTextDim

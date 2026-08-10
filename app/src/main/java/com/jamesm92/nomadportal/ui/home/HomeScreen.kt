@@ -226,7 +226,7 @@ private fun HostedNodeSection(
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Text(
-                text = "Hosted node",
+                text = "Hosted site",
                 style = MaterialTheme.typography.titleLarge,
                 color = MaterialTheme.colorScheme.secondary,
             )
@@ -283,7 +283,7 @@ private fun HostedNodeSection(
                 }
             } else {
                 Text(
-                    text = status.nodeName ?: "Unnamed node",
+                    text = status.nodeName ?: "Unnamed site",
                     style = MaterialTheme.typography.bodyLarge,
                     modifier = Modifier.weight(1f, fill = false),
                 )

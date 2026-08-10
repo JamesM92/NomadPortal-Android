@@ -52,6 +52,7 @@ import com.jamesm92.nomadportal.ui.components.rememberStableOrder
 import com.jamesm92.nomadportal.ui.theme.NomadAccent2
 import com.jamesm92.nomadportal.ui.theme.NomadError
 import com.jamesm92.nomadportal.ui.theme.NomadTextDim
+import com.jamesm92.nomadportal.ui.theme.NomadWarn
 import kotlinx.coroutines.launch
 
 /**
@@ -170,7 +171,7 @@ fun NodeListScreen(
     Scaffold(
         topBar = {
             AdaptiveTopAppBar(
-                title = { Text("Nodes") },
+                title = { Text("Sites") },
                 // No back arrow, no cross-nav icons — Nodes is now a
                 // real bottom-nav tab (NomadNavHost.kt), same as Home/
                 // Messages/Settings; switching tabs is the way back.
@@ -201,7 +202,7 @@ fun NodeListScreen(
                 SearchField(
                     query = searchQuery,
                     onQueryChange = { searchQuery = it },
-                    placeholder = "Search nodes",
+                    placeholder = "Search sites",
                     modifier = Modifier.weight(1f),
                 )
                 // Search only finds already-discovered nodes (a live
@@ -261,7 +262,7 @@ fun NodeListScreen(
 
     if (showAddByAddress) {
         AddByAddressDialog(
-            title = "Go to node address",
+            title = "Go to site address",
             onDismiss = { showAddByAddress = false },
             onConfirm = { hash ->
                 showAddByAddress = false
@@ -338,7 +339,7 @@ private fun NodeRow(node: NodeInfo, onClick: () -> Unit, onToggleFavorite: () ->
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(12.dp),
     ) {
-        FetchStatusDot(node.lastFetchOk)
+        FetchStatusDot(node.lastFetchOk, node.everFetchOk)
         Column(modifier = Modifier.weight(1f)) {
             // bodyMedium/bodySmall (real type-scale roles, not fractions
             // of bodyLarge) — still scale with the user's Settings → text
@@ -374,7 +375,7 @@ private fun NodeRow(node: NodeInfo, onClick: () -> Unit, onToggleFavorite: () ->
             // instead of a control that silently does nothing.
             Icon(
                 imageVector = Icons.Filled.Favorite,
-                contentDescription = if (node.isHosted) "Your hosted node — always favorited" else "Default node — always favorited",
+                contentDescription = if (node.isHosted) "Your hosted site — always favorited" else "Default site — always favorited",
                 tint = MaterialTheme.colorScheme.primary,
                 modifier = Modifier.padding(12.dp).size(24.dp),
             )
@@ -390,16 +391,29 @@ private fun NodeRow(node: NodeInfo, onClick: () -> Unit, onToggleFavorite: () ->
     }
 }
 
-/** Null = never fetched (dim), true = last fetch ok (green), false = last fetch failed (red) — porting-notes.md §4's "last-fetch-ok/fail indicator". */
+/**
+ * Null = never fetched (dim, full circle), true = last fetch ok (green,
+ * full circle), false = last fetch failed — porting-notes.md §4's
+ * "last-fetch-ok/fail indicator". A failed last attempt renders two
+ * different ways depending on [everFetchOk]: a solid red circle means
+ * this node has *never once* loaded successfully, while a half-filled
+ * amber circle (NomadWarn — this app's existing warning token, not a
+ * new color) means it worked before and is only failing right now —
+ * a real, meaningfully different signal from "never worked" that a
+ * uniform red would otherwise collapse together.
+ */
 @Composable
-private fun FetchStatusDot(lastFetchOk: Boolean?) {
-    val color = when (lastFetchOk) {
-        true -> NomadAccent2
-        false -> NomadError
-        null -> NomadTextDim
-    }
-    Canvas(modifier = Modifier.size(10.dp)) {
-        drawCircle(color = color)
+private fun FetchStatusDot(lastFetchOk: Boolean?, everFetchOk: Boolean) {
+    when {
+        lastFetchOk == true -> Canvas(modifier = Modifier.size(10.dp)) { drawCircle(color = NomadAccent2) }
+        lastFetchOk == null -> Canvas(modifier = Modifier.size(10.dp)) { drawCircle(color = NomadTextDim) }
+        lastFetchOk == false && everFetchOk -> Canvas(modifier = Modifier.size(10.dp)) {
+            // Half-filled, not a smaller/dimmer full circle — the shape
+            // itself (not just the color) reads as "partial/degraded"
+            // at a glance, distinct from the solid-circle states.
+            drawArc(color = NomadWarn, startAngle = -90f, sweepAngle = 180f, useCenter = true)
+        }
+        else -> Canvas(modifier = Modifier.size(10.dp)) { drawCircle(color = NomadError) }
     }
 }
 

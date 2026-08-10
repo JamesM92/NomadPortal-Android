@@ -14,6 +14,11 @@ data class NodeInfo(
     val hopCount: Int,
     /** Null = never fetched yet; true/false = last fetch attempt's outcome. */
     val lastFetchOk: Boolean?,
+    /** True once a fetch has ever succeeded for this node, regardless of
+     * [lastFetchOk]'s current value — lets the status dot distinguish
+     * "failed just now, but has worked before" (yellow) from "never once
+     * worked" (red), instead of collapsing both into the same red state. */
+    val everFetchOk: Boolean = false,
     val isFavorite: Boolean,
     val lastAnnounceMillis: Long,
     /** Total announces heard from this node — powers NodeListScreen's

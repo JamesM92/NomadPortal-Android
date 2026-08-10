@@ -54,6 +54,7 @@ class RealBrowserRepository : BrowserRepository {
                 // is non-null, so -1 is the "unknown" sentinel here.
                 hopCount = if (obj.isNull("hops")) -1 else obj.getInt("hops"),
                 lastFetchOk = if (obj.isNull("last_load_ok")) null else obj.getBoolean("last_load_ok"),
+                everFetchOk = obj.optBoolean("ever_load_ok", false),
                 isFavorite = obj.optBoolean("favorited", false),
                 // browser.py's last_seen is unix seconds (float); NodeInfo wants millis.
                 lastAnnounceMillis = (obj.optDouble("last_seen", 0.0) * 1000).toLong(),

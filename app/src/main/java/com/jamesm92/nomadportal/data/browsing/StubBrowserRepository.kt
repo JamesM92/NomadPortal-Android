@@ -23,7 +23,10 @@ class StubBrowserRepository : BrowserRepository {
         listOf(
             NodeInfo(RELAY_NORTH, "relay-north", hopCount = 2, lastFetchOk = true, isFavorite = true, lastAnnounceMillis = System.currentTimeMillis() - 60_000),
             NodeInfo(RELAY_SOUTH, "relay-south", hopCount = 3, lastFetchOk = null, isFavorite = false, lastAnnounceMillis = System.currentTimeMillis() - 300_000),
-            NodeInfo(EDGE_CACHE, "edge-cache", hopCount = 5, lastFetchOk = false, isFavorite = false, lastAnnounceMillis = System.currentTimeMillis() - 3_600_000),
+            // everFetchOk = true here deliberately, despite lastFetchOk =
+            // false — exercises FetchStatusDot's "worked before, failed
+            // just now" yellow state, not just green/red/never-fetched.
+            NodeInfo(EDGE_CACHE, "edge-cache", hopCount = 5, lastFetchOk = false, everFetchOk = true, isFavorite = false, lastAnnounceMillis = System.currentTimeMillis() - 3_600_000),
         )
     )
 

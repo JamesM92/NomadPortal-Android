@@ -434,7 +434,7 @@ private fun LinkPanel(enabled: Boolean, initialLabel: String, onInsert: (destina
     PanelFrame(enabled, "Tap into a paragraph first to insert a link there.") {
         Column {
             Text(
-                "Same-node page (e.g. /page/other.mu) or another node's hash:path address",
+                "Same-site page (e.g. /page/other.mu) or another site's hash:path address",
                 style = MaterialTheme.typography.bodySmall,
                 color = NomadTextDim,
             )
