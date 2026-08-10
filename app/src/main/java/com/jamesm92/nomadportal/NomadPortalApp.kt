@@ -68,11 +68,11 @@ class NomadPortalApp : Application() {
         // RealInterfaceController, backed by nomadportal_core.orchestrator
         // (app/src/main/python/nomadportal_core/orchestrator.py — see its
         // docstring for the RNS-interface-lifecycle design). TCP, Wi-Fi
-        // discovery, and node hosting are wired to real behavior; RNode/
-        // Bluetooth-mesh remain persisted-intent-only pending their own
-        // separate prerequisites — see RealInterfaceController's own doc
+        // discovery, node hosting, and Bluetooth mesh are all wired to
+        // real behavior; only RNode remains persisted-intent-only pending
+        // its own separate prerequisite — see RealInterfaceController's own doc
         // comment for exactly why.
-        interfaceController = RealInterfaceController(settingsRepository, appScope)
+        interfaceController = RealInterfaceController(this, settingsRepository, appScope)
         tcpConnectionsRepository = RealTcpConnectionsRepository()
         siteFileRepository = RealSiteFileRepository()
 
@@ -107,6 +107,18 @@ class NomadPortalApp : Application() {
             }
             if (settingsRepository.wifiDiscoveryEnabled.first()) {
                 interfaceController.setWifiDiscoveryEnabled(true)
+            }
+            if (settingsRepository.bluetoothMeshEnabled.first()) {
+                // Same best-effort shape as node hosting below — the
+                // foreground service start can fail (e.g. the Bluetooth
+                // permission grant was somehow lost since this was last
+                // turned on), and that shouldn't crash app startup.
+                try {
+                    interfaceController.setBluetoothMeshEnabled(true)
+                } catch (e: Exception) {
+                    // Logged inside BluetoothMeshManager already; nothing
+                    // further to do here at boot time.
+                }
             }
             if (settingsRepository.nodeHostingEnabled.first()) {
                 // Best-effort — a failure here (e.g. a corrupt site

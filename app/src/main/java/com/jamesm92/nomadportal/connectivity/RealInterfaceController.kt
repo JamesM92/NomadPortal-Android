@@ -1,5 +1,6 @@
 package com.jamesm92.nomadportal.connectivity
 
+import android.content.Context
 import com.chaquo.python.Python
 import com.jamesm92.nomadportal.data.SettingsRepository
 import kotlinx.coroutines.CoroutineScope
@@ -20,17 +21,23 @@ import org.json.JSONObject
  * added/removed on an already-running `RNS.Transport`, `Reticulum()`
  * itself is only ever constructed once).
  *
- * **Only TCP and Wi-Fi discovery are actually wired to real RNS behavior
- * here.** RNode and Bluetooth mesh remain persisted-intent-only (same as
- * [NoopInterfaceController]) because each has its own real, separate
- * prerequisite that doesn't exist yet:
- * - RNode-over-USB needs Android USB host APIs (device enumeration,
- *   permission flow, a device picker) — none of that exists yet, and
- *   `orchestrator.set_rnode_enabled` needs a serial port string this app
- *   has no way to obtain.
- * - Bluetooth mesh needs the separate `RNS_BLE_Wrapper` repo's interface
- *   integrated — that repo isn't wired in yet (see
- *   nomadportal_android_handoff.md's "Relationship to other tracks").
+ * **TCP, Wi-Fi discovery, and Bluetooth mesh are wired to real RNS
+ * behavior here.** Only RNode remains persisted-intent-only (same as
+ * [NoopInterfaceController]) — it needs Android USB host APIs (device
+ * enumeration, permission flow, a device picker) that don't exist yet,
+ * and `orchestrator.set_rnode_enabled` needs a serial port string this
+ * app has no way to obtain.
+ *
+ * Bluetooth mesh is real as of the `RNS_BLE_Wrapper` sibling repo's
+ * integration (see [BluetoothMeshManager], and that repo's own README —
+ * its mesh transport has real logic behind it but, per its own stated
+ * status, has never been exercised against real Bluetooth radios; this
+ * app's own on-device verification has been limited to a single device
+ * (service starts, Python interface attaches without error) — real
+ * multi-device neighbor discovery/relay is still unverified pending 2
+ * physical devices in range of each other). RNode-over-BLE/Classic is a
+ * distinct, separately-unimplemented role in that same repo — not
+ * covered by this integration; [setRNodeEnabled] stays as it was.
  *
  * Node hosting (`SiteServer`) is real too (Aug 2026) — see
  * `nomadnet_web.site_server`'s own module doc comment for why it's
@@ -46,6 +53,7 @@ import org.json.JSONObject
  * honest given there is currently no real fix.
  */
 class RealInterfaceController(
+    context: Context,
     private val settings: SettingsRepository,
     private val scope: CoroutineScope,
 ) : InterfaceController {
@@ -53,6 +61,11 @@ class RealInterfaceController(
     private val orchestrator by lazy {
         Python.getInstance().getModule("nomadportal_core.orchestrator")
     }
+
+    // Application context only (matches CallAudioEngine's own constructor
+    // convention) — this class is a long-lived app-wide singleton
+    // (NomadPortalApp), never itself Activity-scoped.
+    private val bluetoothMesh = BluetoothMeshManager(context.applicationContext, scope)
 
     override val tcpEnabled: StateFlow<Boolean> =
         settings.tcpEnabled.stateIn(scope, SharingStarted.Eagerly, true)
@@ -83,7 +96,11 @@ class RealInterfaceController(
     }
 
     override suspend fun setBluetoothMeshEnabled(enabled: Boolean) {
-        // TODO(RNS_BLE_Wrapper not integrated yet): persisted intent only.
+        if (enabled) {
+            bluetoothMesh.start()
+        } else {
+            bluetoothMesh.stop()
+        }
         settings.setBluetoothMeshEnabled(enabled)
     }
 

@@ -116,9 +116,28 @@ chaquopy {
     // (nomadportal_android_handoff.md sequencing step 1's own
     // requirement) precisely because this is an additive source root, not
     // a copy.
+    //
+    // Also picks up rnsble-core's own rns_ble_interface.py the same way —
+    // Chaquopy only embeds a Python runtime into a com.android.application
+    // module, not a library module (RNS_BLE_Wrapper's rnsble-core is one),
+    // so that repo's own README documents this exact extra-source-directory
+    // step as what an out-of-repo consumer needs.
+    //
+    // Two `../` hops, not one: unlike python-core (which lives *inside*
+    // this repo, one level up from app/, at NomadPortal-Android/python-core),
+    // RNS_BLE_Wrapper is a *sibling checkout* of this whole repo, matching
+    // RNS_BLE_WRAPPER_DIR's own default in settings.gradle.kts
+    // (../RNS_BLE_Wrapper *relative to the repo root*, i.e. one more hop up
+    // than app/ itself sits at). Confirmed via a real build failure this
+    // wasn't obvious from the settings.gradle.kts path alone: Chaquopy's
+    // own mergeDebugPythonSources error named the exact wrong resolved
+    // path it went looking for
+    // (NomadPortal-Android/RNS_BLE_Wrapper/... instead of the real
+    // .../JamesM92/RNS_BLE_Wrapper/...).
     sourceSets {
         getByName("main") {
             srcDir("../python-core/src")
+            srcDir("../../RNS_BLE_Wrapper/rnsble-core/src/main/python")
         }
     }
 }
@@ -138,6 +157,7 @@ dependencies {
     // -core once Message/Wifi/etc. icons were needed beyond core's set.
     implementation(libs.androidx.material.icons.extended)
     implementation(libs.micron2compose)
+    implementation(libs.rnsble.core)
 
     testImplementation(libs.junit)
 

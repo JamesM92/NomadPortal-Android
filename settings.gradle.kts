@@ -49,3 +49,18 @@ includeBuild(micron2composeDir) {
             .using(project(":micron2compose"))
     }
 }
+
+// Same composite-build shape as micron2compose above, for the same reason
+// (not published anywhere yet) -- RNS_BLE_Wrapper's own rnsble-core module
+// now declares a real group (com.jamesm92.rnsble, added specifically to make
+// this substitution possible) since it previously had none. Location
+// overridable via RNS_BLE_WRAPPER_DIR, same CI-checkout-location reasoning
+// as MICRON2COMPOSE_DIR above (actions/checkout@v7 refuses to place a
+// checkout outside $GITHUB_WORKSPACE).
+val rnsBleWrapperDir = System.getenv("RNS_BLE_WRAPPER_DIR") ?: "../RNS_BLE_Wrapper"
+includeBuild(rnsBleWrapperDir) {
+    dependencySubstitution {
+        substitute(module("com.jamesm92.rnsble:rnsble-core"))
+            .using(project(":rnsble-core"))
+    }
+}

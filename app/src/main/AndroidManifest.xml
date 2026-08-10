@@ -1,5 +1,19 @@
 <?xml version="1.0" encoding="utf-8"?>
-<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
+
+    <!-- Overrides rnsble-core's own <uses-feature required="true"> down to
+         false via an explicit tools:replace (AGP's manifest merger treats a
+         same-element conflicting attribute value across manifests as a hard
+         error without one, it doesn't silently let the app win) — Bluetooth
+         mesh must stay an optional toggle, not a hard device requirement
+         that would block installing this app on hardware without BLE at
+         all, matching every other interface (TCP/RNode/Wi-Fi discovery)
+         this app already treats as optional. -->
+    <uses-feature
+        android:name="android.hardware.bluetooth_le"
+        android:required="false"
+        tools:replace="android:required" />
 
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />

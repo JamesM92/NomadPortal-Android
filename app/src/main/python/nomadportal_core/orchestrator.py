@@ -427,6 +427,43 @@ def set_rnode_enabled(enabled: bool, serial_port: str) -> None:
     _set_interface("rnode", enabled, lambda: _make_rnode(serial_port))
 
 
+def set_bluetooth_mesh_bridge(bridge) -> None:
+    """Attaches the phone-to-phone BLE mesh interface, backed by a live
+    `com.jamesm92.rnsble.interop.RnsBleBridge` Kotlin object Chaquopy
+    hands across the boundary — see `BluetoothMeshManager.kt`, which
+    binds/starts `RnsBleForegroundService` and calls this the moment a
+    real bridge exists (there's no way to construct one from the Python
+    side; unlike RNode/Wi-Fi-discovery's interfaces, this one has no
+    config-only factory).
+
+    Reuses `_set_interface`'s exact same attach/detach machinery
+    (`_browser.reticulum._add_interface`/`RNS.Transport.remove_interface`)
+    under the `"bluetooth_mesh"` key — the same key
+    `AnnounceStatus.INTERFACE_BLUETOOTH` already uses on the Kotlin side
+    for this interface's per-interface announce policy, and the same key
+    `_interface_announce_config` already has an entry for — nothing
+    about the existing announce-policy plumbing needed to change to
+    recognize this interface once it's real.
+
+    `RnsBleInterface`'s own `owner` argument is `RNS.Transport` (not
+    `None`/this module) — verified against `demo_rns_config.py`'s own
+    real usage and against how `process_incoming`'s `self.owner.inbound(
+    data, self)` call is used by every bundled RNS interface.
+    """
+    from rns_ble_interface import RnsBleInterface
+    import RNS
+    _set_interface("bluetooth_mesh", True, lambda: RnsBleInterface(RNS.Transport, {}, bridge))
+
+
+def clear_bluetooth_mesh_bridge() -> None:
+    """Detaches the Bluetooth-mesh interface — called from
+    `BluetoothMeshManager.kt` when the toggle turns off or the service
+    unbinds/stops. The `factory` argument to `_set_interface` is never
+    actually invoked on this path (only used when turning an interface
+    *on*), so `lambda: None` here is just satisfying the signature."""
+    _set_interface("bluetooth_mesh", False, lambda: None)
+
+
 def set_wifi_discovery_enabled(enabled: bool) -> None:
     """See this module's docstring: AutoInterface's detach() is broken
     in this RNS version and never releases its UDP socket. Enabling

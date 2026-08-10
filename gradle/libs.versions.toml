@@ -24,6 +24,9 @@ espressoCore = "3.7.0"
 # checkout instead) — becomes the real published tag once micron2compose
 # is actually released and that substitution is removed.
 micron2compose = "0.0.1"
+# Same "ignored while the includeBuild substitution is active" shape as
+# micron2compose above — RNS_BLE_Wrapper isn't published either.
+rnsbleCore = "0.0.1"
 
 [libraries]
 androidx-core-ktx = { group = "androidx.core", name = "core-ktx", version.ref = "coreKtx" }
@@ -41,6 +44,7 @@ androidx-material-icons-extended = { group = "androidx.compose.material", name =
 androidx-navigation-compose = { group = "androidx.navigation", name = "navigation-compose", version.ref = "navigationCompose" }
 androidx-datastore-preferences = { group = "androidx.datastore", name = "datastore-preferences", version.ref = "datastorePreferences" }
 micron2compose = { group = "com.github.JamesM92", name = "micron2compose", version.ref = "micron2compose" }
+rnsble-core = { group = "com.jamesm92.rnsble", name = "rnsble-core", version.ref = "rnsbleCore" }
 junit = { group = "junit", name = "junit", version.ref = "junit" }
 androidx-junit = { group = "androidx.test.ext", name = "junit", version.ref = "androidxJunit" }
 androidx-espresso-core = { group = "androidx.test.espresso", name = "espresso-core", version.ref = "espressoCore" }
