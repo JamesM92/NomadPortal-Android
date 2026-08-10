@@ -5,7 +5,9 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Contacts
 import androidx.compose.material.icons.filled.Explore
+import androidx.compose.material.icons.filled.Hub
 import androidx.compose.material3.Icon
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
@@ -37,24 +39,31 @@ import com.jamesm92.nomadportal.ui.browser.NodeListScreen
 import com.jamesm92.nomadportal.ui.calling.CallOverlay
 import com.jamesm92.nomadportal.ui.components.MessagesIconWithBadge
 import com.jamesm92.nomadportal.ui.components.SettingsIconWithBadge
+import com.jamesm92.nomadportal.ui.contacts.ContactsScreen
 import com.jamesm92.nomadportal.ui.hosting.SiteFilesScreen
 import com.jamesm92.nomadportal.ui.hosting.SitePageEditorScreen
 import com.jamesm92.nomadportal.ui.messages.ConversationListScreen
 import com.jamesm92.nomadportal.ui.messages.ConversationScreen
+import com.jamesm92.nomadportal.ui.network.NetworkScreen
 import com.jamesm92.nomadportal.ui.onboarding.OnboardingScreen
 import com.jamesm92.nomadportal.ui.settings.SettingsScreen
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 
-// The app's 3 real top-level destinations, shown as bottom-nav tabs —
+// The app's 5 real top-level destinations, shown as bottom-nav tabs —
 // see NomadBottomNavigationBar's own doc comment for why (redesign
 // Phase B: this app previously had zero NavigationBar anywhere, cross-
 // nav was ad hoc top-bar IconButtons, and Settings was only reachable
-// via the since-removed Home screen). Every other route (conversation
+// via the since-removed Home screen). Network/Contacts are the newest
+// two, added per explicit direction as a Columba UI/UX parity-audit
+// follow-up — see NetworkScreen's/ContactsScreen's own doc comments for
+// the real reasoning behind each. Every other route (conversation
 // thread, a site's page, hosted-site file management) is a pushed
 // detail screen that hides the bottom bar, same as it already had its
 // own back arrow.
-private val TOP_LEVEL_ROUTES = setOf(Routes.MESSAGES, Routes.NODES, Routes.SETTINGS)
+private val TOP_LEVEL_ROUTES = setOf(
+    Routes.MESSAGES, Routes.NODES, Routes.NETWORK, Routes.CONTACTS, Routes.SETTINGS,
+)
 
 private object Routes {
     const val SETTINGS = "settings"
@@ -62,6 +71,8 @@ private object Routes {
     const val CONVERSATION = "messages/{contactHash}"
     fun conversation(contactHash: String) = "messages/$contactHash"
     const val NODES = "nodes"
+    const val NETWORK = "network"
+    const val CONTACTS = "contacts"
     const val BROWSER = "browser/{nodeHash}"
     fun browser(nodeHash: String) = "browser/$nodeHash"
     const val SITE_FILES = "site_files"
@@ -185,6 +196,19 @@ fun NomadNavHost(
                 onOpenNode = { hash -> navController.navigate(Routes.browser(hash)) },
             )
         }
+        composable(Routes.NETWORK) {
+            NetworkScreen(
+                interfaceController = interfaceController,
+                tcpConnectionsRepository = tcpConnectionsRepository,
+            )
+        }
+        composable(Routes.CONTACTS) {
+            ContactsScreen(
+                repository = messagingRepository,
+                callRepository = callRepository,
+                onOpenConversation = { hash -> navController.navigate(Routes.conversation(hash)) },
+            )
+        }
         composable(Routes.SITE_FILES) {
             SiteFilesScreen(
                 repository = siteFileRepository,
@@ -230,17 +254,17 @@ fun NomadNavHost(
 }
 
 /**
- * The app's persistent bottom navigation — Messages/Sites/Settings, the
- * 3 real top-level destinations. Originally 4 (redesign Phase B added a
- * Home tab alongside these), but Home was dropped entirely per explicit
- * direction — its two sections (this device's own LXMF identity, and
- * its hosted NomadNet site) moved into Settings instead (see that
- * screen's own doc comment) rather than being replaced with new
- * content. Replaces what used to be ad hoc top-bar `IconButton`s
- * scattered per-screen with a single, always-available nav surface, per
- * the `android-compose-app-design` skill's own Rule 0 ("3-5 top-level
- * destinations -> a real NavigationBar, not accumulated top-bar
- * icons").
+ * The app's persistent bottom navigation — Messages/Sites/Network/
+ * Contacts/Settings, the 5 real top-level destinations. Was Messages/
+ * Sites/Settings for a while (Home was dropped entirely per explicit
+ * direction — its two sections, this device's own LXMF identity and its
+ * hosted NomadNet site, moved into Settings instead, see that screen's
+ * own doc comment); Network and Contacts are the newest two additions, a
+ * Columba UI/UX parity-audit follow-up — see NetworkScreen's/
+ * ContactsScreen's own doc comments. 5 tabs is the documented upper
+ * bound of the `android-compose-app-design` skill's own Rule 0 ("3-5
+ * top-level destinations -> a real NavigationBar, not accumulated
+ * top-bar icons"), not past it.
  *
  * Each tab uses the standard Navigation-Compose bottom-nav click pattern
  * (`popUpTo(startDestination) { saveState = true }` +
@@ -268,6 +292,18 @@ private fun NomadBottomNavigationBar(
             onClick = { navigateToTopLevelTab(navController, Routes.NODES) },
             icon = { Icon(Icons.Filled.Explore, contentDescription = null) },
             label = { Text("Sites") },
+        )
+        NavigationBarItem(
+            selected = currentRoute == Routes.NETWORK,
+            onClick = { navigateToTopLevelTab(navController, Routes.NETWORK) },
+            icon = { Icon(Icons.Filled.Hub, contentDescription = null) },
+            label = { Text("Network") },
+        )
+        NavigationBarItem(
+            selected = currentRoute == Routes.CONTACTS,
+            onClick = { navigateToTopLevelTab(navController, Routes.CONTACTS) },
+            icon = { Icon(Icons.Filled.Contacts, contentDescription = null) },
+            label = { Text("Contacts") },
         )
         NavigationBarItem(
             selected = currentRoute == Routes.SETTINGS,

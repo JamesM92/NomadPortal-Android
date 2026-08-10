@@ -38,7 +38,6 @@ import androidx.compose.material.icons.filled.LockOpen
 import androidx.compose.material.icons.filled.MarkEmailUnread
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Badge
-import androidx.compose.material3.Checkbox
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -93,23 +92,31 @@ import com.jamesm92.nomadportal.ui.theme.NomadTextDim
 import kotlinx.coroutines.launch
 
 /**
- * Every known LXMF contact — not just active conversations. Two tabs,
- * per explicit request:
+ * Active conversations. Two sub-tabs:
  * - **Chats** — Favorites (a fixed pane, always visible, not part of
  *   the scrolling list below — see
  *   [com.jamesm92.nomadportal.ui.browser.NodeListScreen]'s doc comment
  *   for why not `LazyColumn.stickyHeader` for this one) plus "General
  *   messages" (real message history). Favoriting adds a copy to
  *   Favorites; it doesn't remove the contact from General messages.
- * - **Users** — every LXMF peer ever heard via announce (see
- *   `nomadnet_web.lxmf_tracker`), messaged or not — the same "everyone
- *   heard, not just the ones you've talked to" role
- *   [com.jamesm92.nomadportal.ui.browser.NodeListScreen]'s Announces
- *   heard plays for nodes.
+ * - **Calls** — see [CallsTab]'s own doc comment.
+ *
+ * "Every known LXMF contact, messaged or not" — the role a **Users**
+ * sub-tab used to play here — is now [com.jamesm92.nomadportal.ui.contacts.ContactsScreen],
+ * its own top-level bottom-nav destination (promoted out per explicit
+ * direction, "keep the my contacts section... separated like we
+ * currently have for messages and sites" — a Columba UI/UX parity-audit
+ * follow-up: Columba's own real top-level tabs are Chats/Contacts/Map/
+ * Settings, Contacts sitting at the same level as Chats, not nested
+ * under it). [ConversationRow]/[ConversationContextMenu]/[subtitleFor]/
+ * [formatRelativeTime] are `internal` (not `private`) specifically so
+ * that screen can reuse them without duplicating this file's row/menu
+ * rendering.
  *
  * A row's subtitle line falls back to LXMF address + hop count + time
  * since last announce when there's no message to preview — the normal
- * case for anyone in the Users tab who's never been messaged.
+ * case for a favorited-but-never-messaged contact here, or for anyone
+ * on the Contacts screen.
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -124,7 +131,6 @@ fun ConversationListScreen(
     var searchQuery by remember { mutableStateOf("") }
     var showAddByAddress by remember { mutableStateOf(false) }
     var showCallByAddress by remember { mutableStateOf(false) }
-    var callCapableOnly by remember { mutableStateOf(false) }
     var selectedTab by remember { mutableIntStateOf(0) }
     var sortOption by remember { mutableStateOf(SortOption.RECENT) }
 
@@ -206,8 +212,6 @@ fun ConversationListScreen(
         sortedConversations.filter { it.lastMessage != null },
         key = { it.contact.lxmfHash },
     )
-    val allUsers = rememberStableOrder(sortedConversations, key = { it.contact.lxmfHash })
-
     // Per-row unread badges (below) only surface once a section is
     // expanded — collapse Favorites to read General messages (or vice
     // versa) and there was previously no way to tell an unread message
@@ -326,13 +330,6 @@ fun ConversationListScreen(
                             )
                         },
                     )
-                    // Declaration order here is purely the visual left-to-
-                    // right tab order (Chats/Calls/Users, per explicit
-                    // direction) — deliberately NOT reordering the
-                    // selectedTab index values themselves (Users is still
-                    // 1, Calls is still 2), so the content `if/else if/else`
-                    // chain below stays untouched and keyed exactly as
-                    // before; only which Tab() renders in which slot moved.
                     Tab(
                         selected = selectedTab == 2,
                         onClick = { selectedTab = 2 },
@@ -343,23 +340,6 @@ fun ConversationListScreen(
                                     fontWeight = if (selectedTab == 2) FontWeight.Bold else FontWeight.Normal,
                                 ),
                                 color = if (selectedTab == 2) {
-                                    MaterialTheme.colorScheme.primary
-                                } else {
-                                    NomadTextDim
-                                },
-                            )
-                        },
-                    )
-                    Tab(
-                        selected = selectedTab == 1,
-                        onClick = { selectedTab = 1 },
-                        text = {
-                            Text(
-                                "Users",
-                                style = MaterialTheme.typography.labelMedium.copy(
-                                    fontWeight = if (selectedTab == 1) FontWeight.Bold else FontWeight.Normal,
-                                ),
-                                color = if (selectedTab == 1) {
                                     MaterialTheme.colorScheme.primary
                                 } else {
                                     NomadTextDim
@@ -389,11 +369,7 @@ fun ConversationListScreen(
                     SearchField(
                         query = searchQuery,
                         onQueryChange = { searchQuery = it },
-                        placeholder = when (selectedTab) {
-                            0 -> "Search chats"
-                            1 -> "Search users"
-                            else -> "Search calls"
-                        },
+                        placeholder = if (selectedTab == 0) "Search chats" else "Search calls",
                         modifier = Modifier.weight(1f),
                     )
                     // Search only finds already-known contacts (message
@@ -468,64 +444,6 @@ fun ConversationListScreen(
                             )
                             HorizontalDivider()
                         }
-                    }
-                }
-            } else if (selectedTab == 1) {
-                // Single-section tab — nothing else competing for space,
-                // so the count header stays non-collapsible (unlike
-                // Chats' two headers above). callCapableOnly is a plain
-                // filter over the same list Users already renders — per
-                // explicit direction, no separate call-capable-contacts
-                // list duplicating this one; that's what the Calls tab
-                // used to do and was removed.
-                val displayedUsers = if (callCapableOnly) allUsers.filter { it.contact.isCallCapable } else allUsers
-                Row(
-                    modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                ) {
-                    Text(
-                        text = "Users (${displayedUsers.size})",
-                        style = MaterialTheme.typography.titleMedium,
-                        color = MaterialTheme.colorScheme.secondary,
-                    )
-                    Row(
-                        modifier = Modifier
-                            .clickable { callCapableOnly = !callCapableOnly }
-                            .padding(vertical = 4.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(4.dp),
-                    ) {
-                        // onCheckedChange = null (not a redundant second
-                        // { callCapableOnly = it }) — the enclosing Row
-                        // already owns the tap via its own .clickable, a
-                        // real on-device check showed both firing on the
-                        // same tap raced and could net-cancel back to no
-                        // visible change. null disables the Checkbox's
-                        // own independent click handling while still
-                        // rendering the correct checked state, the
-                        // standard Compose pattern for a checkbox inside
-                        // a larger clickable row.
-                        Checkbox(checked = callCapableOnly, onCheckedChange = null)
-                        Icon(Icons.Filled.Call, contentDescription = null, tint = NomadAccent2, modifier = Modifier.size(16.dp))
-                        Text(
-                            text = "Call-capable only",
-                            style = MaterialTheme.typography.labelSmall,
-                            color = NomadTextDim,
-                        )
-                    }
-                }
-                LazyColumn(modifier = Modifier.weight(1f)) {
-                    items(displayedUsers, key = { it.contact.lxmfHash }) { summary ->
-                        ConversationRow(
-                            summary = summary,
-                            onClick = { onOpenConversation(summary.contact.lxmfHash) },
-                            onToggleFavorite = { toggleFavorite(summary) },
-                            onCall = { scope.launch { callRepository.placeCall(summary.contact.lxmfHash) } },
-                            onMarkUnread = { markUnread(summary) },
-                            onToggleBlock = { toggleBlock(summary) },
-                        )
-                        HorizontalDivider()
                     }
                 }
             } else {
@@ -672,9 +590,13 @@ private fun SectionHeader(
     }
 }
 
+// internal (not private) — [com.jamesm92.nomadportal.ui.contacts.ContactsScreen]
+// reuses this row/menu pair too, now that Users is its own top-level tab
+// rather than a sub-tab here (see this file's own top doc comment for
+// the split).
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
-private fun ConversationRow(
+internal fun ConversationRow(
     summary: ConversationSummary,
     onClick: () -> Unit,
     onToggleFavorite: () -> Unit,
@@ -793,7 +715,7 @@ private fun ConversationRow(
  * rather than a wall of always-visible icons.
  */
 @Composable
-private fun ConversationContextMenu(
+internal fun ConversationContextMenu(
     expanded: Boolean,
     onDismiss: () -> Unit,
     isBlocked: Boolean,
@@ -968,8 +890,10 @@ private fun statusLabel(entry: CallHistoryEntry): String = when (entry.status) {
 
 /** Real message preview when one exists; otherwise falls back to the LXMF
  * address + hop count + time since last announce — the normal case for
- * anyone in the Users tab who's never been messaged. */
-private fun subtitleFor(contact: Contact, lastMessage: Message?): String {
+ * anyone on the Contacts screen who's never been messaged. Internal (not
+ * private) — [com.jamesm92.nomadportal.ui.contacts.ContactsScreen] reuses
+ * this too. */
+internal fun subtitleFor(contact: Contact, lastMessage: Message?): String {
     if (lastMessage != null) return lastMessage.content
     val hops = if (contact.hopCount < 0) "?" else contact.hopCount.toString()
     return "$hops hop${if (contact.hopCount == 1) "" else "s"}" +
@@ -979,7 +903,7 @@ private fun subtitleFor(contact: Contact, lastMessage: Message?): String {
 /** Same convention as NodeListScreen's formatRelativeTime — `<= 0` covers
  * "never actually heard an announce" (a message-history-only or manually
  * added contact with no LXMF peer-tracker entry at all). */
-private fun formatRelativeTime(lastAnnounceMillis: Long): String {
+internal fun formatRelativeTime(lastAnnounceMillis: Long): String {
     if (lastAnnounceMillis <= 0L) return "never heard"
     val diffSeconds = ((System.currentTimeMillis() - lastAnnounceMillis) / 1000).coerceAtLeast(0)
     return when {
