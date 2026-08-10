@@ -323,8 +323,10 @@ private fun SectionHeader(
     }
 }
 
+// internal (not private) — NetworkScreen's own unified announces browser
+// reuses this row rendering too.
 @Composable
-private fun NodeRow(node: NodeInfo, onClick: () -> Unit, onToggleFavorite: () -> Unit) {
+internal fun NodeRow(node: NodeInfo, onClick: () -> Unit, onToggleFavorite: () -> Unit) {
     Row(
         modifier = Modifier
             .fillMaxWidth()

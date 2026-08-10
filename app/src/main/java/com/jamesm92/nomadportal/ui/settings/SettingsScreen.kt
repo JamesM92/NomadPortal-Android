@@ -457,7 +457,7 @@ fun SettingsScreen(
 
                 item {
                     CollapsibleSection(
-                        title = "Announce",
+                        title = "Auto Announce",
                         expanded = SettingsSection.ANNOUNCE in expandedSections,
                         onToggleExpanded = { toggleSection(SettingsSection.ANNOUNCE) },
                         headerTrailing = {
