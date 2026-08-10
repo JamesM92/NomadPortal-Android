@@ -5,6 +5,8 @@ import android.content.res.Configuration
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -15,20 +17,30 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Edit
+import androidx.compose.material.icons.filled.ExpandLess
+import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material.icons.filled.PowerSettingsNew
 import androidx.compose.material3.Badge
 import androidx.compose.material3.BadgedBox
+import androidx.compose.material3.Button
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
@@ -36,15 +48,18 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LocalMinimumInteractiveComponentSize
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SecondaryTabRow
 import androidx.compose.material3.Slider
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Tab
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
@@ -54,6 +69,7 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.ClipEntry
@@ -68,21 +84,32 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
+import com.jamesm92.nomadportal.connectivity.HostedNodeStatus
 import com.jamesm92.nomadportal.connectivity.InterfaceController
 import com.jamesm92.nomadportal.connectivity.TcpConnection
 import com.jamesm92.nomadportal.connectivity.TcpConnectionsRepository
 import com.jamesm92.nomadportal.data.SettingsRepository
 import com.jamesm92.nomadportal.data.messaging.AnnounceStatus
+import com.jamesm92.nomadportal.data.messaging.ContactIcon
+import com.jamesm92.nomadportal.data.messaging.ICON_APPEARANCE_NAMES
 import com.jamesm92.nomadportal.data.messaging.InterfaceAnnounceConfig
+import com.jamesm92.nomadportal.data.messaging.MdiIconRepository
 import com.jamesm92.nomadportal.data.messaging.MessagingRepository
+import com.jamesm92.nomadportal.data.messaging.materialIconFor
 import com.jamesm92.nomadportal.panicwipe.PanicWipe
 import com.jamesm92.nomadportal.permissions.BLUETOOTH_PERMISSIONS
 import com.jamesm92.nomadportal.permissions.hasBluetoothPermissions
 import com.jamesm92.nomadportal.ui.components.AdaptiveTopAppBar
 import com.jamesm92.nomadportal.ui.components.CompactTextField
+import com.jamesm92.nomadportal.ui.components.MicronColorPicker
 import com.jamesm92.nomadportal.ui.components.MinutesField
 import com.jamesm92.nomadportal.ui.components.PanicWipeLogo
+import com.jamesm92.nomadportal.ui.components.SearchField
 import com.jamesm92.nomadportal.ui.components.VerticalScrollIndicator
+import com.jamesm92.nomadportal.ui.theme.NomadAccent
+import com.jamesm92.nomadportal.ui.theme.NomadBg3
 import com.jamesm92.nomadportal.ui.theme.NomadMono
 import com.jamesm92.nomadportal.ui.theme.NomadTextDim
 import com.jamesm92.nomadportal.ui.theme.NomadWarn
@@ -99,10 +126,15 @@ import kotlinx.coroutines.launch
  * Bluetooth-mesh/hosting are still persisted-intent-only pending their
  * own separate prerequisites (see that class's doc comment for why).
  *
- * Manual identity/hosted-node announcing deliberately does NOT live here
- * — per explicit direction, that's Home's job now (the "identity
- * management" surface). This screen only owns *configuration*
- * (thresholds, connection lists, on/off), never a "do it now" action.
+ * Manual identity/hosted-site announcing — rename, icon editing,
+ * "Announce now", hosted-site management — lives here too, in the
+ * Appearance/Announce/Hosting sections below. That used to be Home's
+ * job exclusively (this screen only owning *configuration*, never a
+ * "do it now" action) back when Home existed as a separate always-
+ * reachable identity-management surface; once Home was removed
+ * (dropped from the bottom nav entirely, per explicit direction —
+ * Messages/Sites/Settings is the whole nav now), those actions had
+ * nowhere else to live, so they moved here rather than disappearing.
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -111,6 +143,7 @@ fun SettingsScreen(
     settingsRepository: SettingsRepository,
     messagingRepository: MessagingRepository,
     tcpConnectionsRepository: TcpConnectionsRepository,
+    onManageHostedPages: () -> Unit,
 ) {
     val context = LocalContext.current
     val focusManager = LocalFocusManager.current
@@ -118,6 +151,7 @@ fun SettingsScreen(
 
     val textScale by settingsRepository.textScale.collectAsState(initial = SettingsRepository.DEFAULT_TEXT_SCALE)
     val announceStatus by messagingRepository.announceStatus().collectAsState(initial = null)
+    val hostedNodeStatus by interfaceController.hostedNodeStatus().collectAsState(initial = null)
     val tcpConnections by tcpConnectionsRepository.connections().collectAsState(initial = emptyList())
 
     val tcpEnabled by interfaceController.tcpEnabled.collectAsState()
@@ -140,20 +174,21 @@ fun SettingsScreen(
     }
 
     // Main = connectivity/hosting toggles + kill switch, the master
-    // auto-announce toggle, Appearance, and Permissions. Each announce-
+    // auto-announce toggle + manual "Announce now", identity/hosted-site
+    // rename+icon+management (Appearance/Hosting sections — moved here
+    // from the now-removed Home screen), and Permissions. Each announce-
     // tracked interface (TCP/Bluetooth/RNode/LAN) gets its own dedicated
     // tab carrying a *duplicate* of its Main-tab toggle (per explicit
     // request — flip it from either place, same underlying state) plus
     // that interface's own Message/Auto policy; TCP's tab additionally
     // carries the full connection list (add/remove/enable/disable —
-    // replaces the old single-hardcoded-hub design). There's no "Node"
-    // tab here (removed per explicit direction: "everything related to
-    // it is already on the home page... the different interfaces need
-    // room to manage their different settings, the node doesnt really
-    // need that") — Home's own HostedNodeSection already carries the
-    // on/off toggle, rename, manual "Announce now", and the auto-announce
-    // interval field; unlike the four interfaces above, the hosted node
-    // had nothing here that wasn't already a plain duplicate of Home.
+    // replaces the old single-hardcoded-hub design). There's still no
+    // separate "Site" tab here (per the original explicit direction: the
+    // different interfaces need room to manage their different settings,
+    // the hosted site doesn't really need that) — its on/off toggle,
+    // rename, manual "Announce now", and auto-announce interval field all
+    // live in the "Hosting" section of this Main tab instead, same as
+    // every other hosted-site control.
     var selectedTab by remember { mutableIntStateOf(0) }
     val isLandscape = LocalConfiguration.current.orientation == Configuration.ORIENTATION_LANDSCAPE
     val tabLabels = listOf("Main", "TCP", "Bluetooth", "RNode", "LAN")
@@ -316,6 +351,25 @@ fun SettingsScreen(
                             onCheckedChange = { scope.launch { interfaceController.setNodeHostingEnabled(it) } },
                         )
                     }
+                    // Rename/announce-interval/manual-announce/manage-pages
+                    // — moved here from the now-removed Home screen's own
+                    // HostedNodeSection. The site's address/hash already
+                    // has its own row below (Addresses), so this only
+                    // covers what Addresses doesn't: the site's *name* and
+                    // its actions.
+                    hostedNodeStatus?.let { status ->
+                        item {
+                            HostedSiteActionsRow(
+                                status = status,
+                                onRename = { name -> scope.launch { interfaceController.setHostedNodeName(name) } },
+                                onAnnounceNow = { scope.launch { interfaceController.announceHostedNodeNow() } },
+                                onAnnounceIntervalChange = {
+                                    scope.launch { interfaceController.setHostedNodeAnnounceInterval(it) }
+                                },
+                                onManagePages = onManageHostedPages,
+                            )
+                        }
+                    }
 
                     item { HorizontalDivider() }
                     item { SectionHeader("Announce") }
@@ -328,6 +382,28 @@ fun SettingsScreen(
                                     scope.launch { messagingRepository.setAutoAnnounceMaster(it) }
                                 },
                             )
+                        }
+                        // Manual trigger, independent of the auto-announce
+                        // toggle above — moved here from Home's own
+                        // IdentitySection (same "Announce now" action, just
+                        // relocated). Announce interval configuration for
+                        // each interface still lives on that interface's
+                        // own tab (TCP/Bluetooth/RNode/LAN), unaffected.
+                        item {
+                            TextButton(
+                                onClick = { scope.launch { messagingRepository.announceNow() } },
+                                modifier = Modifier.padding(start = 8.dp),
+                            ) { Text("Announce now") }
+                        }
+                        if (status.sendBlocked) {
+                            item {
+                                Text(
+                                    text = status.sendBlockedReason ?: "Sending is currently blocked.",
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    color = MaterialTheme.colorScheme.error,
+                                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
+                                )
+                            }
                         }
                     }
 
@@ -351,6 +427,24 @@ fun SettingsScreen(
 
                     item { HorizontalDivider() }
                     item { SectionHeader("Appearance") }
+                    // Name + icon editing — moved here from the now-removed
+                    // Home screen's own IdentitySection. The identity's
+                    // address/hash already has its own row above
+                    // (Addresses) and "Announce now" already has its own
+                    // row above (Announce), so this only covers what
+                    // neither of those does: the identity's *display name*
+                    // and *icon appearance*.
+                    announceStatus?.let { status ->
+                        item {
+                            IdentityAppearanceRow(
+                                status = status,
+                                onRename = { name -> scope.launch { messagingRepository.setDisplayName(name) } },
+                                onSaveIcon = { glyph, fg, bg ->
+                                    scope.launch { messagingRepository.setIconAppearance(glyph, fg, bg) }
+                                },
+                            )
+                        }
+                    }
                     item {
                         TextScaleRow(
                             scale = textScale,
@@ -917,6 +1011,619 @@ private fun InterfaceAnnounceTab(
             onCommit = onAutoAnnounceIntervalChange,
             modifier = Modifier.width(64.dp).padding(top = 4.dp),
         )
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Identity + hosted-site actions — moved here from the now-removed Home
+// screen (see this file's own top doc comment for why). Everything below
+// this point is either IdentityAppearanceRow/HostedSiteActionsRow
+// themselves or composables only they call.
+// ---------------------------------------------------------------------------
+
+/**
+ * This device's own LXMF identity's *name and icon* — an editable
+ * display name and an editable icon appearance. Address/last-announced/
+ * manual-announce all have their own rows elsewhere on this tab
+ * (Addresses/Announce sections) — this is deliberately narrower than
+ * the old Home screen's full IdentitySection, not a verbatim copy of it.
+ */
+@Composable
+private fun IdentityAppearanceRow(
+    status: AnnounceStatus,
+    onRename: (String) -> Unit,
+    onSaveIcon: (glyphName: String, foreground: Color, background: Color) -> Unit,
+) {
+    var editingName by remember { mutableStateOf(false) }
+    var nameDraft by remember(status.displayName) { mutableStateOf(status.displayName ?: "") }
+    var editingIcon by remember { mutableStateOf(false) }
+
+    Column(modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp)) {
+        Column(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalAlignment = Alignment.CenterHorizontally,
+        ) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(4.dp),
+            ) {
+                if (editingName) {
+                    OutlinedTextField(
+                        value = nameDraft,
+                        onValueChange = { nameDraft = it },
+                        singleLine = true,
+                        modifier = Modifier.weight(1f, fill = false),
+                    )
+                    IconButton(onClick = {
+                        val trimmed = nameDraft.trim()
+                        if (trimmed.isNotEmpty()) onRename(trimmed)
+                        editingName = false
+                    }) {
+                        Icon(Icons.Filled.Check, contentDescription = "Save name")
+                    }
+                    IconButton(onClick = {
+                        nameDraft = status.displayName ?: ""
+                        editingName = false
+                    }) {
+                        Icon(Icons.Filled.Close, contentDescription = "Cancel")
+                    }
+                } else {
+                    Text(
+                        text = status.displayName ?: "Unnamed",
+                        style = MaterialTheme.typography.bodyLarge,
+                    )
+                    IconButton(onClick = { editingName = true }) {
+                        Icon(Icons.Filled.Edit, contentDescription = "Rename")
+                    }
+                }
+            }
+
+            IdentityIconPreview(
+                appearance = status.iconAppearance,
+                onClick = { editingIcon = !editingIcon },
+                modifier = Modifier.padding(top = 6.dp),
+            )
+        }
+
+        if (editingIcon) {
+            IconAppearanceEditor(
+                current = status.iconAppearance,
+                onSave = { glyph, fg, bg ->
+                    onSaveIcon(glyph, fg, bg)
+                    editingIcon = false
+                },
+                onCancel = { editingIcon = false },
+            )
+        }
+    }
+}
+
+/**
+ * This device's own hosted NomadNet site's *name and actions* — rename,
+ * auto-announce interval, manual "Announce now", and "Manage pages"
+ * (the file nav for this site's content — see
+ * [com.jamesm92.nomadportal.ui.hosting.SiteFilesScreen]). The site's
+ * address/hash already has its own row elsewhere on this tab
+ * (Addresses section), and its on/off toggle is the row directly above
+ * this one (Hosting section) — this is deliberately narrower than the
+ * old Home screen's full HostedNodeSection, not a verbatim copy of it.
+ */
+@Composable
+private fun HostedSiteActionsRow(
+    status: HostedNodeStatus,
+    onRename: (String) -> Unit,
+    onAnnounceNow: () -> Unit,
+    onAnnounceIntervalChange: (seconds: Int) -> Unit,
+    onManagePages: () -> Unit,
+) {
+    var editingName by remember { mutableStateOf(false) }
+    var nameDraft by remember(status.nodeName) { mutableStateOf(status.nodeName ?: "") }
+
+    Column(modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp)) {
+        if (!status.enabled) {
+            // Still editable while off, per explicit direction — page
+            // content lives under the pages directory regardless of
+            // whether SiteServer is actually running (see
+            // SiteFileRepository's own doc comment), so there's no
+            // reason to block preparing/editing a site before turning
+            // hosting on.
+            Text(
+                text = "Off — this device isn't serving any pages right now. You can still edit pages below.",
+                style = MaterialTheme.typography.bodyMedium,
+                color = NomadTextDim,
+            )
+            TextButton(onClick = onManagePages, modifier = Modifier.padding(top = 4.dp)) {
+                Text("Manage pages")
+            }
+            return
+        }
+
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+            if (editingName) {
+                OutlinedTextField(
+                    value = nameDraft,
+                    onValueChange = { nameDraft = it },
+                    singleLine = true,
+                    textStyle = MaterialTheme.typography.bodyMedium,
+                    modifier = Modifier.weight(1f, fill = false),
+                )
+                IconButton(onClick = {
+                    val trimmed = nameDraft.trim()
+                    if (trimmed.isNotEmpty()) onRename(trimmed)
+                    editingName = false
+                }) {
+                    Icon(Icons.Filled.Check, contentDescription = "Save name")
+                }
+                IconButton(onClick = {
+                    nameDraft = status.nodeName ?: ""
+                    editingName = false
+                }) {
+                    Icon(Icons.Filled.Close, contentDescription = "Cancel")
+                }
+            } else {
+                Text(
+                    text = status.nodeName ?: "Unnamed site",
+                    style = MaterialTheme.typography.bodyLarge,
+                    modifier = Modifier.weight(1f, fill = false),
+                )
+                IconButton(onClick = { editingName = true }) {
+                    Icon(Icons.Filled.Edit, contentDescription = "Rename")
+                }
+            }
+        }
+
+        Text(
+            text = if (status.lastAnnounceAtMillis != null) {
+                "Last announced ${formatRelativeAnnounceTime(status.lastAnnounceAtMillis)}"
+            } else {
+                "Never announced yet"
+            },
+            style = MaterialTheme.typography.labelSmall,
+            color = NomadTextDim,
+            modifier = Modifier.padding(top = 4.dp),
+        )
+
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text(text = "Auto-announce (min)", style = MaterialTheme.typography.labelMedium)
+            MinutesField(
+                seconds = status.announceIntervalSeconds,
+                allowZero = true,
+                onCommit = onAnnounceIntervalChange,
+                modifier = Modifier.width(64.dp),
+            )
+        }
+
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            TextButton(onClick = onAnnounceNow) { Text("Announce now") }
+            TextButton(onClick = onManagePages) { Text("Manage pages") }
+        }
+    }
+}
+
+/** Same relative-time bucketing as ConversationListScreen's/NodeListScreen's
+ * own formatRelativeTime — kept local rather than shared since each has
+ * its own "never" copy tailored to what it's describing. */
+private fun formatRelativeAnnounceTime(millis: Long): String {
+    val diffSeconds = ((System.currentTimeMillis() - millis) / 1000).coerceAtLeast(0)
+    return when {
+        diffSeconds < 60 -> "just now"
+        diffSeconds < 3600 -> "${diffSeconds / 60}m ago"
+        diffSeconds < 86_400 -> "${diffSeconds / 3600}h ago"
+        diffSeconds < 2_592_000 -> "${diffSeconds / 86_400}d ago"
+        else -> "${diffSeconds / 2_592_000}mo ago"
+    }
+}
+
+/** Circular preview of this device's own icon appearance, tappable to
+ * open [IconAppearanceEditor] — the whole circle is a tap target, plus a
+ * small pencil badge overlaid at its bottom-right corner so the edit
+ * affordance is actually visible. Otherwise renders the same way
+ * [com.jamesm92.nomadportal.ui.components.ContactAvatar] renders a
+ * contact's [ContactIcon.Appearance] — duplicated rather than shared
+ * since that composable takes a full
+ * [com.jamesm92.nomadportal.data.messaging.Contact], which this device's
+ * own identity isn't one of. */
+@Composable
+private fun IdentityIconPreview(
+    appearance: ContactIcon.Appearance?,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val vector = remember(appearance?.glyphName) { appearance?.glyphName?.let(::materialIconFor) }
+    Box(modifier = modifier.size(52.dp).clickable(onClick = onClick)) {
+        Box(
+            modifier = Modifier
+                .size(48.dp)
+                .clip(CircleShape)
+                .background(appearance?.backgroundColor ?: NomadBg3)
+                .align(Alignment.TopStart),
+            contentAlignment = Alignment.Center,
+        ) {
+            if (vector != null && appearance != null) {
+                Icon(
+                    imageVector = vector,
+                    contentDescription = null,
+                    tint = appearance.foregroundColor,
+                    modifier = Modifier.size(28.dp),
+                )
+            }
+        }
+        Box(
+            modifier = Modifier
+                .size(20.dp)
+                .clip(CircleShape)
+                .background(MaterialTheme.colorScheme.secondary)
+                .align(Alignment.BottomEnd),
+            contentAlignment = Alignment.Center,
+        ) {
+            Icon(
+                imageVector = Icons.Filled.Edit,
+                contentDescription = "Edit icon",
+                tint = Color.White,
+                modifier = Modifier.size(12.dp),
+            )
+        }
+    }
+}
+
+/** The three accordion sections [IconAppearanceEditor] toggles between —
+ * only one expanded at a time (see that function's own doc comment). */
+private enum class EditorSection { BACKGROUND, FOREGROUND, ICON }
+
+/** Collapsed-by-default color picker: a tappable one-line summary (swatch
+ * dot + label + chevron) that expands to the full [MicronColorPicker] grid
+ * only while [expanded] — see [IconAppearanceEditor]'s own doc comment
+ * for why nothing here starts pre-expanded. */
+@Composable
+private fun CompactColorRow(
+    label: String,
+    selected: Color,
+    expanded: Boolean,
+    onToggle: () -> Unit,
+    onSelect: (Color) -> Unit,
+) {
+    Column(modifier = Modifier.fillMaxWidth()) {
+        Row(
+            modifier = Modifier.fillMaxWidth().clickable(onClick = onToggle),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            Box(
+                modifier = Modifier
+                    .size(24.dp)
+                    .clip(CircleShape)
+                    .background(selected)
+                    .border(1.dp, NomadBg3, CircleShape),
+            )
+            Text(text = label, style = MaterialTheme.typography.bodyLarge, modifier = Modifier.weight(1f))
+            Icon(
+                imageVector = if (expanded) Icons.Filled.ExpandLess else Icons.Filled.ExpandMore,
+                contentDescription = if (expanded) "Collapse" else "Change $label",
+                tint = NomadTextDim,
+            )
+        }
+        if (expanded) {
+            MicronColorPicker(
+                selected = selected,
+                onSelect = onSelect,
+                modifier = Modifier.padding(top = 6.dp),
+            )
+        }
+    }
+}
+
+/** Same collapsed-by-default convention as [CompactColorRow], for the
+ * icon section: a preview circle (rendered in the currently-selected
+ * colors, same as each row inside the expanded list) + the current
+ * icon's name + chevron. The actual search/list/Save UI it expands to
+ * is rendered by [IconAppearanceEditor] itself, not here — this is only
+ * the one-line summary row. */
+@Composable
+private fun CompactIconRow(
+    glyphName: String,
+    background: Color,
+    foreground: Color,
+    expanded: Boolean,
+    onToggle: () -> Unit,
+) {
+    val vector = remember(glyphName) { materialIconFor(glyphName) }
+    Row(
+        modifier = Modifier.fillMaxWidth().clickable(onClick = onToggle),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        Box(
+            modifier = Modifier
+                .size(24.dp)
+                .clip(CircleShape)
+                .background(background)
+                .border(1.dp, NomadBg3, CircleShape),
+            contentAlignment = Alignment.Center,
+        ) {
+            if (vector != null) {
+                Icon(imageVector = vector, contentDescription = null, tint = foreground, modifier = Modifier.size(14.dp))
+            }
+        }
+        Text(
+            text = "Icon: ${glyphName.replace('_', ' ')}",
+            style = MaterialTheme.typography.bodyLarge,
+            modifier = Modifier.weight(1f),
+        )
+        Icon(
+            imageVector = if (expanded) Icons.Filled.ExpandLess else Icons.Filled.ExpandMore,
+            contentDescription = if (expanded) "Collapse" else "Change icon",
+            tint = NomadTextDim,
+        )
+    }
+}
+
+/**
+ * Inline editor for this device's own [ContactIcon.Appearance] — three
+ * accordion sections (background color, foreground color, icon), only
+ * one expanded at a time, per explicit direction: opening it should mean
+ * "only icons are in view" — expanding one section via [expandedSection]
+ * structurally collapses whichever other section was open, so the icon
+ * list is never sharing screen space with a color grid above it.
+ *
+ * The icon section keeps its own bottom Save/Cancel row *inside* the
+ * expanded section, not floating at the whole editor's very bottom —
+ * that's specifically what avoided a real on-device report (Save landing
+ * off-screen below a tall list): the list is the only other thing
+ * visible while it's open, so Save is always right below it, never
+ * buried under two more open sections above.
+ */
+@Composable
+private fun IconAppearanceEditor(
+    current: ContactIcon.Appearance?,
+    onSave: (glyphName: String, foreground: Color, background: Color) -> Unit,
+    onCancel: () -> Unit,
+) {
+    var selectedGlyph by remember(current) {
+        mutableStateOf(current?.glyphName ?: ICON_APPEARANCE_NAMES.first())
+    }
+    var selectedBg by remember(current) { mutableStateOf(current?.backgroundColor ?: NomadAccent) }
+    var selectedFg by remember(current) { mutableStateOf(current?.foregroundColor ?: Color.White) }
+    var searchQuery by remember { mutableStateOf("") }
+    // Accordion: only one of the three sections is ever expanded at
+    // once — see this function's own doc comment.
+    var expandedSection by remember { mutableStateOf<EditorSection?>(null) }
+
+    // Sourced from the real full MDI catalog (~7400 names, matching
+    // exactly what a real MeshChat/Sideband contact can pick from), not
+    // just ICON_APPEARANCE_MAP's curated ~180-entry subset — per
+    // explicit on-device report ("still not seeing the icon match what
+    // I have on MeshChat"): the curated list alone couldn't offer every
+    // icon a contact might already be using in another client. Falls
+    // back to the curated names only in the brief startup window before
+    // MdiIconRepository's background load finishes (isLoaded() false),
+    // so the picker is never empty.
+    val allNames = remember {
+        MdiIconRepository.names().ifEmpty { ICON_APPEARANCE_NAMES }
+    }
+    val filteredNames = remember(searchQuery, allNames) {
+        val q = searchQuery.trim().lowercase().replace(' ', '_').replace('-', '_')
+        if (q.isBlank()) {
+            allNames
+        } else {
+            allNames.filter { it.replace('-', '_').contains(q) }
+        }
+    }
+
+    // Scrolls to whatever's already selected every time the icon
+    // section is (re)opened — per explicit request — rather than always
+    // starting back at the front of the list, which previously meant
+    // re-finding your own icon by scrolling every single time. Only
+    // meaningful against the unfiltered list (search starts blank each
+    // open).
+    val listState = rememberLazyListState()
+    LaunchedEffect(expandedSection) {
+        if (expandedSection == EditorSection.ICON) {
+            val index = allNames.indexOf(selectedGlyph)
+            if (index >= 0) {
+                listState.scrollToItem(index)
+            }
+        }
+    }
+
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(top = 8.dp)
+            .border(1.dp, NomadBg3, shape = RoundedCornerShape(8.dp))
+            .padding(12.dp),
+        verticalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        // Save lives here too, not just inside the icon section's own
+        // full-screen picker — per explicit direction, changing only
+        // the colors (never opening the icon picker at all) needs its
+        // own way to commit and close, not just Cancel.
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.End),
+        ) {
+            TextButton(onClick = onCancel) { Text("Cancel") }
+            Button(onClick = { onSave(selectedGlyph, selectedFg, selectedBg) }) { Text("Save") }
+        }
+
+        CompactColorRow(
+            label = "Background color",
+            selected = selectedBg,
+            expanded = expandedSection == EditorSection.BACKGROUND,
+            onToggle = {
+                expandedSection = if (expandedSection == EditorSection.BACKGROUND) {
+                    null
+                } else {
+                    EditorSection.BACKGROUND
+                }
+            },
+            onSelect = {
+                selectedBg = it
+                expandedSection = null
+            },
+        )
+
+        CompactColorRow(
+            label = "Icon color",
+            selected = selectedFg,
+            expanded = expandedSection == EditorSection.FOREGROUND,
+            onToggle = {
+                expandedSection = if (expandedSection == EditorSection.FOREGROUND) {
+                    null
+                } else {
+                    EditorSection.FOREGROUND
+                }
+            },
+            onSelect = {
+                selectedFg = it
+                expandedSection = null
+            },
+        )
+
+        CompactIconRow(
+            glyphName = selectedGlyph,
+            background = selectedBg,
+            foreground = selectedFg,
+            expanded = expandedSection == EditorSection.ICON,
+            onToggle = {
+                expandedSection = if (expandedSection == EditorSection.ICON) null else EditorSection.ICON
+            },
+        )
+
+        if (expandedSection == EditorSection.ICON) {
+            FullScreenIconPicker(
+                query = searchQuery,
+                onQueryChange = { searchQuery = it },
+                names = filteredNames,
+                selectedGlyph = selectedGlyph,
+                selectedBg = selectedBg,
+                selectedFg = selectedFg,
+                listState = listState,
+                onSelect = { selectedGlyph = it },
+                onDismiss = { expandedSection = null },
+            )
+        }
+    }
+}
+
+/**
+ * Takes over the entire screen — per explicit direction — while picking
+ * an icon, rather than expanding inline within [IconAppearanceEditor]'s
+ * bordered box (which would otherwise be nested inside a scrollable
+ * column, capping the list to a bounded height regardless of actual
+ * screen size). A real full-screen [Dialog] renders in its own window
+ * above everything else, so the list can use `weight(1f)` to claim all
+ * remaining vertical space instead of a bounded height guess.
+ *
+ * No Save button of its own — [onSelect] already writes straight into
+ * [IconAppearanceEditor]'s own `selectedGlyph` state on tap (not a
+ * local draft needing a separate confirm step), so the close button
+ * above is enough to return to that editor with the pick already
+ * applied; that editor's own top-of-panel Save/Cancel row is what
+ * actually commits it.
+ */
+@Composable
+private fun FullScreenIconPicker(
+    query: String,
+    onQueryChange: (String) -> Unit,
+    names: List<String>,
+    selectedGlyph: String,
+    selectedBg: Color,
+    selectedFg: Color,
+    listState: LazyListState,
+    onSelect: (String) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    Dialog(
+        onDismissRequest = onDismiss,
+        properties = DialogProperties(usePlatformDefaultWidth = false),
+    ) {
+        Surface(modifier = Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
+            Column(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .imePadding()
+                    .padding(16.dp),
+            ) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                ) {
+                    Text(text = "Choose an icon", style = MaterialTheme.typography.titleLarge)
+                    IconButton(onClick = onDismiss) {
+                        Icon(Icons.Filled.Close, contentDescription = "Close")
+                    }
+                }
+
+                SearchField(
+                    query = query,
+                    onQueryChange = onQueryChange,
+                    placeholder = "Search icons",
+                    modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
+                )
+
+                LazyColumn(
+                    state = listState,
+                    modifier = Modifier.fillMaxWidth().weight(1f).padding(top = 8.dp),
+                ) {
+                    items(names, key = { it }) { name ->
+                        val vector = materialIconFor(name)
+                        if (vector != null) {
+                            val isSelected = name == selectedGlyph
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clickable { onSelect(name) }
+                                    .background(
+                                        if (isSelected) {
+                                            MaterialTheme.colorScheme.secondary.copy(alpha = 0.15f)
+                                        } else {
+                                            Color.Transparent
+                                        },
+                                    )
+                                    .padding(vertical = 4.dp, horizontal = 4.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(12.dp),
+                            ) {
+                                Box(
+                                    modifier = Modifier
+                                        .size(36.dp)
+                                        .clip(CircleShape)
+                                        .background(selectedBg),
+                                    contentAlignment = Alignment.Center,
+                                ) {
+                                    Icon(
+                                        imageVector = vector,
+                                        contentDescription = null,
+                                        tint = selectedFg,
+                                        modifier = Modifier.size(20.dp),
+                                    )
+                                }
+                                Text(
+                                    text = name.replace('_', ' ').replace('-', ' '),
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    modifier = Modifier.weight(1f),
+                                )
+                                if (isSelected) {
+                                    Icon(
+                                        imageVector = Icons.Filled.Check,
+                                        contentDescription = "Selected",
+                                        tint = MaterialTheme.colorScheme.secondary,
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
     }
 }
 

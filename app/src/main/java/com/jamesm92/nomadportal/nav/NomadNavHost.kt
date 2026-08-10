@@ -6,7 +6,6 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Explore
-import androidx.compose.material.icons.filled.Home
 import androidx.compose.material3.Icon
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
@@ -38,7 +37,6 @@ import com.jamesm92.nomadportal.ui.browser.NodeListScreen
 import com.jamesm92.nomadportal.ui.calling.CallOverlay
 import com.jamesm92.nomadportal.ui.components.MessagesIconWithBadge
 import com.jamesm92.nomadportal.ui.components.SettingsIconWithBadge
-import com.jamesm92.nomadportal.ui.home.HomeScreen
 import com.jamesm92.nomadportal.ui.hosting.SiteFilesScreen
 import com.jamesm92.nomadportal.ui.hosting.SitePageEditorScreen
 import com.jamesm92.nomadportal.ui.messages.ConversationListScreen
@@ -48,17 +46,17 @@ import com.jamesm92.nomadportal.ui.settings.SettingsScreen
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 
-// The app's 4 real top-level destinations, shown as bottom-nav tabs —
+// The app's 3 real top-level destinations, shown as bottom-nav tabs —
 // see NomadBottomNavigationBar's own doc comment for why (redesign
-// Phase B: this app previously had zero NavigationBar anywhere,
-// cross-nav was ad hoc top-bar IconButtons, and Settings was only
-// reachable via Home). Every other route (conversation thread, a
-// node's page, hosted-site file management) is a pushed detail screen
-// that hides the bottom bar, same as it already had its own back arrow.
-private val TOP_LEVEL_ROUTES = setOf(Routes.HOME, Routes.MESSAGES, Routes.NODES, Routes.SETTINGS)
+// Phase B: this app previously had zero NavigationBar anywhere, cross-
+// nav was ad hoc top-bar IconButtons, and Settings was only reachable
+// via the since-removed Home screen). Every other route (conversation
+// thread, a site's page, hosted-site file management) is a pushed
+// detail screen that hides the bottom bar, same as it already had its
+// own back arrow.
+private val TOP_LEVEL_ROUTES = setOf(Routes.MESSAGES, Routes.NODES, Routes.SETTINGS)
 
 private object Routes {
-    const val HOME = "home"
     const val SETTINGS = "settings"
     const val MESSAGES = "messages"
     const val CONVERSATION = "messages/{contactHash}"
@@ -133,7 +131,7 @@ fun NomadNavHost(
     ) { innerPadding ->
     NavHost(
         navController = navController,
-        startDestination = if (hasCompletedOnboarding == true) Routes.HOME else Routes.ONBOARDING,
+        startDestination = if (hasCompletedOnboarding == true) Routes.MESSAGES else Routes.ONBOARDING,
         modifier = Modifier.padding(innerPadding),
     ) {
         composable(Routes.ONBOARDING) {
@@ -142,17 +140,10 @@ fun NomadNavHost(
                 interfaceController = interfaceController,
                 onComplete = {
                     scope.launch { settingsRepository.setOnboardingComplete(true) }
-                    navController.navigate(Routes.HOME) {
+                    navController.navigate(Routes.MESSAGES) {
                         popUpTo(Routes.ONBOARDING) { inclusive = true }
                     }
                 },
-            )
-        }
-        composable(Routes.HOME) {
-            HomeScreen(
-                messagingRepository = messagingRepository,
-                interfaceController = interfaceController,
-                onManageHostedPages = { navController.navigate(Routes.SITE_FILES) },
             )
         }
         composable(Routes.SETTINGS) {
@@ -161,6 +152,7 @@ fun NomadNavHost(
                 settingsRepository = settingsRepository,
                 messagingRepository = messagingRepository,
                 tcpConnectionsRepository = tcpConnectionsRepository,
+                onManageHostedPages = { navController.navigate(Routes.SITE_FILES) },
             )
         }
         composable(Routes.MESSAGES) {
@@ -238,14 +230,17 @@ fun NomadNavHost(
 }
 
 /**
- * The app's persistent bottom navigation — Home/Messages/Nodes/Settings,
- * the 4 real top-level destinations (redesign Phase B). Replaces what
- * used to be ad hoc top-bar `IconButton`s scattered per-screen
- * (inconsistently: Home had all 3 cross-nav icons, Messages/Nodes only
- * had one each, Settings had none — reachable only via Home) with a
- * single, always-available nav surface, per the `android-compose-app-
- * design` skill's own Rule 0 ("3-5 top-level destinations -> a real
- * NavigationBar, not accumulated top-bar icons").
+ * The app's persistent bottom navigation — Messages/Sites/Settings, the
+ * 3 real top-level destinations. Originally 4 (redesign Phase B added a
+ * Home tab alongside these), but Home was dropped entirely per explicit
+ * direction — its two sections (this device's own LXMF identity, and
+ * its hosted NomadNet site) moved into Settings instead (see that
+ * screen's own doc comment) rather than being replaced with new
+ * content. Replaces what used to be ad hoc top-bar `IconButton`s
+ * scattered per-screen with a single, always-available nav surface, per
+ * the `android-compose-app-design` skill's own Rule 0 ("3-5 top-level
+ * destinations -> a real NavigationBar, not accumulated top-bar
+ * icons").
  *
  * Each tab uses the standard Navigation-Compose bottom-nav click pattern
  * (`popUpTo(startDestination) { saveState = true }` +
@@ -262,12 +257,6 @@ private fun NomadBottomNavigationBar(
     hasDownTcpConnection: Boolean,
 ) {
     NavigationBar {
-        NavigationBarItem(
-            selected = currentRoute == Routes.HOME,
-            onClick = { navigateToTopLevelTab(navController, Routes.HOME) },
-            icon = { Icon(Icons.Filled.Home, contentDescription = null) },
-            label = { Text("Home") },
-        )
         NavigationBarItem(
             selected = currentRoute == Routes.MESSAGES,
             onClick = { navigateToTopLevelTab(navController, Routes.MESSAGES) },
