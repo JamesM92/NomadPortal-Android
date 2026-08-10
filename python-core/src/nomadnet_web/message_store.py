@@ -114,6 +114,20 @@ class MessageStore:
             snapshot = self._snapshot()
         self._persist(snapshot)
 
+    def mark_unread(self, msg_id: str, owner: str = "") -> None:
+        """Mirrors mark_read exactly, setting `read` back to False —
+        orchestrator.mark_conversation_unread() calls this on a single
+        message (the conversation's most recent), not the whole history;
+        this method itself has no opinion about that, same as mark_read."""
+        with self._lock:
+            for m in self._received:
+                if m.get("id") == msg_id:
+                    if owner and m.get("owner") != owner:
+                        break
+                    m["read"] = False
+            snapshot = self._snapshot()
+        self._persist(snapshot)
+
     def _snapshot(self) -> dict:
         return {"sent": list(self._sent), "received": list(self._received)}
 

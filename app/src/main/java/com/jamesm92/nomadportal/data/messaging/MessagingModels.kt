@@ -19,6 +19,12 @@ data class Contact(
     val displayName: String,
     val icon: ContactIcon,
     val isFavorite: Boolean = false,
+    /** True once this contact has been blocked — messaging.py's
+     * `_on_delivery` drops any inbound message from a blocked sender
+     * outright, before it's ever stored (see that function's own doc
+     * comment). This flag alone doesn't hide the contact from any list;
+     * it only stops what they can send. */
+    val isBlocked: Boolean = false,
     /** Last LXMF peer announce heard for this hash, or 0 = never heard
      * one (e.g. a contact known only from message history/manual add,
      * matching [com.jamesm92.nomadportal.data.browsing.NodeInfo]'s same

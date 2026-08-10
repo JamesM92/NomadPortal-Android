@@ -45,6 +45,7 @@ class ContactStore:
                     "name":                  name or hash_hex[:16],
                     "note":                  note,
                     "favorited":             False,
+                    "blocked":               False,
                     "disappearing_seconds":  0,
                     "created":               time.time(),
                     "updated":               time.time(),
@@ -81,6 +82,7 @@ class ContactStore:
                     "name":                  name,
                     "note":                  "",
                     "favorited":             False,
+                    "blocked":               False,
                     "disappearing_seconds":  0,
                     "created":               time.time(),
                     "updated":               time.time(),
@@ -114,6 +116,7 @@ class ContactStore:
                     "name":                  hash_hex[:16],
                     "note":                  "",
                     "favorited":             False,
+                    "blocked":               False,
                     "disappearing_seconds":  0,
                     "created":               time.time(),
                     "updated":               time.time(),
@@ -140,6 +143,7 @@ class ContactStore:
                     "name":                  hash_hex[:16],
                     "note":                  "",
                     "favorited":             False,
+                    "blocked":               False,
                     "disappearing_seconds":  0,
                     "created":               time.time(),
                     "updated":               time.time(),
@@ -164,6 +168,22 @@ class ContactStore:
             if entry is None:
                 return False
             entry["favorited"] = favorited
+            entry["updated"] = time.time()
+            snapshot = dict(self._data)
+        self._persist(snapshot)
+        return True
+
+    def set_blocked(self, hash_hex: str, blocked: bool) -> bool:
+        """Same entry-must-already-exist contract as set_favorite — the
+        caller (orchestrator.set_contact_blocked) upserts first. A blocked
+        contact is not deleted or hidden by this alone; messaging.py's
+        `_on_delivery` is what actually enforces it, by consulting this
+        flag and dropping the message before it's ever stored."""
+        with self._lock:
+            entry = self._data.get(hash_hex)
+            if entry is None:
+                return False
+            entry["blocked"] = blocked
             entry["updated"] = time.time()
             snapshot = dict(self._data)
         self._persist(snapshot)

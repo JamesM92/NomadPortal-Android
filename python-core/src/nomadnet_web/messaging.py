@@ -176,6 +176,20 @@ class MessagingService:
         entry = self._contact_mgr.for_user(user_sub).get(hash_hex)
         return entry.get("disappearing_seconds", 0) if entry else 0
 
+    def _is_blocked(self, hash_hex: str, user_sub: str) -> bool:
+        """Consulted once, right at the top of `_on_delivery`, before any
+        of that function's icon/attachment/content processing — a blocked
+        sender's message is dropped outright, never stored, never
+        surfaced to the UI in any form (not even a suppressed/hidden
+        entry). Same None-safe "no ContactStore entry yet" handling as
+        `_disappearing_seconds_for`: a peer with no entry at all can't be
+        blocked (set_contact_blocked always upserts first, so "blocked"
+        only ever appears on a real entry)."""
+        if not self._contact_mgr or not hash_hex:
+            return False
+        entry = self._contact_mgr.for_user(user_sub).get(hash_hex)
+        return bool(entry.get("blocked")) if entry else False
+
     def purge_expired_messages(self) -> int:
         """Sweeps every disappearing message whose timer has elapsed —
         called periodically by orchestrator.py's disappearing-messages
@@ -551,6 +565,10 @@ class MessagingService:
         if self._msg_store:
             self._msg_store.mark_read(msg_id, owner=owner)
 
+    def mark_unread(self, msg_id: str, owner: str = "") -> None:
+        if self._msg_store:
+            self._msg_store.mark_unread(msg_id, owner=owner)
+
     def delete_conversation(self, hash_hex: str, user_sub: str = "") -> int:
         """Removes all sent+received messages with this counterparty for
         this user — the message-history half of "delete this chat"; the
@@ -594,6 +612,15 @@ class MessagingService:
         """Called by a user's LXMRouter when an inbound message arrives."""
         source_hex = message.source_hash.hex() if message.source_hash else ""
         msg_id     = message.hash.hex()         if message.hash         else ""
+
+        # Blocked senders are dropped outright, before any of the
+        # icon/attachment/content processing below runs — never stored,
+        # never surfaced to the UI in any form (not even a suppressed/
+        # hidden entry). This is the actual enforcement point;
+        # set_contact_blocked() only ever flips a flag in ContactStore.
+        if self._is_blocked(source_hex, user_sub):
+            log.info("Dropped inbound message from blocked contact %s", source_hex[:16])
+            return
 
         def _decode(val) -> str:
             if val is None:

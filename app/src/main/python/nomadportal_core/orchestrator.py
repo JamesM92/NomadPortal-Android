@@ -1408,6 +1408,7 @@ def _conversation_entries() -> list:
             "icon_fg": contact.get("icon_fg") if contact else None,
             "icon_bg": contact.get("icon_bg") if contact else None,
             "favorited": bool(contact.get("favorited")) if contact else False,
+            "blocked": bool(contact.get("blocked")) if contact else False,
             # 0 = off. Purely a going-forward setting — see
             # set_disappearing_timer's own doc comment.
             "disappearing_seconds": contact.get("disappearing_seconds", 0) if contact else 0,
@@ -1441,6 +1442,10 @@ def get_conversations_json() -> str:
     icon_mime (nullable), icon_glyph/icon_fg/icon_bg (FIELD_ICON_APPEARANCE
     descriptor, all-or-nothing nullable trio — mutually exclusive with
     icon/icon_mime, see contact_store.py's own doc comment), favorited,
+    blocked (inbound messages from a blocked contact are dropped outright
+    by messaging.py's `_on_delivery`, before ever reaching message
+    storage — see `_is_blocked`'s own doc comment; this flag alone
+    doesn't hide the contact from this list, only what they can send),
     disappearing_seconds (0 = off — see set_disappearing_timer's own doc
     comment), last_seen (unix seconds, nullable — last LXMF peer announce, not last
     message), hops (nullable), announce_count (nullable — total announces
@@ -1465,6 +1470,7 @@ def get_conversations_json() -> str:
             "icon_fg": e["icon_fg"],
             "icon_bg": e["icon_bg"],
             "favorited": e["favorited"],
+            "blocked": e["blocked"],
             "disappearing_seconds": e["disappearing_seconds"],
             "last_seen": e["last_seen"],
             "hops": e["hops"],
@@ -1529,6 +1535,7 @@ def get_contact_json(contact_hash: str) -> str:
                 "icon": e["icon"], "icon_mime": e["icon_mime"],
                 "icon_glyph": e["icon_glyph"], "icon_fg": e["icon_fg"], "icon_bg": e["icon_bg"],
                 "favorited": e["favorited"],
+                "blocked": e["blocked"],
                 "disappearing_seconds": e["disappearing_seconds"],
                 "call_capable": e["call_capable"],
             })
@@ -1543,6 +1550,7 @@ def get_contact_json(contact_hash: str) -> str:
         "icon": None, "icon_mime": None,
         "icon_glyph": None, "icon_fg": None, "icon_bg": None,
         "favorited": False,
+        "blocked": False,
         "disappearing_seconds": 0,
         "call_capable": False,
     })
@@ -1579,6 +1587,45 @@ def set_contact_favorite(hash_hex: str, value: bool) -> bool:
                 best_name = peer.get("name") or ""
         store.upsert(hash_hex, name=best_name)
     return store.set_favorite(hash_hex, value)
+
+
+def set_contact_blocked(hash_hex: str, value: bool) -> bool:
+    """Exact upsert-then-set shape as set_contact_favorite above,
+    including the same live-peer-name preservation (see that function's
+    own doc comment for the real bug this avoids). Actual enforcement
+    (dropping inbound messages from a blocked sender) happens in
+    messaging.py's `_on_delivery`/`_is_blocked` — this function only ever
+    flips the stored flag those checks read."""
+    if _contact_store is None:
+        return False
+    store = _contact_store.for_user("")
+    if store.get(hash_hex) is None:
+        best_name = ""
+        if _lxmf_tracker is not None:
+            peer = next((p for p in _lxmf_tracker.get_peers() if p["hash"] == hash_hex), None)
+            if peer:
+                best_name = peer.get("name") or ""
+        store.upsert(hash_hex, name=best_name)
+    return store.set_blocked(hash_hex, value)
+
+
+def mark_conversation_unread(contact_hash: str) -> None:
+    """The inverse of mark_conversation_read, but deliberately not its
+    mirror image: marking every message in a conversation unread again
+    would inflate unread_count in a way no real "mark as unread" action
+    means (the intent is "remind me to look at this again," a one-shot
+    visual nudge, not "actually re-hide the whole history"). Matches
+    Gmail/most real messaging apps' own semantics: only the single most
+    recently received message gets flipped back to unread. A no-op if
+    this contact has no received messages at all (an announce-only
+    contact, or a conversation of only messages *we* sent)."""
+    if _messaging is None:
+        return
+    my_received = [m for m in _messaging.received_messages() if m["source"] == contact_hash]
+    if not my_received:
+        return
+    most_recent = max(my_received, key=lambda m: m["received_at"])
+    _messaging.mark_unread(most_recent["id"])
 
 
 def set_disappearing_timer(hash_hex: str, seconds: int) -> bool:

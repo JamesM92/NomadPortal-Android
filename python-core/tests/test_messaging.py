@@ -234,3 +234,84 @@ def test_purge_expired_messages_with_nothing_expired(tmp_path):
         message_store=_StubMessageStoreWithExpiry([]),
     )
     assert svc.purge_expired_messages() == 0
+
+
+# ---------------------------------------------------------------------------
+# Contact blocking
+# ---------------------------------------------------------------------------
+#
+# `_is_blocked` is tested directly (same style as `_disappearing_seconds_for`
+# being exercised via send_message's stamping, just without an equivalent
+# public side effect to observe it through) rather than via `_on_delivery` —
+# that needs a real-shaped LXMF Message object, same "out of scope for this
+# style of test" reasoning already noted above for the receive-side
+# expires_at stamping. The actual drop-the-message behavior this flag drives
+# is a single early-return at the top of `_on_delivery`, reviewed by hand
+# against `_is_blocked`'s own real return value here.
+
+
+def test_is_blocked_true_for_blocked_contact(service):
+    service._contact_mgr = _StubContactMgr({DEST_HASH: {"blocked": True}})
+    assert service._is_blocked(DEST_HASH, "u1") is True
+
+
+def test_is_blocked_false_for_unblocked_contact(service):
+    service._contact_mgr = _StubContactMgr({DEST_HASH: {"blocked": False}})
+    assert service._is_blocked(DEST_HASH, "u1") is False
+
+
+def test_is_blocked_false_with_no_contact_store_entry(service):
+    # Same None-safe handling as _disappearing_seconds_for — a hash with
+    # no ContactStore entry at all can't be blocked (set_contact_blocked
+    # always upserts first, so "blocked" only ever appears on a real entry).
+    service._contact_mgr = _StubContactMgr({})
+    assert service._is_blocked(DEST_HASH, "u1") is False
+
+
+def test_is_blocked_false_with_no_contact_mgr(tmp_path):
+    svc = MessagingService(storage_path=str(tmp_path), message_store=_StubMessageStore())
+    assert svc._is_blocked(DEST_HASH, "u1") is False
+
+
+# ---------------------------------------------------------------------------
+# mark_unread
+# ---------------------------------------------------------------------------
+
+
+class _StubMessageStoreWithMarking(_StubMessageStore):
+    """Adds mark_read/mark_unread recording on top of the existing
+    save_sent()-only stub — real dict-flip mechanics are covered
+    separately in test_message_store.py; this just records calls so
+    MessagingService's own thin wrapper methods can be verified in
+    isolation, same split as purge_expired/purge_expired_messages."""
+
+    def __init__(self):
+        super().__init__()
+        self.mark_read_calls = []
+        self.mark_unread_calls = []
+
+    def mark_read(self, msg_id, owner=""):
+        self.mark_read_calls.append((msg_id, owner))
+
+    def mark_unread(self, msg_id, owner=""):
+        self.mark_unread_calls.append((msg_id, owner))
+
+
+def test_mark_unread_delegates_to_message_store(tmp_path):
+    store = _StubMessageStoreWithMarking()
+    svc = MessagingService(storage_path=str(tmp_path), message_store=store)
+
+    svc.mark_unread("r1", owner="u1")
+
+    assert store.mark_unread_calls == [("r1", "u1")]
+    assert store.mark_read_calls == []
+
+
+def test_mark_read_delegates_to_message_store(tmp_path):
+    store = _StubMessageStoreWithMarking()
+    svc = MessagingService(storage_path=str(tmp_path), message_store=store)
+
+    svc.mark_read("r1", owner="u1")
+
+    assert store.mark_read_calls == [("r1", "u1")]
+    assert store.mark_unread_calls == []

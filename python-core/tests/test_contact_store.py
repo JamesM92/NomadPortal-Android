@@ -70,3 +70,37 @@ def test_set_disappearing_timer_persists(tmp_path):
 
     reloaded = _make_store(tmp_path)
     assert reloaded.get(HASH)["disappearing_seconds"] == 3600
+
+
+def test_upsert_defaults_blocked_to_false(tmp_path):
+    store = _make_store(tmp_path)
+    entry = store.upsert(HASH, name="Alice")
+    assert entry["blocked"] is False
+
+
+def test_set_blocked_requires_existing_entry(tmp_path):
+    # Same contract as set_favorite/set_disappearing_timer — False, not
+    # an upsert, when there's no entry yet. orchestrator.set_contact_blocked
+    # is what upserts first, mirroring orchestrator.set_contact_favorite.
+    store = _make_store(tmp_path)
+    assert store.set_blocked(HASH, True) is False
+
+
+def test_set_blocked_updates_existing_entry(tmp_path):
+    store = _make_store(tmp_path)
+    store.upsert(HASH, name="Alice")
+
+    assert store.set_blocked(HASH, True) is True
+    assert store.get(HASH)["blocked"] is True
+
+    assert store.set_blocked(HASH, False) is True
+    assert store.get(HASH)["blocked"] is False
+
+
+def test_set_blocked_persists(tmp_path):
+    store = _make_store(tmp_path)
+    store.upsert(HASH, name="Alice")
+    store.set_blocked(HASH, True)
+
+    reloaded = _make_store(tmp_path)
+    assert reloaded.get(HASH)["blocked"] is True

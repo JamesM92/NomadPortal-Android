@@ -3,8 +3,10 @@ package com.jamesm92.nomadportal.ui.messages
 import android.content.res.Configuration
 import android.widget.Toast
 import androidx.compose.animation.animateContentSize
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -22,6 +24,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.CallMade
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Block
 import androidx.compose.material.icons.filled.Call
 import androidx.compose.material.icons.filled.CallMissed
 import androidx.compose.material.icons.filled.CallReceived
@@ -31,9 +34,13 @@ import androidx.compose.material.icons.filled.ExpandLess
 import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.filled.FavoriteBorder
+import androidx.compose.material.icons.filled.LockOpen
+import androidx.compose.material.icons.filled.MarkEmailUnread
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Badge
 import androidx.compose.material3.Checkbox
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.LocalMinimumInteractiveComponentSize
@@ -239,6 +246,33 @@ fun ConversationListScreen(
         }
     }
 
+    // No optimistic override the way toggleFavorite has — block/unblock
+    // is a long-press-menu action, not a fast-repeat-tap icon, so the
+    // ~4s poll latency isn't the same "did that even register?" risk.
+    fun toggleBlock(summary: ConversationSummary) {
+        val hash = summary.contact.lxmfHash
+        val wanted = !summary.contact.isBlocked
+        scope.launch {
+            try {
+                repository.setBlocked(hash, wanted)
+            } catch (e: Exception) {
+                // Same non-rethrow reasoning as toggleFavorite above —
+                // this coroutine shares `scope` with every other action
+                // on this screen.
+            }
+        }
+    }
+
+    fun markUnread(summary: ConversationSummary) {
+        scope.launch {
+            try {
+                repository.markUnread(summary.contact.lxmfHash)
+            } catch (e: Exception) {
+                // Same non-rethrow reasoning as toggleFavorite above.
+            }
+        }
+    }
+
     // Confirmed before actually deleting — hard to reverse (message
     // history is gone for good), per this app's own standing convention
     // for destructive actions elsewhere (panic wipe, etc.).
@@ -402,6 +436,8 @@ fun ConversationListScreen(
                                 onClick = { onOpenConversation(summary.contact.lxmfHash) },
                                 onToggleFavorite = { toggleFavorite(summary) },
                                 onCall = { scope.launch { callRepository.placeCall(summary.contact.lxmfHash) } },
+                                onMarkUnread = { markUnread(summary) },
+                                onToggleBlock = { toggleBlock(summary) },
                                 onDelete = { pendingDelete = summary.contact },
                             )
                             HorizontalDivider()
@@ -426,6 +462,8 @@ fun ConversationListScreen(
                                 onClick = { onOpenConversation(summary.contact.lxmfHash) },
                                 onToggleFavorite = { toggleFavorite(summary) },
                                 onCall = { scope.launch { callRepository.placeCall(summary.contact.lxmfHash) } },
+                                onMarkUnread = { markUnread(summary) },
+                                onToggleBlock = { toggleBlock(summary) },
                                 onDelete = { pendingDelete = summary.contact },
                             )
                             HorizontalDivider()
@@ -484,6 +522,8 @@ fun ConversationListScreen(
                             onClick = { onOpenConversation(summary.contact.lxmfHash) },
                             onToggleFavorite = { toggleFavorite(summary) },
                             onCall = { scope.launch { callRepository.placeCall(summary.contact.lxmfHash) } },
+                            onMarkUnread = { markUnread(summary) },
+                            onToggleBlock = { toggleBlock(summary) },
                         )
                         HorizontalDivider()
                     }
@@ -632,104 +672,166 @@ private fun SectionHeader(
     }
 }
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun ConversationRow(
     summary: ConversationSummary,
     onClick: () -> Unit,
     onToggleFavorite: () -> Unit,
     onCall: () -> Unit,
+    onMarkUnread: () -> Unit,
+    onToggleBlock: () -> Unit,
     // Null on the Users tab — deleting a "chat" only makes sense where
     // there's actual history/state to clear, per explicit request
     // ("delete chats from our chats tab").
     onDelete: (() -> Unit)? = null,
 ) {
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .animateContentSize()
-            .clickable(onClick = onClick)
-            // 4dp (the redesign's own "tight/inline" grid tier) — was
-            // 12.dp originally, then a not-quite-grid-aligned 6.dp; a
-            // HorizontalDivider between rows now provides visual
-            // separation.
-            .padding(horizontal = 16.dp, vertical = 4.dp),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(12.dp),
-    ) {
-        ContactAvatar(summary.contact)
-        Column(modifier = Modifier.weight(1f)) {
-            Text(
-                text = summary.contact.displayName,
-                style = MaterialTheme.typography.bodyMedium,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
-            Text(
-                text = subtitleFor(summary.contact, summary.lastMessage),
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
-        }
-        if (summary.unreadCount > 0) {
-            Box(
-                modifier = Modifier
-                    .size(22.dp)
-                    .clip(CircleShape)
-                    .background(MaterialTheme.colorScheme.primary),
-                contentAlignment = Alignment.Center,
-            ) {
+    // Long-press context menu (Columba UI/UX parity audit finding: a
+    // long-press row menu, not a 3rd always-visible icon) carries the
+    // less-frequent/destructive actions — Mark as Unread, Delete, Block —
+    // so this row doesn't need a 4th trailing icon for each one. Favorite
+    // and Call stay as always-visible icons (already-established,
+    // frequently-used affordances, not touched here).
+    var showMenu by remember { mutableStateOf(false) }
+    Box {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .animateContentSize()
+                .combinedClickable(onClick = onClick, onLongClick = { showMenu = true })
+                // 4dp (the redesign's own "tight/inline" grid tier) — was
+                // 12.dp originally, then a not-quite-grid-aligned 6.dp; a
+                // HorizontalDivider between rows now provides visual
+                // separation.
+                .padding(horizontal = 16.dp, vertical = 4.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            ContactAvatar(summary.contact)
+            Column(modifier = Modifier.weight(1f)) {
                 Text(
-                    text = summary.unreadCount.toString(),
-                    style = MaterialTheme.typography.labelMedium,
-                    color = MaterialTheme.colorScheme.onPrimary,
+                    text = summary.contact.displayName,
+                    style = MaterialTheme.typography.bodyMedium,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                Text(
+                    text = subtitleFor(summary.contact, summary.lastMessage),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
                 )
             }
-        }
-        // Zeroed touch-target reservation — without it, IconButton pads
-        // itself out to the ~48dp accessibility minimum regardless of
-        // the icon's own size, which read as way too much horizontal
-        // space on either side of these two in a dense row (real
-        // on-device report). Same fix as every other compact icon
-        // control in this app (BrowserScreen's nav row, the TCP table).
-        CompositionLocalProvider(LocalMinimumInteractiveComponentSize provides 0.dp) {
-            if (summary.contact.isCallCapable) {
-                // Phase 1a: now a real tap-to-call target (Phase 0 shipped
-                // it as plain/non-interactive first — "the icon will
-                // eventually become the way to start a phone call with
-                // them," now true). Green (NomadAccent2, the same
-                // "confirmed/good" green FetchStatusDot uses for a
-                // successful page load) since a confirmed call announce
-                // is the only case this icon shows at all.
-                IconButton(onClick = onCall, modifier = Modifier.size(32.dp)) {
+            if (summary.unreadCount > 0) {
+                Box(
+                    modifier = Modifier
+                        .size(22.dp)
+                        .clip(CircleShape)
+                        .background(MaterialTheme.colorScheme.primary),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Text(
+                        text = summary.unreadCount.toString(),
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.onPrimary,
+                    )
+                }
+            }
+            // Zeroed touch-target reservation — without it, IconButton pads
+            // itself out to the ~48dp accessibility minimum regardless of
+            // the icon's own size, which read as way too much horizontal
+            // space on either side of these two in a dense row (real
+            // on-device report). Same fix as every other compact icon
+            // control in this app (BrowserScreen's nav row, the TCP table).
+            CompositionLocalProvider(LocalMinimumInteractiveComponentSize provides 0.dp) {
+                if (summary.contact.isCallCapable) {
+                    // Phase 1a: now a real tap-to-call target (Phase 0 shipped
+                    // it as plain/non-interactive first — "the icon will
+                    // eventually become the way to start a phone call with
+                    // them," now true). Green (NomadAccent2, the same
+                    // "confirmed/good" green FetchStatusDot uses for a
+                    // successful page load) since a confirmed call announce
+                    // is the only case this icon shows at all.
+                    IconButton(onClick = onCall, modifier = Modifier.size(32.dp)) {
+                        Icon(
+                            imageVector = Icons.Filled.Call,
+                            contentDescription = "Call ${summary.contact.displayName}",
+                            tint = NomadAccent2,
+                            modifier = Modifier.size(20.dp),
+                        )
+                    }
+                }
+                IconButton(onClick = onToggleFavorite, modifier = Modifier.size(32.dp)) {
                     Icon(
-                        imageVector = Icons.Filled.Call,
-                        contentDescription = "Call ${summary.contact.displayName}",
-                        tint = NomadAccent2,
+                        imageVector = if (summary.contact.isFavorite) Icons.Filled.Favorite else Icons.Filled.FavoriteBorder,
+                        contentDescription = if (summary.contact.isFavorite) "Unfavorite" else "Favorite",
+                        tint = if (summary.contact.isFavorite) MaterialTheme.colorScheme.primary else NomadTextDim,
                         modifier = Modifier.size(20.dp),
                     )
                 }
             }
-            IconButton(onClick = onToggleFavorite, modifier = Modifier.size(32.dp)) {
+        }
+        ConversationContextMenu(
+            expanded = showMenu,
+            onDismiss = { showMenu = false },
+            isBlocked = summary.contact.isBlocked,
+            showMarkUnread = summary.unreadCount == 0,
+            onMarkUnread = { showMenu = false; onMarkUnread() },
+            onToggleBlock = { showMenu = false; onToggleBlock() },
+            onDelete = onDelete?.let { delete -> { showMenu = false; delete() } },
+        )
+    }
+}
+
+/**
+ * Long-press context menu for [ConversationRow] — a Columba UI/UX
+ * parity-audit finding: Columba offers this same set of secondary
+ * actions (plus Save/Remove Contact and View Peer Details, which this
+ * app already surfaces differently — the always-visible favorite star,
+ * and no separate contact-detail screen yet) from a long-press menu
+ * rather than a wall of always-visible icons.
+ */
+@Composable
+private fun ConversationContextMenu(
+    expanded: Boolean,
+    onDismiss: () -> Unit,
+    isBlocked: Boolean,
+    showMarkUnread: Boolean,
+    onMarkUnread: () -> Unit,
+    onToggleBlock: () -> Unit,
+    onDelete: (() -> Unit)?,
+) {
+    DropdownMenu(expanded = expanded, onDismissRequest = onDismiss) {
+        if (showMarkUnread) {
+            DropdownMenuItem(
+                leadingIcon = { Icon(Icons.Filled.MarkEmailUnread, contentDescription = null) },
+                text = { Text("Mark as Unread") },
+                onClick = onMarkUnread,
+            )
+        }
+        if (onDelete != null) {
+            DropdownMenuItem(
+                leadingIcon = {
+                    Icon(Icons.Filled.Delete, contentDescription = null, tint = MaterialTheme.colorScheme.error)
+                },
+                text = { Text("Delete Conversation", color = MaterialTheme.colorScheme.error) },
+                onClick = onDelete,
+            )
+        }
+        DropdownMenuItem(
+            leadingIcon = {
                 Icon(
-                    imageVector = if (summary.contact.isFavorite) Icons.Filled.Favorite else Icons.Filled.FavoriteBorder,
-                    contentDescription = if (summary.contact.isFavorite) "Unfavorite" else "Favorite",
-                    tint = if (summary.contact.isFavorite) MaterialTheme.colorScheme.primary else NomadTextDim,
-                    modifier = Modifier.size(20.dp),
+                    imageVector = if (isBlocked) Icons.Filled.LockOpen else Icons.Filled.Block,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.error,
                 )
-            }
-            if (onDelete != null) {
-                IconButton(onClick = onDelete, modifier = Modifier.size(32.dp)) {
-                    Icon(
-                        imageVector = Icons.Filled.Delete,
-                        contentDescription = "Delete chat",
-                        tint = NomadTextDim,
-                        modifier = Modifier.size(20.dp),
-                    )
-                }
-            }
-        }
+            },
+            text = {
+                Text(if (isBlocked) "Unblock User" else "Block User", color = MaterialTheme.colorScheme.error)
+            },
+            onClick = onToggleBlock,
+        )
     }
 }
 

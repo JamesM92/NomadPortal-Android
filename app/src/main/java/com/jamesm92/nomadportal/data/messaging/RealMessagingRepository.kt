@@ -83,9 +83,21 @@ class RealMessagingRepository : MessagingRepository {
         }
     }
 
+    override suspend fun markUnread(contactHash: String) {
+        withContext(Dispatchers.IO) {
+            orchestrator.callAttr("mark_conversation_unread", contactHash)
+        }
+    }
+
     override suspend fun setFavorite(contactHash: String, favorite: Boolean) {
         withContext(Dispatchers.IO) {
             orchestrator.callAttr("set_contact_favorite", contactHash, favorite)
+        }
+    }
+
+    override suspend fun setBlocked(contactHash: String, blocked: Boolean) {
+        withContext(Dispatchers.IO) {
+            orchestrator.callAttr("set_contact_blocked", contactHash, blocked)
         }
     }
 
@@ -257,6 +269,7 @@ class RealMessagingRepository : MessagingRepository {
             displayName = obj.optString("name").ifBlank { hash.take(16) },
             icon = icon,
             isFavorite = obj.optBoolean("favorited", false),
+            isBlocked = obj.optBoolean("blocked", false),
             disappearingSeconds = obj.optInt("disappearing_seconds", 0),
             lastAnnounceMillis = if (obj.isNull("last_seen")) 0L else (obj.optDouble("last_seen", 0.0) * 1000).toLong(),
             hopCount = if (obj.isNull("hops")) -1 else obj.optInt("hops", -1),

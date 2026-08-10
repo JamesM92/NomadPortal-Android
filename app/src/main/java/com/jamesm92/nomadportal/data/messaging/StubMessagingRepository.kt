@@ -102,9 +102,25 @@ class StubMessagingRepository(private val scope: CoroutineScope) : MessagingRepo
         unreadCounts.value = unreadCounts.value + (contactHash to 0)
     }
 
+    override suspend fun markUnread(contactHash: String) {
+        // Simplified stub version of the real one-shot-nudge semantics
+        // (see MessagingRepository's own doc comment): a no-op unless
+        // this contact actually has received messages to nudge.
+        val hasReceived = messagesByContact[contactHash]?.value?.any { !it.isSent } == true
+        if (hasReceived) {
+            unreadCounts.value = unreadCounts.value + (contactHash to maxOf(1, unreadCounts.value[contactHash] ?: 0))
+        }
+    }
+
     override suspend fun setFavorite(contactHash: String, favorite: Boolean) {
         contacts.value = contacts.value.map {
             if (it.lxmfHash == contactHash) it.copy(isFavorite = favorite) else it
+        }
+    }
+
+    override suspend fun setBlocked(contactHash: String, blocked: Boolean) {
+        contacts.value = contacts.value.map {
+            if (it.lxmfHash == contactHash) it.copy(isBlocked = blocked) else it
         }
     }
 

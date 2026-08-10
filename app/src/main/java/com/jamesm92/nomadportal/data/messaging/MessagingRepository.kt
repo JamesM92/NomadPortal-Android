@@ -57,7 +57,23 @@ interface MessagingRepository {
         imageFormat: String? = null,
     )
     suspend fun markRead(contactHash: String)
+
+    /** Marks this conversation's single most-recently-received message
+     * back to unread — not the whole history (see orchestrator.py's
+     * `mark_conversation_unread` for why: a one-shot visual "look at
+     * this again" nudge, matching Gmail/most real messaging apps' own
+     * semantics, not literally re-hiding every message). A no-op if this
+     * contact has no received messages at all. */
+    suspend fun markUnread(contactHash: String)
     suspend fun setFavorite(contactHash: String, favorite: Boolean)
+
+    /** Blocks or unblocks a contact. A blocked contact's inbound
+     * messages are dropped outright server-side (see
+     * `nomadnet_web.messaging.MessagingService._on_delivery`) — never
+     * stored, never surfaced anywhere, not just hidden client-side. Does
+     * not otherwise remove or hide the contact from any list; existing
+     * message history is untouched. */
+    suspend fun setBlocked(contactHash: String, blocked: Boolean)
 
     /** Explicitly, permanently renames a contact — once set, this name
      * stops tracking their live LXMF-announced name (see orchestrator.py's

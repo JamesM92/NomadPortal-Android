@@ -57,3 +57,52 @@ def test_purge_expired_returns_empty_list_and_skips_persist_when_nothing_expired
     store.save_sent({"id": "s1", "dest": "aa", "expires_at": time.time() + 1000})
 
     assert store.purge_expired() == []
+
+
+def test_mark_read_sets_read_true(tmp_path):
+    store = _make_store(tmp_path)
+    store.save_received({"id": "r1", "source": "bb", "read": False})
+
+    store.mark_read("r1")
+
+    assert store.received_messages()[0]["read"] is True
+
+
+def test_mark_unread_mirrors_mark_read(tmp_path):
+    # orchestrator.mark_conversation_unread's real caller, but this file
+    # only exercises the plain dict-flip mechanics — same split as
+    # purge_expired/purge_expired_messages (see this file's own doc
+    # comment).
+    store = _make_store(tmp_path)
+    store.save_received({"id": "r1", "source": "bb", "read": True})
+
+    store.mark_unread("r1")
+
+    assert store.received_messages()[0]["read"] is False
+
+
+def test_mark_read_and_mark_unread_respect_owner_scoping(tmp_path):
+    store = _make_store(tmp_path)
+    store.save_received({"id": "r1", "source": "bb", "owner": "alice", "read": False})
+
+    store.mark_read("r1", owner="bob")
+    assert store.received_messages()[0]["read"] is False
+
+    store.mark_read("r1", owner="alice")
+    assert store.received_messages()[0]["read"] is True
+
+    store.mark_unread("r1", owner="bob")
+    assert store.received_messages()[0]["read"] is True
+
+    store.mark_unread("r1", owner="alice")
+    assert store.received_messages()[0]["read"] is False
+
+
+def test_mark_read_and_mark_unread_are_a_no_op_for_unknown_id(tmp_path):
+    store = _make_store(tmp_path)
+    store.save_received({"id": "r1", "source": "bb", "read": False})
+
+    store.mark_read("does-not-exist")
+    store.mark_unread("does-not-exist")
+
+    assert store.received_messages()[0]["read"] is False
