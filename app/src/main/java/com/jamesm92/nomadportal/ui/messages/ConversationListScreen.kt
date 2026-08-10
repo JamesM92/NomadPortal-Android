@@ -331,15 +331,15 @@ fun ConversationListScreen(
                         },
                     )
                     Tab(
-                        selected = selectedTab == 2,
-                        onClick = { selectedTab = 2 },
+                        selected = selectedTab == 1,
+                        onClick = { selectedTab = 1 },
                         text = {
                             Text(
                                 "Calls",
                                 style = MaterialTheme.typography.labelMedium.copy(
-                                    fontWeight = if (selectedTab == 2) FontWeight.Bold else FontWeight.Normal,
+                                    fontWeight = if (selectedTab == 1) FontWeight.Bold else FontWeight.Normal,
                                 ),
-                                color = if (selectedTab == 2) {
+                                color = if (selectedTab == 1) {
                                     MaterialTheme.colorScheme.primary
                                 } else {
                                     NomadTextDim
@@ -376,12 +376,14 @@ fun ConversationListScreen(
                     // history or a live announce heard) — this is the
                     // companion entry point for an address you already
                     // know but have neither messaged nor heard announce
-                    // from yet. Chats/Users only — the Calls tab has its
-                    // own dedicated "Call an address" entry point instead
+                    // from yet. Chats only now (Users moved to its own
+                    // ContactsScreen, which carries its own copy of this
+                    // same entry point) — the Calls tab has its own
+                    // dedicated "Call an address" entry point instead
                     // (per explicit direction, moved out of this shared
                     // row: "the phone icon should only be in the calls
                     // sub tab of messages").
-                    if (selectedTab != 2) {
+                    if (selectedTab != 1) {
                         IconButton(onClick = { showAddByAddress = true }, modifier = Modifier.size(32.dp)) {
                             Icon(Icons.Filled.Add, contentDescription = "Message address", modifier = Modifier.size(20.dp))
                         }
