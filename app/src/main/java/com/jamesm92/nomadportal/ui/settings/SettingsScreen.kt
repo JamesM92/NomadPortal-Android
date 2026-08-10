@@ -1,7 +1,6 @@
 package com.jamesm92.nomadportal.ui.settings
 
 import android.content.ClipData
-import android.content.res.Configuration
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
@@ -11,6 +10,7 @@ import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxHeight
@@ -50,11 +50,9 @@ import androidx.compose.material3.LocalMinimumInteractiveComponentSize
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
-import androidx.compose.material3.SecondaryTabRow
 import androidx.compose.material3.Slider
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
-import androidx.compose.material3.Tab
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.CompositionLocalProvider
@@ -62,7 +60,6 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -74,16 +71,13 @@ import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.ClipEntry
 import androidx.compose.ui.platform.LocalClipboard
-import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalFocusManager
-import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import com.jamesm92.nomadportal.connectivity.HostedNodeStatus
@@ -135,6 +129,19 @@ import kotlinx.coroutines.launch
  * (dropped from the bottom nav entirely, per explicit direction —
  * Messages/Sites/Settings is the whole nav now), those actions had
  * nowhere else to live, so they moved here rather than disappearing.
+ *
+ * **One scrollable page of independently-collapsible sections**, per
+ * explicit request to match Columba's own settings layout, replacing the
+ * previous per-interface SecondaryTabRow (Main/TCP/Bluetooth/RNode/LAN
+ * tabs). Each interface's section header carries its own enable [Switch]
+ * right on the (always-visible-even-collapsed) header row — preserving
+ * the old tabbed design's "duplicate toggle, flip it from either place"
+ * convenience without needing a whole tab switch just to see it. Unlike
+ * [IconAppearanceEditor]'s deliberately-exclusive accordion further down
+ * this file, sections here are independent: opening one never closes
+ * another, matching how a real settings page's sections behave (there is
+ * no "only one thing in view at once" rule for a page like this the way
+ * there was for that narrower color/icon editor).
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -173,100 +180,70 @@ fun SettingsScreen(
         }
     }
 
-    // Main = connectivity/hosting toggles + kill switch, the master
-    // auto-announce toggle + manual "Announce now", identity/hosted-site
-    // rename+icon+management (Appearance/Hosting sections — moved here
-    // from the now-removed Home screen), and Permissions. Each announce-
-    // tracked interface (TCP/Bluetooth/RNode/LAN) gets its own dedicated
-    // tab carrying a *duplicate* of its Main-tab toggle (per explicit
-    // request — flip it from either place, same underlying state) plus
-    // that interface's own Message/Auto policy; TCP's tab additionally
-    // carries the full connection list (add/remove/enable/disable —
-    // replaces the old single-hardcoded-hub design). There's still no
-    // separate "Site" tab here (per the original explicit direction: the
-    // different interfaces need room to manage their different settings,
-    // the hosted site doesn't really need that) — its on/off toggle,
-    // rename, manual "Announce now", and auto-announce interval field all
-    // live in the "Hosting" section of this Main tab instead, same as
-    // every other hosted-site control.
-    var selectedTab by remember { mutableIntStateOf(0) }
-    val isLandscape = LocalConfiguration.current.orientation == Configuration.ORIENTATION_LANDSCAPE
-    val tabLabels = listOf("Main", "TCP", "Bluetooth", "RNode", "LAN")
+    // Everything starts collapsed — no more "Connectivity" overview
+    // section to default-open now that each interface's own toggle
+    // already lives right on its own section header (per explicit
+    // direction: the separate Connectivity section was redundant once
+    // TCP/Bluetooth/RNode/LAN each carry their own). Independent
+    // booleans, not an accordion — see this function's own doc comment.
+    var expandedSections by remember { mutableStateOf(emptySet<SettingsSection>()) }
+    fun toggleSection(section: SettingsSection) {
+        expandedSections = if (section in expandedSections) {
+            expandedSections - section
+        } else {
+            expandedSections + section
+        }
+    }
 
     Scaffold(
         topBar = {
-            Column {
-                AdaptiveTopAppBar(
-                    title = { Text("Settings") },
-                    // No back arrow — Settings is now a real bottom-nav
-                    // tab (NomadNavHost.kt), same as Home/Messages/Nodes;
-                    // switching tabs is the way back.
-                    actions = {
-                        PanicWipeLogo(
-                            modifier = Modifier.padding(end = 8.dp),
-                            onTripleTap = {
-                                scope.launch {
-                                    PanicWipe.perform(context)
-                                    PanicWipe.restartApp(context)
-                                }
-                            },
+            AdaptiveTopAppBar(
+                title = { Text("Settings") },
+                // No back arrow — Settings is now a real bottom-nav
+                // tab (NomadNavHost.kt), same as Home/Messages/Nodes;
+                // switching tabs is the way back.
+                actions = {
+                    // Pinned in the top bar (not a scrollable section
+                    // item) — per explicit direction, a one-tap emergency
+                    // action should stay reachable regardless of scroll
+                    // position, now that it's not riding along with a
+                    // Connectivity section header anymore. Only the four
+                    // connectivity interfaces, not node hosting — hosting
+                    // lives under its own "Hosting" section below and
+                    // isn't a communication method itself (see
+                    // setNodeHostingEnabled's own doc comment: it's
+                    // independent of which interfaces are up). A user
+                    // reaching for a kill switch wants this device to stop
+                    // talking, not to also silently stop answering
+                    // requests it was already committed to serving.
+                    TextButton(onClick = {
+                        scope.launch {
+                            interfaceController.setTcpEnabled(false)
+                            interfaceController.setBluetoothMeshEnabled(false)
+                            interfaceController.setRNodeEnabled(false)
+                            interfaceController.setWifiDiscoveryEnabled(false)
+                        }
+                    }) {
+                        Icon(
+                            imageVector = Icons.Filled.PowerSettingsNew,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.error,
+                            modifier = Modifier.size(18.dp),
                         )
-                    },
-                )
-                SecondaryTabRow(
-                    selectedTabIndex = selectedTab,
-                    modifier = Modifier.height(if (isLandscape) 28.dp else 36.dp),
-                ) {
-                    tabLabels.forEachIndexed { index, label ->
-                        Tab(
-                            selected = selectedTab == index,
-                            onClick = { selectedTab = index },
-                            text = {
-                                // 6 tabs sharing one row leaves little
-                                // width each — a deliberate, scoped
-                                // exception below the type scale, not a
-                                // reintroduction of the bodyLarge-fraction
-                                // anti-pattern the rest of this app's
-                                // typography was migrated off of. Real
-                                // on-device check: labelSmall (11sp, M3's
-                                // own smallest defined role) still
-                                // truncates "Bluetooth" — no real semantic
-                                // role fits here, so this stays a named,
-                                // commented exception (matching the
-                                // android-compose-app-design skill's own
-                                // allowance for information-dense UI, e.g.
-                                // a compact table) rather than force a
-                                // role that visibly breaks. 9.6sp is this
-                                // row's original tuned value (confirmed via
-                                // git — unchanged by this migration).
-                                // maxLines=1/softWrap=false's actual job
-                                // was always "truncate rather than wrap to
-                                // 2 lines and blow out the row's height,"
-                                // not "guarantee zero truncation" — even
-                                // pre-migration, "Bluetooth" ellipsizing
-                                // was the accepted worst case, confirmed
-                                // directly against the pre-Phase-T code,
-                                // not assumed.
-                                Text(
-                                    label,
-                                    style = MaterialTheme.typography.labelSmall.copy(
-                                        fontSize = 9.6.sp,
-                                        fontWeight = if (selectedTab == index) FontWeight.Bold else FontWeight.Normal,
-                                    ),
-                                    color = if (selectedTab == index) {
-                                        MaterialTheme.colorScheme.primary
-                                    } else {
-                                        NomadTextDim
-                                    },
-                                    maxLines = 1,
-                                    softWrap = false,
-                                    overflow = TextOverflow.Ellipsis,
-                                )
-                            },
-                        )
+                        Spacer(modifier = Modifier.width(4.dp))
+                        Text("Kill", color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodyMedium)
                     }
-                }
-            }
+                    PanicWipeLogo(
+                        modifier = Modifier.padding(start = 4.dp, end = 8.dp),
+                        onTripleTap = {
+                            scope.launch {
+                                PanicWipe.perform(context)
+                                PanicWipe.restartApp(context)
+                            }
+                        },
+                    )
+                },
+            )
         },
     ) { innerPadding ->
         val listState = rememberLazyListState()
@@ -282,230 +259,53 @@ fun SettingsScreen(
                 .padding(innerPadding),
         ) {
             LazyColumn(modifier = Modifier.fillMaxSize(), state = listState) {
-            when (selectedTab) {
-                0 -> {
-                    item {
-                        SectionHeaderWithKillSwitch(
-                            title = "Connectivity",
-                            onKill = {
-                                scope.launch {
-                                    // Only the four connectivity interfaces, not
-                                    // node hosting — hosting lives under its own
-                                    // "Hosting" section below and isn't a
-                                    // communication method itself (see
-                                    // setNodeHostingEnabled's own doc comment:
-                                    // it's independent of which interfaces are
-                                    // up). A user reaching for a kill switch wants
-                                    // this device to stop talking, not to also
-                                    // silently stop answering requests it was
-                                    // already committed to serving.
-                                    interfaceController.setTcpEnabled(false)
-                                    interfaceController.setBluetoothMeshEnabled(false)
-                                    interfaceController.setRNodeEnabled(false)
-                                    interfaceController.setWifiDiscoveryEnabled(false)
-                                }
-                            },
-                        )
-                    }
-                    item {
-                        ToggleRow(
-                            label = "TCP",
-                            checked = tcpEnabled,
-                            onCheckedChange = { scope.launch { interfaceController.setTcpEnabled(it) } },
-                        )
-                    }
-                    item {
-                        ToggleRow(
-                            label = "Bluetooth mesh",
-                            checked = bluetoothMeshEnabled,
-                            onCheckedChange = { turningOn ->
-                                if (turningOn && !bluetoothGranted) {
-                                    permissionLauncher.launch(BLUETOOTH_PERMISSIONS)
-                                } else {
-                                    scope.launch { interfaceController.setBluetoothMeshEnabled(turningOn) }
-                                }
-                            },
-                        )
-                    }
-                    item {
-                        ToggleRow(
-                            label = "RNode",
-                            checked = rNodeEnabled,
-                            onCheckedChange = { scope.launch { interfaceController.setRNodeEnabled(it) } },
-                        )
-                    }
-                    item {
-                        ToggleRow(
-                            label = "Local network discovery",
-                            checked = wifiDiscoveryEnabled,
-                            onCheckedChange = { scope.launch { interfaceController.setWifiDiscoveryEnabled(it) } },
-                        )
-                    }
-
-                    item { HorizontalDivider() }
-                    item { SectionHeader("Hosting") }
-                    item {
-                        ToggleRow(
-                            label = "Host a NomadNet site",
-                            checked = nodeHostingEnabled,
-                            onCheckedChange = { scope.launch { interfaceController.setNodeHostingEnabled(it) } },
-                        )
-                    }
-                    // Rename/announce-interval/manual-announce/manage-pages
-                    // — moved here from the now-removed Home screen's own
-                    // HostedNodeSection. The site's address/hash already
-                    // has its own row below (Addresses), so this only
-                    // covers what Addresses doesn't: the site's *name* and
-                    // its actions.
-                    hostedNodeStatus?.let { status ->
-                        item {
-                            HostedSiteActionsRow(
-                                status = status,
-                                onRename = { name -> scope.launch { interfaceController.setHostedNodeName(name) } },
-                                onAnnounceNow = { scope.launch { interfaceController.announceHostedNodeNow() } },
-                                onAnnounceIntervalChange = {
-                                    scope.launch { interfaceController.setHostedNodeAnnounceInterval(it) }
-                                },
-                                onManagePages = onManageHostedPages,
+                item {
+                    // TCP: duplicate master toggle (on the header, visible
+                    // collapsed), the full connection list (add/remove/
+                    // enable per connection), then this interface's own
+                    // Message/Auto announce policy.
+                    CollapsibleSection(
+                        title = "TCP",
+                        expanded = SettingsSection.TCP in expandedSections,
+                        onToggleExpanded = { toggleSection(SettingsSection.TCP) },
+                        headerTrailing = {
+                            Switch(
+                                checked = tcpEnabled,
+                                onCheckedChange = { scope.launch { interfaceController.setTcpEnabled(it) } },
                             )
-                        }
-                    }
-
-                    item { HorizontalDivider() }
-                    item { SectionHeader("Announce") }
-                    announceStatus?.let { status ->
-                        item {
-                            ToggleRow(
-                                label = "Auto-announce",
-                                checked = status.autoAnnounceMasterEnabled,
-                                onCheckedChange = {
-                                    scope.launch { messagingRepository.setAutoAnnounceMaster(it) }
+                        },
+                    ) {
+                        SectionHeader("Connections")
+                        TcpConnectionsTableHeader()
+                        tcpConnections.forEach { connection ->
+                            TcpConnectionEditRow(
+                                connection = connection,
+                                // Only actually "down" if TCP itself is on and
+                                // this connection is individually enabled too --
+                                // an intentionally-off connection isn't a
+                                // problem to flag, same reasoning as
+                                // InterfaceController.hasDownTcpConnection.
+                                isDown = tcpEnabled && connection.enabled && !connection.online,
+                                onUpdate = { name, host, port ->
+                                    scope.launch {
+                                        tcpConnectionsRepository.updateConnection(connection.id, name, host, port)
+                                    }
+                                },
+                                onToggle = {
+                                    scope.launch { tcpConnectionsRepository.setConnectionEnabled(connection.id, it) }
+                                },
+                                onRemove = {
+                                    scope.launch { tcpConnectionsRepository.removeConnection(connection.id) }
                                 },
                             )
                         }
-                        // Manual trigger, independent of the auto-announce
-                        // toggle above — moved here from Home's own
-                        // IdentitySection (same "Announce now" action, just
-                        // relocated). Announce interval configuration for
-                        // each interface still lives on that interface's
-                        // own tab (TCP/Bluetooth/RNode/LAN), unaffected.
-                        item {
-                            TextButton(
-                                onClick = { scope.launch { messagingRepository.announceNow() } },
-                                modifier = Modifier.padding(start = 8.dp),
-                            ) { Text("Announce now") }
-                        }
-                        if (status.sendBlocked) {
-                            item {
-                                Text(
-                                    text = status.sendBlockedReason ?: "Sending is currently blocked.",
-                                    style = MaterialTheme.typography.bodyMedium,
-                                    color = MaterialTheme.colorScheme.error,
-                                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
-                                )
-                            }
-                        }
-                    }
-
-                    item { HorizontalDivider() }
-                    item { SectionHeader("Addresses") }
-                    announceStatus?.let { status ->
-                        item {
-                            AddressRow(label = "LXMF address", value = status.lxmfAddress)
-                        }
-                        item {
-                            AddressRow(label = "Identity hash", value = status.identityHash)
-                        }
-                        item {
-                            AddressRow(
-                                label = "Site address",
-                                value = status.hostedNodeHash,
-                                placeholder = "Not currently hosting a site",
-                            )
-                        }
-                    }
-
-                    item { HorizontalDivider() }
-                    item { SectionHeader("Appearance") }
-                    // Name + icon editing — moved here from the now-removed
-                    // Home screen's own IdentitySection. The identity's
-                    // address/hash already has its own row above
-                    // (Addresses) and "Announce now" already has its own
-                    // row above (Announce), so this only covers what
-                    // neither of those does: the identity's *display name*
-                    // and *icon appearance*.
-                    announceStatus?.let { status ->
-                        item {
-                            IdentityAppearanceRow(
-                                status = status,
-                                onRename = { name -> scope.launch { messagingRepository.setDisplayName(name) } },
-                                onSaveIcon = { glyph, fg, bg ->
-                                    scope.launch { messagingRepository.setIconAppearance(glyph, fg, bg) }
-                                },
-                            )
-                        }
-                    }
-                    item {
-                        TextScaleRow(
-                            scale = textScale,
-                            onScaleChange = { scope.launch { settingsRepository.setTextScale(it) } },
-                        )
-                    }
-                    // No "Permissions" section here anymore — per explicit
-                    // direction, that static blurb didn't need to persist
-                    // in a settings menu at all. Its content now lives in
-                    // the seeded index.mu (_DEFAULT_INDEX in
-                    // site_server.py's ">>Permissions" section) instead;
-                    // a future "welcome new user" screen (deferred until
-                    // closer to release) is the other place this was
-                    // considered for.
-                }
-                1 -> {
-                    // TCP: duplicate master toggle, the full connection
-                    // list (add/remove/enable per connection), then this
-                    // interface's own Message/Auto announce policy.
-                    item {
-                        ToggleRow(
-                            label = "TCP",
-                            checked = tcpEnabled,
-                            onCheckedChange = { scope.launch { interfaceController.setTcpEnabled(it) } },
-                        )
-                    }
-                    item { HorizontalDivider() }
-                    item { SectionHeader("Connections") }
-                    item { TcpConnectionsTableHeader() }
-                    items(tcpConnections, key = { it.id }) { connection ->
-                        TcpConnectionEditRow(
-                            connection = connection,
-                            // Only actually "down" if TCP itself is on and
-                            // this connection is individually enabled too --
-                            // an intentionally-off connection isn't a
-                            // problem to flag, same reasoning as
-                            // InterfaceController.hasDownTcpConnection.
-                            isDown = tcpEnabled && connection.enabled && !connection.online,
-                            onUpdate = { name, host, port ->
-                                scope.launch {
-                                    tcpConnectionsRepository.updateConnection(connection.id, name, host, port)
-                                }
-                            },
-                            onToggle = {
-                                scope.launch { tcpConnectionsRepository.setConnectionEnabled(connection.id, it) }
-                            },
-                            onRemove = {
-                                scope.launch { tcpConnectionsRepository.removeConnection(connection.id) }
-                            },
-                        )
-                    }
-                    item {
                         TcpConnectionAddRow(
                             onAdd = { name, host, port ->
                                 scope.launch { tcpConnectionsRepository.addConnection(name, host, port) }
                             },
                         )
-                    }
-                    announceStatus?.interfaces?.get(AnnounceStatus.INTERFACE_TCP)?.let { config ->
-                        item { HorizontalDivider() }
-                        item {
+                        announceStatus?.interfaces?.get(AnnounceStatus.INTERFACE_TCP)?.let { config ->
+                            HorizontalDivider()
                             InterfaceAnnounceTab(
                                 config = config,
                                 onAnnounceMaxChange = {
@@ -522,23 +322,26 @@ fun SettingsScreen(
                         }
                     }
                 }
-                2 -> {
-                    item {
-                        ToggleRow(
-                            label = "Bluetooth mesh",
-                            checked = bluetoothMeshEnabled,
-                            onCheckedChange = { turningOn ->
-                                if (turningOn && !bluetoothGranted) {
-                                    permissionLauncher.launch(BLUETOOTH_PERMISSIONS)
-                                } else {
-                                    scope.launch { interfaceController.setBluetoothMeshEnabled(turningOn) }
-                                }
-                            },
-                        )
-                    }
-                    announceStatus?.interfaces?.get(AnnounceStatus.INTERFACE_BLUETOOTH)?.let { config ->
-                        item { HorizontalDivider() }
-                        item {
+
+                item {
+                    CollapsibleSection(
+                        title = "Bluetooth mesh",
+                        expanded = SettingsSection.BLUETOOTH in expandedSections,
+                        onToggleExpanded = { toggleSection(SettingsSection.BLUETOOTH) },
+                        headerTrailing = {
+                            Switch(
+                                checked = bluetoothMeshEnabled,
+                                onCheckedChange = { turningOn ->
+                                    if (turningOn && !bluetoothGranted) {
+                                        permissionLauncher.launch(BLUETOOTH_PERMISSIONS)
+                                    } else {
+                                        scope.launch { interfaceController.setBluetoothMeshEnabled(turningOn) }
+                                    }
+                                },
+                            )
+                        },
+                    ) {
+                        announceStatus?.interfaces?.get(AnnounceStatus.INTERFACE_BLUETOOTH)?.let { config ->
                             InterfaceAnnounceTab(
                                 config = config,
                                 onAnnounceMaxChange = {
@@ -557,17 +360,20 @@ fun SettingsScreen(
                         }
                     }
                 }
-                3 -> {
-                    item {
-                        ToggleRow(
-                            label = "RNode",
-                            checked = rNodeEnabled,
-                            onCheckedChange = { scope.launch { interfaceController.setRNodeEnabled(it) } },
-                        )
-                    }
-                    announceStatus?.interfaces?.get(AnnounceStatus.INTERFACE_RNODE)?.let { config ->
-                        item { HorizontalDivider() }
-                        item {
+
+                item {
+                    CollapsibleSection(
+                        title = "RNode",
+                        expanded = SettingsSection.RNODE in expandedSections,
+                        onToggleExpanded = { toggleSection(SettingsSection.RNODE) },
+                        headerTrailing = {
+                            Switch(
+                                checked = rNodeEnabled,
+                                onCheckedChange = { scope.launch { interfaceController.setRNodeEnabled(it) } },
+                            )
+                        },
+                    ) {
+                        announceStatus?.interfaces?.get(AnnounceStatus.INTERFACE_RNODE)?.let { config ->
                             InterfaceAnnounceTab(
                                 config = config,
                                 onAnnounceMaxChange = {
@@ -584,17 +390,20 @@ fun SettingsScreen(
                         }
                     }
                 }
-                4 -> {
-                    item {
-                        ToggleRow(
-                            label = "Local network discovery",
-                            checked = wifiDiscoveryEnabled,
-                            onCheckedChange = { scope.launch { interfaceController.setWifiDiscoveryEnabled(it) } },
-                        )
-                    }
-                    announceStatus?.interfaces?.get(AnnounceStatus.INTERFACE_WIFI_DISCOVERY)?.let { config ->
-                        item { HorizontalDivider() }
-                        item {
+
+                item {
+                    CollapsibleSection(
+                        title = "Local network discovery",
+                        expanded = SettingsSection.LAN in expandedSections,
+                        onToggleExpanded = { toggleSection(SettingsSection.LAN) },
+                        headerTrailing = {
+                            Switch(
+                                checked = wifiDiscoveryEnabled,
+                                onCheckedChange = { scope.launch { interfaceController.setWifiDiscoveryEnabled(it) } },
+                            )
+                        },
+                    ) {
+                        announceStatus?.interfaces?.get(AnnounceStatus.INTERFACE_WIFI_DISCOVERY)?.let { config ->
                             InterfaceAnnounceTab(
                                 config = config,
                                 onAnnounceMaxChange = {
@@ -613,16 +422,208 @@ fun SettingsScreen(
                         }
                     }
                 }
+
+                item {
+                    // Rename/announce-interval/manual-announce/manage-pages
+                    // — moved here from the now-removed Home screen's own
+                    // HostedNodeSection. The site's address/hash already
+                    // has its own row in Addresses below, so this only
+                    // covers what that doesn't: the site's *name* and its
+                    // actions.
+                    CollapsibleSection(
+                        title = "Hosting",
+                        expanded = SettingsSection.HOSTING in expandedSections,
+                        onToggleExpanded = { toggleSection(SettingsSection.HOSTING) },
+                        headerTrailing = {
+                            Switch(
+                                checked = nodeHostingEnabled,
+                                onCheckedChange = { scope.launch { interfaceController.setNodeHostingEnabled(it) } },
+                            )
+                        },
+                    ) {
+                        hostedNodeStatus?.let { status ->
+                            HostedSiteActionsRow(
+                                status = status,
+                                onRename = { name -> scope.launch { interfaceController.setHostedNodeName(name) } },
+                                onAnnounceNow = { scope.launch { interfaceController.announceHostedNodeNow() } },
+                                onAnnounceIntervalChange = {
+                                    scope.launch { interfaceController.setHostedNodeAnnounceInterval(it) }
+                                },
+                                onManagePages = onManageHostedPages,
+                            )
+                        }
+                    }
+                }
+
+                item {
+                    CollapsibleSection(
+                        title = "Announce",
+                        expanded = SettingsSection.ANNOUNCE in expandedSections,
+                        onToggleExpanded = { toggleSection(SettingsSection.ANNOUNCE) },
+                        headerTrailing = {
+                            announceStatus?.let { status ->
+                                Switch(
+                                    checked = status.autoAnnounceMasterEnabled,
+                                    onCheckedChange = {
+                                        scope.launch { messagingRepository.setAutoAnnounceMaster(it) }
+                                    },
+                                )
+                            }
+                        },
+                    ) {
+                        announceStatus?.let { status ->
+                            // Manual trigger, independent of the auto-announce
+                            // toggle above — moved here from Home's own
+                            // IdentitySection (same "Announce now" action, just
+                            // relocated). Announce interval configuration for
+                            // each interface still lives in that interface's
+                            // own section (TCP/Bluetooth/RNode/LAN), unaffected.
+                            TextButton(
+                                onClick = { scope.launch { messagingRepository.announceNow() } },
+                                modifier = Modifier.padding(start = 8.dp),
+                            ) { Text("Announce now") }
+                            if (status.sendBlocked) {
+                                Text(
+                                    text = status.sendBlockedReason ?: "Sending is currently blocked.",
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    color = MaterialTheme.colorScheme.error,
+                                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
+                                )
+                            }
+                        }
+                    }
+                }
+
+                item {
+                    CollapsibleSection(
+                        title = "Addresses",
+                        expanded = SettingsSection.ADDRESSES in expandedSections,
+                        onToggleExpanded = { toggleSection(SettingsSection.ADDRESSES) },
+                    ) {
+                        announceStatus?.let { status ->
+                            AddressRow(label = "LXMF address", value = status.lxmfAddress)
+                            AddressRow(label = "Identity hash", value = status.identityHash)
+                            AddressRow(
+                                label = "Site address",
+                                value = status.hostedNodeHash,
+                                placeholder = "Not currently hosting a site",
+                            )
+                        }
+                    }
+                }
+
+                item {
+                    // Name + icon editing — moved here from the now-removed
+                    // Home screen's own IdentitySection. The identity's
+                    // address/hash already has its own row in Addresses
+                    // above and "Announce now" already has its own row in
+                    // Announce above, so this only covers what neither of
+                    // those does: the identity's *display name* and *icon
+                    // appearance*.
+                    CollapsibleSection(
+                        title = "Appearance",
+                        expanded = SettingsSection.APPEARANCE in expandedSections,
+                        onToggleExpanded = { toggleSection(SettingsSection.APPEARANCE) },
+                    ) {
+                        announceStatus?.let { status ->
+                            IdentityAppearanceRow(
+                                status = status,
+                                onRename = { name -> scope.launch { messagingRepository.setDisplayName(name) } },
+                                onSaveIcon = { glyph, fg, bg ->
+                                    scope.launch { messagingRepository.setIconAppearance(glyph, fg, bg) }
+                                },
+                            )
+                        }
+                        TextScaleRow(
+                            scale = textScale,
+                            onScaleChange = { scope.launch { settingsRepository.setTextScale(it) } },
+                        )
+                        // No "Permissions" section here anymore — per explicit
+                        // direction, that static blurb didn't need to persist
+                        // in a settings menu at all. Its content now lives in
+                        // the seeded index.mu (_DEFAULT_INDEX in
+                        // site_server.py's ">>Permissions" section) instead;
+                        // a future "welcome new user" screen (deferred until
+                        // closer to release) is the other place this was
+                        // considered for.
+                    }
+                }
             }
-            }
-            // Custom-drawn, same as BrowserScreen's page viewer — Main
-            // in particular is long enough to benefit from the same
-            // "how much more is there" cue.
+            // Custom-drawn, same as BrowserScreen's page viewer — this
+            // page is long enough to benefit from the same "how much more
+            // is there" cue.
             VerticalScrollIndicator(
                 listState,
                 modifier = Modifier.align(Alignment.CenterEnd).fillMaxHeight(),
             )
         }
+    }
+}
+
+/** The independently-collapsible top-level sections on [SettingsScreen]'s
+ * single scrollable page — see that function's own doc comment for why
+ * this isn't an accordion (multiple sections can be open at once). */
+private enum class SettingsSection {
+    TCP, BLUETOOTH, RNODE, LAN, HOSTING, ANNOUNCE, ADDRESSES, APPEARANCE
+}
+
+/**
+ * One collapsible section of [SettingsScreen]'s single scrollable page.
+ * [headerTrailing] renders on the header row itself, to the right of the
+ * title — visible even while collapsed, since it's the section's own
+ * quick action/status (an enable [Switch]), not part of the expandable
+ * detail. Deliberately laid out as two separate tap zones (title+chevron
+ * vs. [headerTrailing]) rather than
+ * one big clickable row, so tapping a header [Switch] toggles *that
+ * interface*, never also expands/collapses the section as a side effect.
+ */
+@Composable
+private fun CollapsibleSection(
+    title: String,
+    expanded: Boolean,
+    onToggleExpanded: () -> Unit,
+    modifier: Modifier = Modifier,
+    headerTrailing: @Composable () -> Unit = {},
+    content: @Composable ColumnScope.() -> Unit,
+) {
+    Column(modifier = modifier.fillMaxWidth()) {
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(start = 8.dp, end = 8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween,
+        ) {
+            Row(
+                modifier = Modifier
+                    .weight(1f)
+                    .clickable(onClick = onToggleExpanded)
+                    .padding(vertical = 12.dp, horizontal = 8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(4.dp),
+            ) {
+                Icon(
+                    imageVector = if (expanded) Icons.Filled.ExpandLess else Icons.Filled.ExpandMore,
+                    contentDescription = if (expanded) "Collapse $title" else "Expand $title",
+                    tint = NomadTextDim,
+                )
+                Text(
+                    text = title,
+                    style = MaterialTheme.typography.titleLarge,
+                    color = MaterialTheme.colorScheme.secondary,
+                    // Confirmed via real on-device check on a 320dp-wide
+                    // reference emulator: "Local network discovery" wraps
+                    // to 2 lines and blows out the header row's height
+                    // without this — a header alongside a Switch/chevron
+                    // needs to stay one line the way a table cell does.
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
+            headerTrailing()
+        }
+        if (expanded) {
+            Column(modifier = Modifier.padding(bottom = 8.dp), content = content)
+        }
+        HorizontalDivider()
     }
 }
 
@@ -658,46 +659,6 @@ private fun SectionHeader(title: String) {
         color = MaterialTheme.colorScheme.secondary,
         modifier = Modifier.padding(16.dp),
     )
-}
-
-/**
- * [SectionHeader] plus a kill switch for the Connectivity section
- * specifically — a single tap to force every communication interface
- * (TCP, Bluetooth mesh, RNode, local network discovery) off at once,
- * without hunting down four separate switches individually. Doesn't
- * touch node hosting — see the call site's comment for why that's
- * deliberately excluded.
- */
-@Composable
-private fun SectionHeaderWithKillSwitch(title: String, onKill: () -> Unit) {
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(start = 16.dp, end = 8.dp),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.SpaceBetween,
-    ) {
-        Text(
-            text = title,
-            style = MaterialTheme.typography.titleLarge,
-            color = MaterialTheme.colorScheme.secondary,
-            modifier = Modifier.padding(vertical = 16.dp),
-        )
-        TextButton(onClick = onKill) {
-            Icon(
-                imageVector = Icons.Filled.PowerSettingsNew,
-                contentDescription = null,
-                tint = MaterialTheme.colorScheme.error,
-                modifier = Modifier.size(18.dp),
-            )
-            Spacer(modifier = Modifier.width(4.dp))
-            Text(
-                "Kill",
-                color = MaterialTheme.colorScheme.error,
-                style = MaterialTheme.typography.bodyMedium,
-            )
-        }
-    }
 }
 
 /**
