@@ -36,6 +36,7 @@ import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.filled.FavoriteBorder
 import androidx.compose.material.icons.filled.LockOpen
 import androidx.compose.material.icons.filled.MarkEmailUnread
+import androidx.compose.material.icons.filled.Sync
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Badge
 import androidx.compose.material3.Checkbox
@@ -46,6 +47,7 @@ import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.LocalMinimumInteractiveComponentSize
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SecondaryTabRow
@@ -77,6 +79,8 @@ import com.jamesm92.nomadportal.data.messaging.Contact
 import com.jamesm92.nomadportal.data.messaging.ConversationSummary
 import com.jamesm92.nomadportal.data.messaging.Message
 import com.jamesm92.nomadportal.data.messaging.MessagingRepository
+import com.jamesm92.nomadportal.data.messaging.PropagationSyncStatus
+import com.jamesm92.nomadportal.data.messaging.PropagationTransferState
 import com.jamesm92.nomadportal.panicwipe.PanicWipe
 import com.jamesm92.nomadportal.ui.components.AddByAddressDialog
 import com.jamesm92.nomadportal.ui.components.AdaptiveTopAppBar
@@ -293,6 +297,14 @@ fun ConversationListScreen(
     // for destructive actions elsewhere (panic wipe, etc.).
     var pendingDelete by remember { mutableStateOf<Contact?>(null) }
 
+    // Columba's own Chats screen has a "sync from propagation node"
+    // action with a status bottom sheet (confirmed during the Columba
+    // parity audit) — this is the same idea via an AlertDialog, this
+    // app's own established pattern for a tap-opens-detail affordance
+    // (NetworkScreen's technical-info dialog, MessageBubble's delivery-
+    // details dialog).
+    var syncDialogOpen by remember { mutableStateOf(false) }
+
     val isLandscape = LocalConfiguration.current.orientation == Configuration.ORIENTATION_LANDSCAPE
 
     Scaffold(
@@ -305,6 +317,13 @@ fun ConversationListScreen(
                     // Home/Nodes/Settings; switching tabs is the way back,
                     // not a navigationIcon on a top-level screen.
                     actions = {
+                        IconButton(onClick = { syncDialogOpen = true }) {
+                            Icon(
+                                imageVector = Icons.Filled.Sync,
+                                contentDescription = "Propagation sync status",
+                                tint = NomadTextDim,
+                            )
+                        }
                         PanicWipeLogo(
                             modifier = Modifier.padding(end = 8.dp),
                             onTripleTap = {
@@ -625,6 +644,131 @@ fun ConversationListScreen(
                 }
             },
         )
+    }
+
+    if (syncDialogOpen) {
+        PropagationSyncDialog(repository = repository, onDismiss = { syncDialogOpen = false })
+    }
+}
+
+/**
+ * Status + manual "Sync now" trigger for LXMF propagation-node sync —
+ * see [PropagationSyncStatus]'s own doc comment for what this actually
+ * does (a real store-and-forward mailbox pull, plus a path-table
+ * keepalive that's already running automatically every 5 minutes
+ * regardless of whether this dialog is ever opened). Polls only while
+ * open — [MessagingRepository.propagationSyncStatus]'s `Flow` starts/
+ * stops with this composable's own lifecycle via `collectAsState`.
+ */
+@Composable
+private fun PropagationSyncDialog(repository: MessagingRepository, onDismiss: () -> Unit) {
+    val status by repository.propagationSyncStatus().collectAsState(initial = null)
+    val scope = rememberCoroutineScope()
+    val context = LocalContext.current
+    var syncing by remember { mutableStateOf(false) }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Propagation Sync") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                Text(
+                    "Pulls messages queued for you at a mesh propagation node " +
+                        "while you were unreachable. Runs automatically in the " +
+                        "background every few minutes — this is a manual, " +
+                        "immediate trigger on top of that.",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = NomadTextDim,
+                )
+                val s = status
+                if (s == null) {
+                    Text("Loading…", style = MaterialTheme.typography.bodySmall, color = NomadTextDim)
+                } else {
+                    SyncInfoRow("Known nodes", "${s.knownNodes} (${s.freshNodes} recently active)")
+                    SyncInfoRow("Current node", s.pickedNodeHash?.take(16) ?: "None discovered yet")
+                    SyncInfoRow("Status", formatTransferState(s.transferState))
+                    if (s.transferState in IN_PROGRESS_TRANSFER_STATES) {
+                        LinearProgressIndicator(
+                            progress = { s.transferProgress },
+                            modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
+                        )
+                    }
+                    SyncInfoRow("Last synced", formatSyncTime(s.lastSyncedAtMillis))
+                    s.transferLastResult?.let {
+                        SyncInfoRow("Last pull", "$it message" + if (it == 1) "" else "s")
+                    }
+                    s.lastError?.let { SyncInfoRow("Last error", it) }
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(
+                enabled = !syncing,
+                onClick = {
+                    syncing = true
+                    scope.launch {
+                        try {
+                            val message = repository.triggerPropagationSync()
+                            Toast.makeText(context, message, Toast.LENGTH_SHORT).show()
+                        } catch (e: Exception) {
+                            Toast.makeText(context, e.message ?: "Sync failed", Toast.LENGTH_SHORT).show()
+                        } finally {
+                            syncing = false
+                        }
+                    }
+                },
+            ) { Text("Sync now") }
+        },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Close") } },
+    )
+}
+
+private val IN_PROGRESS_TRANSFER_STATES = setOf(
+    PropagationTransferState.REQUESTING_PATH,
+    PropagationTransferState.CONNECTING,
+    PropagationTransferState.CONNECTED,
+    PropagationTransferState.REQUEST_SENT,
+    PropagationTransferState.RECEIVING,
+    PropagationTransferState.RESPONSE_RECEIVED,
+)
+
+@Composable
+private fun SyncInfoRow(label: String, value: String) {
+    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+        Text(text = label, style = MaterialTheme.typography.bodySmall, color = NomadTextDim)
+        Text(text = value, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurface)
+    }
+}
+
+private fun formatTransferState(state: PropagationTransferState): String = when (state) {
+    PropagationTransferState.IDLE -> "Idle"
+    PropagationTransferState.REQUESTING_PATH -> "Requesting path…"
+    PropagationTransferState.CONNECTING -> "Connecting…"
+    PropagationTransferState.CONNECTED -> "Connected"
+    PropagationTransferState.REQUEST_SENT -> "Request sent…"
+    PropagationTransferState.RECEIVING -> "Receiving…"
+    PropagationTransferState.RESPONSE_RECEIVED -> "Response received"
+    PropagationTransferState.COMPLETE -> "Complete"
+    PropagationTransferState.NO_PATH -> "No path to node"
+    PropagationTransferState.LINK_FAILED -> "Link failed"
+    PropagationTransferState.TRANSFER_FAILED -> "Transfer failed"
+    PropagationTransferState.NO_IDENTITY_RECEIVED -> "No identity received"
+    PropagationTransferState.NO_ACCESS -> "Access denied by node"
+    PropagationTransferState.FAILED -> "Failed"
+    PropagationTransferState.UNKNOWN -> "Unknown"
+}
+
+/** Distinct wording from this file's own [formatRelativeTime] (which
+ * says "never heard" — an announce-heard concept) — "Never" here means
+ * "no sync has ever completed," a different, sync-specific null case. */
+private fun formatSyncTime(millis: Long?): String {
+    if (millis == null) return "Never"
+    val diffSeconds = ((System.currentTimeMillis() - millis) / 1000).coerceAtLeast(0)
+    return when {
+        diffSeconds < 60 -> "just now"
+        diffSeconds < 3600 -> "${diffSeconds / 60}m ago"
+        diffSeconds < 86_400 -> "${diffSeconds / 3600}h ago"
+        else -> "${diffSeconds / 86_400}d ago"
     }
 }
 

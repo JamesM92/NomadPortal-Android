@@ -164,6 +164,55 @@ class RealMessagingRepository : MessagingRepository {
             orchestrator.callAttr("set_disappearing_timer", contactHash, seconds).toBoolean()
         }
 
+    override fun propagationSyncStatus(): Flow<PropagationSyncStatus> = flow {
+        while (true) {
+            emit(fetchPropagationSyncStatus())
+            // Same faster-than-POLL_INTERVAL_MS reasoning as
+            // announceStatus() above — this backs a live in-progress
+            // transfer-state display, not just a slow-changing summary.
+            delay(1000L)
+        }
+    }.flowOn(Dispatchers.IO)
+
+    override suspend fun triggerPropagationSync(): String = withContext(Dispatchers.IO) {
+        try {
+            orchestrator.callAttr("trigger_propagation_sync").toString()
+        } catch (e: PyException) {
+            throw IOException(e.message, e)
+        }
+    }
+
+    private fun fetchPropagationSyncStatus(): PropagationSyncStatus {
+        val obj = JSONObject(orchestrator.callAttr("get_propagation_sync_status_json").toString())
+        return PropagationSyncStatus(
+            knownNodes = obj.optInt("known_nodes", 0),
+            freshNodes = obj.optInt("fresh_nodes", 0),
+            pickedNodeHash = obj.optStringOrNull("picked_node_hex"),
+            lastSyncedAtMillis = obj.optDoubleOrNull("last_synced_at")?.let { (it * 1000).toLong() },
+            consecutiveFailures = obj.optInt("consecutive_failures", 0),
+            lastError = obj.optStringOrNull("last_error"),
+            transferState = when (obj.optString("transfer_state", "idle")) {
+                "idle" -> PropagationTransferState.IDLE
+                "requesting_path" -> PropagationTransferState.REQUESTING_PATH
+                "connecting" -> PropagationTransferState.CONNECTING
+                "connected" -> PropagationTransferState.CONNECTED
+                "request_sent" -> PropagationTransferState.REQUEST_SENT
+                "receiving" -> PropagationTransferState.RECEIVING
+                "response_received" -> PropagationTransferState.RESPONSE_RECEIVED
+                "complete" -> PropagationTransferState.COMPLETE
+                "no_path" -> PropagationTransferState.NO_PATH
+                "link_failed" -> PropagationTransferState.LINK_FAILED
+                "transfer_failed" -> PropagationTransferState.TRANSFER_FAILED
+                "no_identity_received" -> PropagationTransferState.NO_IDENTITY_RECEIVED
+                "no_access" -> PropagationTransferState.NO_ACCESS
+                "failed" -> PropagationTransferState.FAILED
+                else -> PropagationTransferState.UNKNOWN
+            },
+            transferProgress = obj.optDouble("transfer_progress", 0.0).toFloat(),
+            transferLastResult = obj.optIntOrNull("transfer_last_result"),
+        )
+    }
+
     private fun fetchAnnounceStatus(): AnnounceStatus {
         val obj = JSONObject(orchestrator.callAttr("get_announce_status_json").toString())
         val interfacesObj = obj.getJSONObject("interfaces")

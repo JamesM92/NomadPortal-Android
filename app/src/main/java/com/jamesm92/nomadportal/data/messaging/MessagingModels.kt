@@ -178,6 +178,51 @@ data class ConversationSummary(
     val unreadCount: Int,
 )
 
+/** [LXMRouter.propagation_transfer_state]'s real states, mirrored
+ * directly (confirmed against the installed LXMF package's source, not
+ * guessed) — see lxmf_sync.py's own `_TRANSFER_STATE_LABELS` for the
+ * canonical mapping this enum's parsing follows. [UNKNOWN] only occurs
+ * if a future LXMF version adds a state this app doesn't know about yet. */
+enum class PropagationTransferState {
+    IDLE, REQUESTING_PATH, CONNECTING, CONNECTED, REQUEST_SENT, RECEIVING,
+    RESPONSE_RECEIVED, COMPLETE, NO_PATH, LINK_FAILED, TRANSFER_FAILED,
+    NO_IDENTITY_RECEIVED, NO_ACCESS, FAILED, UNKNOWN,
+}
+
+/**
+ * Status of this device's LXMF propagation-node sync — the real
+ * store-and-forward "mailbox pull" mechanism (a message queued for you
+ * at a propagation node while you were unreachable, retrieved once you
+ * are). Backed by `nomadnet_web.lxmf_sync.PropagationSyncService`, which
+ * already runs an automatic sync every 5 minutes independent of any UI
+ * (see that module's own doc comment for why — it doubles as a path-
+ * table keepalive); this status/trigger pair is the manual, UI-facing
+ * layer on top of that, mirroring Columba's own "sync from propagation
+ * node" action (confirmed against its source during the Columba parity
+ * audit).
+ */
+data class PropagationSyncStatus(
+    /** How many distinct `lxmf.propagation`-aspect announces this device
+     * has heard, total vs. within the freshness window used for node
+     * selection — real network-discovery counts. */
+    val knownNodes: Int,
+    val freshNodes: Int,
+    /** The node currently selected for sync, or null if none discovered yet. */
+    val pickedNodeHash: String?,
+    val lastSyncedAtMillis: Long?,
+    val consecutiveFailures: Int,
+    val lastError: String?,
+    /** Live, in-progress transfer state — read directly off the active
+     * LXMRouter, so this reflects an in-flight sync's real progress, not
+     * just the last completed one's outcome. */
+    val transferState: PropagationTransferState,
+    /** 0f–1f. */
+    val transferProgress: Float,
+    /** Number of messages retrieved by the last completed sync, or null
+     * if none has completed yet. */
+    val transferLastResult: Int?,
+)
+
 /**
  * One interface's (bluetooth_mesh/rnode/tcp) own announce policy —
  * two independent knobs, per explicit design direction:

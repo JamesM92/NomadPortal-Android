@@ -212,6 +212,34 @@ class StubMessagingRepository(private val scope: CoroutineScope) : MessagingRepo
         return true
     }
 
+    private val propagationSyncStatus = MutableStateFlow(
+        PropagationSyncStatus(
+            knownNodes = 3,
+            freshNodes = 2,
+            pickedNodeHash = "stubpropnode00000000000000000000",
+            lastSyncedAtMillis = System.currentTimeMillis() - 4 * 60_000L,
+            consecutiveFailures = 0,
+            lastError = null,
+            transferState = PropagationTransferState.IDLE,
+            transferProgress = 0f,
+            transferLastResult = 0,
+        )
+    )
+
+    override fun propagationSyncStatus(): StateFlow<PropagationSyncStatus> = propagationSyncStatus.asStateFlow()
+
+    override suspend fun triggerPropagationSync(): String {
+        propagationSyncStatus.value = propagationSyncStatus.value.copy(
+            transferState = PropagationTransferState.COMPLETE,
+            transferProgress = 1f,
+            transferLastResult = 0,
+            lastSyncedAtMillis = System.currentTimeMillis(),
+            consecutiveFailures = 0,
+            lastError = null,
+        )
+        return "Synced with propagation node ${propagationSyncStatus.value.pickedNodeHash?.take(16)}…"
+    }
+
     private fun seedThread(firstIsSent: Boolean): List<Message> {
         val now = System.currentTimeMillis()
         val texts = listOf(

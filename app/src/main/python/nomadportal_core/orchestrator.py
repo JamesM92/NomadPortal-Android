@@ -1644,6 +1644,60 @@ def mark_conversation_unread(contact_hash: str) -> None:
     _messaging.mark_unread(most_recent["id"])
 
 
+def get_propagation_sync_status_json() -> str:
+    """[known_nodes]/[fresh_nodes]: how many `lxmf.propagation`-aspect
+    announces this device has heard, total vs. within
+    lxmf_sync.py's own freshness window (6h) — real network-discovery
+    counts, not fabricated.
+
+    [picked_node_hex]: the node currently selected for sync, or null if
+    none discovered yet.
+
+    [transfer_state]: one of lxmf_sync.py's own `_TRANSFER_STATE_LABELS`
+    values (idle/requesting_path/connecting/connected/request_sent/
+    receiving/response_received/complete/no_path/link_failed/
+    transfer_failed/no_identity_received/no_access/failed/unknown) —
+    read live off the active LXMRouter instance, so this reflects an
+    in-progress sync's real state, not just the last completed one.
+
+    [last_synced_at]/[consecutive_failures]/[last_error]: this device's
+    own sync history against whichever node is/was picked — updated by
+    both the periodic background loop (every 5 min, see lxmf_sync.py's
+    own module doc comment for why) and any manual
+    [trigger_propagation_sync] call, since both share the same
+    PropagationSyncService state."""
+    import json
+    if _prop_sync is None:
+        return json.dumps({
+            "known_nodes": 0, "fresh_nodes": 0, "picked_node_hex": None,
+            "last_synced_at": None, "consecutive_failures": 0, "last_error": None,
+            "transfer_state": "idle", "transfer_progress": 0.0, "transfer_last_result": None,
+        })
+    return json.dumps(_prop_sync.sync_status(user_sub=""))
+
+
+def trigger_propagation_sync() -> str:
+    """Manual "Sync now" action — the real backing for a UI-level button
+    (Columba's own Chats screen has the same affordance, confirmed
+    during the Columba parity audit). Returns a short, UI-displayable
+    success message; raises RuntimeError with a UI-displayable failure
+    reason otherwise (same "raise on failure" contract as send_message,
+    for the same reason — MessagingRepository's `suspend fun` callers
+    already know how to surface a Chaquopy exception as an error).
+
+    This only confirms the sync *request* was initiated successfully —
+    request_messages_from_propagation_node() is itself asynchronous,
+    so the actual mailbox round trip's real-time progress is what
+    get_propagation_sync_status_json()'s transfer_state/transfer_progress
+    are for; poll that after calling this to show live progress."""
+    if _prop_sync is None:
+        raise RuntimeError("Propagation sync isn't running yet — try again shortly")
+    ok, message = _prop_sync.sync_now(user_sub="")
+    if not ok:
+        raise RuntimeError(message)
+    return message
+
+
 def set_disappearing_timer(hash_hex: str, seconds: int) -> bool:
     """Per-conversation disappearing-messages duration (0 = off) — exact
     upsert-then-set shape as set_contact_favorite above, including the

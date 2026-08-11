@@ -71,6 +71,28 @@ STARTUP_GRACE_S = 60
 # negligible when nothing needs to happen.
 LOOP_POLL_S = 1.0
 
+# LXMRouter.propagation_transfer_state's real int constants (confirmed
+# directly against the installed LXMF package's LXMRouter.py, not
+# guessed) — mapped to lowercase labels for UI/JSON consumption. Absent
+# from this map (shouldn't happen — this covers every PR_* constant that
+# module defines) falls back to "unknown" at the call site.
+_TRANSFER_STATE_LABELS = {
+    0x00: "idle",
+    0x01: "requesting_path",
+    0x02: "connecting",
+    0x03: "connected",
+    0x04: "request_sent",
+    0x05: "receiving",
+    0x06: "response_received",
+    0x07: "complete",
+    0xf0: "no_path",
+    0xf1: "link_failed",
+    0xf2: "transfer_failed",
+    0xf3: "no_identity_received",
+    0xf4: "no_access",
+    0xfe: "failed",
+}
+
 
 class PropagationSyncService:
     """Auto-discovering LXMF propagation-node sync service.
@@ -153,6 +175,102 @@ class PropagationSyncService:
             "every %ds",
             STARTUP_GRACE_S, SYNC_INTERVAL_S,
         )
+
+    def sync_now(self, user_sub: str = "") -> tuple:
+        """Manually trigger an immediate propagation-node sync for one
+        user, bypassing ``SYNC_INTERVAL_S`` — the real backing for a
+        UI-level "Sync now" action (Columba's own Chats screen has the
+        same affordance, confirmed against its source during the
+        Columba parity audit). Reuses the exact same pick/sync machinery
+        as the background loop's own ``_tick()``/``_sync_one()`` rather
+        than duplicating it, so a manual trigger and an automatic tick
+        share one picked-node/status state, not two independent ones.
+
+        Returns ``(ok, message)`` — ``message`` is a short, UI-
+        displayable string either way, not just an error reason,
+        matching this app's other "authoritative action with a spoken
+        result" repository calls (e.g. ``set_disappearing_timer``).
+
+        Note this only reports whether the sync *request* was
+        successfully initiated, not whether the full mailbox round trip
+        has completed yet — ``request_messages_from_propagation_node``
+        itself is asynchronous (link establishment + request/response
+        happen via callbacks, driving ``propagation_transfer_state``
+        forward over the following seconds). See ``sync_status()`` for
+        the live, in-progress state.
+        """
+        if self._picked is None:
+            picked = self._pick_best_node()
+            if picked is not None:
+                self._picked = picked
+        if self._picked is None:
+            return False, "No propagation node discovered on the mesh yet — try again shortly"
+
+        try:
+            routers = self._messaging.active_routers()
+        except Exception as exc:
+            return False, f"Could not read active messaging identity: {exc}"
+
+        data = next((d for sub, d in routers if sub == user_sub), None)
+        if data is None:
+            return False, "No active messaging identity for this user"
+
+        self._sync_one(user_sub, data)
+
+        with self._status_lock:
+            status = self._status_by_user.get(user_sub)
+        if status is not None and status["last_error"] is not None:
+            return False, status["last_error"]
+        return True, f"Syncing with propagation node {self._picked.hex()[:16]}…"
+
+    def sync_status(self, user_sub: str = "") -> dict:
+        """Full status snapshot for one user, for a UI-level status
+        display — a superset of [snapshot]'s own debug-endpoint view,
+        adding the *live* per-router transfer state
+        ([LXMRouter.propagation_transfer_state]/``_progress``/
+        ``_last_result``) that only a specific router instance carries,
+        not something [snapshot]'s own aggregate view exposes.
+        """
+        now = time.time()
+        with self._known_nodes_lock:
+            total = len(self._known_nodes)
+            fresh = sum(
+                1 for e in self._known_nodes.values()
+                if now - e["last_seen"] <= NODE_FRESHNESS_S
+            )
+        with self._status_lock:
+            status = self._status_by_user.get(user_sub)
+            last_synced_at = status["last_synced_at"] if status else None
+            consecutive_failures = status["consecutive_failures"] if status else 0
+            last_error = status["last_error"] if status else None
+
+        transfer_state = "idle"
+        transfer_progress = 0.0
+        transfer_last_result = None
+        try:
+            routers = self._messaging.active_routers()
+            data = next((d for sub, d in routers if sub == user_sub), None)
+            router = data.get("router") if data else None
+            if router is not None:
+                transfer_state = _TRANSFER_STATE_LABELS.get(
+                    router.propagation_transfer_state, "unknown"
+                )
+                transfer_progress = router.propagation_transfer_progress
+                transfer_last_result = router.propagation_transfer_last_result
+        except Exception:
+            log.exception("PropagationSyncService: could not read live router transfer state")
+
+        return {
+            "known_nodes": total,
+            "fresh_nodes": fresh,
+            "picked_node_hex": self._picked.hex() if self._picked is not None else None,
+            "last_synced_at": last_synced_at,
+            "consecutive_failures": consecutive_failures,
+            "last_error": last_error,
+            "transfer_state": transfer_state,
+            "transfer_progress": transfer_progress,
+            "transfer_last_result": transfer_last_result,
+        }
 
     def snapshot(self) -> dict:
         """Return a JSON-serialisable view of current state, for

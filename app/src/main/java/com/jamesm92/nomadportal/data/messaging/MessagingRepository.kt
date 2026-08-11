@@ -139,4 +139,17 @@ interface MessagingRepository {
      * Returns true on success.
      */
     suspend fun setDisappearingTimer(contactHash: String, seconds: Int): Boolean
+
+    /** See [PropagationSyncStatus]'s own doc comment. Polled, same as
+     * [conversations]/[messages] — the underlying sync itself runs on a
+     * background Python thread independent of any UI observing it. */
+    fun propagationSyncStatus(): Flow<PropagationSyncStatus>
+
+    /** Manual "Sync now" trigger. Returns a short, UI-displayable
+     * success message; throws on failure (e.g. no propagation node
+     * discovered yet) with a UI-displayable reason, same contract as
+     * [sendMessage]. Only confirms the sync *request* was initiated —
+     * [propagationSyncStatus]'s own transferState/transferProgress is
+     * what shows the real, in-progress mailbox round trip afterward. */
+    suspend fun triggerPropagationSync(): String
 }
