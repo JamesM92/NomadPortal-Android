@@ -10,6 +10,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
@@ -402,7 +403,11 @@ private sealed class AnnounceItem {
  * carry `Modifier.weight(1f)` from the caller's `ColumnScope` so the body
  * — when expanded — can actually fill and scroll the remaining space;
  * when collapsed only the fixed-size header renders, so the weight is
- * effectively inert.
+ * effectively inert. That inner `LazyColumn` carries the search/sort row
+ * and both filter-chip rows as its own leading `item{}`s, not fixed
+ * content above it — see [AnnouncesSectionBody]'s own doc comment for
+ * why (a real on-device report: those controls used to be permanently
+ * pinned, eating vertical space results could otherwise use).
  */
 @Composable
 private fun AnnouncesSection(
@@ -462,6 +467,15 @@ private fun ExpandableSectionHeader(title: String, count: Int?, expanded: Boolea
     }
 }
 
+/** Search/sort row + both filter-chip rows (Type, Network) live inside
+ * this composable's own `LazyColumn` as leading `item{}`s, scrolling
+ * away with the results below them — not fixed content pinned above a
+ * separately-scrolling list, per a real on-device report ("the filter
+ * section needs to be part of the scrollable section so there is more
+ * room on the screen for the results"). Each filter-chip row is itself
+ * a `LazyRow`, not a plain `Row` — a fixed `Row` let chip labels wrap
+ * ("Local" rendering as "Loc"/"al" on a narrower screen) instead of
+ * scrolling horizontally, per the same report. */
 @Composable
 private fun AnnouncesSectionBody(
     interfaceController: InterfaceController,
@@ -525,86 +539,102 @@ private fun AnnouncesSectionBody(
         }
     }
 
-    Column(modifier = modifier.fillMaxWidth()) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            SearchField(
-                query = searchQuery,
-                onQueryChange = { searchQuery = it },
-                placeholder = "Search announces",
-                modifier = Modifier.weight(1f),
-            )
-            SortDropdown(selected = sortOption, onSelect = { sortOption = it })
-        }
-        Row(
-            modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp),
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
-        ) {
-            AnnounceTypeFilter.entries.forEach { option ->
-                FilterChip(
-                    selected = typeFilter == option,
-                    onClick = { typeFilter = option },
-                    label = { Text(option.label) },
+    // One LazyColumn for the whole section, not a fixed Column of
+    // controls above a separately-scrolling list — per a real on-device
+    // report ("the filter section needs to be part of the scrollable
+    // section so there is more room on the screen for the results"):
+    // search/sort + both filter-chip rows used to be permanently pinned
+    // above the list, eating vertical space that could go to actual
+    // results. Putting them in their own `item{}`s at the top of the
+    // same LazyColumn lets them scroll away with the rest of the
+    // content instead. `displayed` itself still can run into the
+    // thousands (a real OutOfMemoryError crash was found on-device with
+    // ~2850 combined items when this used a plain forEach) — mixing a
+    // handful of fixed-size items ahead of `items(displayed, ...)` in
+    // one LazyColumn doesn't reintroduce that; only a genuinely
+    // per-row-eager pattern would.
+    LazyColumn(modifier = modifier.fillMaxWidth()) {
+        item {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                SearchField(
+                    query = searchQuery,
+                    onQueryChange = { searchQuery = it },
+                    placeholder = "Search announces",
+                    modifier = Modifier.weight(1f),
                 )
+                SortDropdown(selected = sortOption, onSelect = { sortOption = it })
             }
         }
-        // Second filter-chip row, same "one row per dimension" shape as
-        // Columba's own real AnnounceFilterChips (confirmed against its
-        // source) — Type above, Network here.
-        Row(
-            modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp),
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
-        ) {
-            NetworkFilter.entries.forEach { option ->
-                FilterChip(
-                    selected = networkFilter == option,
-                    onClick = { networkFilter = option },
-                    label = { Text(option.label) },
-                )
-            }
-        }
-        // A real LazyColumn, not a Column + forEach — displayed can run
-        // into the thousands (a real OutOfMemoryError crash was found
-        // on-device with ~2850 combined items when this was still a
-        // plain forEach). weight(1f) from the parent Column above makes
-        // this the one part of the section that actually scrolls.
-        LazyColumn(modifier = Modifier.weight(1f)) {
-            items(
-                displayed,
-                key = { it.hash + (if (it is AnnounceItem.Peer) ":peer" else ":site") },
-            ) { item ->
-                when (item) {
-                    is AnnounceItem.Peer -> ConversationRow(
-                        summary = item.summary,
-                        onClick = { infoTarget = item },
-                        onToggleFavorite = { toggleFavorite(item) },
-                        onCall = { scope.launch { callRepository.placeCall(item.hash) } },
-                        onMarkUnread = {
-                            scope.launch {
-                                try {
-                                    messagingRepository.markUnread(item.hash)
-                                } catch (e: Exception) {
-                                    // Not rethrown — matches every other action in this section.
-                                }
-                            }
-                        },
-                        onToggleBlock = {
-                            scope.launch {
-                                try {
-                                    messagingRepository.setBlocked(item.hash, !item.summary.contact.isBlocked)
-                                } catch (e: Exception) {
-                                    // Not rethrown — matches every other action in this section.
-                                }
-                            }
-                        },
-                    )
-                    is AnnounceItem.Site -> NodeRow(
-                        node = item.node,
-                        onClick = { infoTarget = item },
-                        onToggleFavorite = { toggleFavorite(item) },
+        item {
+            // LazyRow, not a plain Row — per the same on-device report:
+            // a fixed Row let chip labels wrap/squash ("Local" rendering
+            // as "Loc/al" on a narrower screen) instead of scrolling.
+            LazyRow(
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                items(AnnounceTypeFilter.entries.toList()) { option ->
+                    FilterChip(
+                        selected = typeFilter == option,
+                        onClick = { typeFilter = option },
+                        label = { Text(option.label, maxLines = 1) },
                     )
                 }
-                HorizontalDivider()
             }
+        }
+        item {
+            // Second filter-chip row, same "one row per dimension" shape
+            // as Columba's own real AnnounceFilterChips (confirmed
+            // against its source) — Type above, Network here.
+            LazyRow(
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                items(NetworkFilter.entries.toList()) { option ->
+                    FilterChip(
+                        selected = networkFilter == option,
+                        onClick = { networkFilter = option },
+                        label = { Text(option.label, maxLines = 1) },
+                    )
+                }
+            }
+        }
+        items(
+            displayed,
+            key = { it.hash + (if (it is AnnounceItem.Peer) ":peer" else ":site") },
+        ) { item ->
+            when (item) {
+                is AnnounceItem.Peer -> ConversationRow(
+                    summary = item.summary,
+                    onClick = { infoTarget = item },
+                    onToggleFavorite = { toggleFavorite(item) },
+                    onCall = { scope.launch { callRepository.placeCall(item.hash) } },
+                    onMarkUnread = {
+                        scope.launch {
+                            try {
+                                messagingRepository.markUnread(item.hash)
+                            } catch (e: Exception) {
+                                // Not rethrown — matches every other action in this section.
+                            }
+                        }
+                    },
+                    onToggleBlock = {
+                        scope.launch {
+                            try {
+                                messagingRepository.setBlocked(item.hash, !item.summary.contact.isBlocked)
+                            } catch (e: Exception) {
+                                // Not rethrown — matches every other action in this section.
+                            }
+                        }
+                    },
+                )
+                is AnnounceItem.Site -> NodeRow(
+                    node = item.node,
+                    onClick = { infoTarget = item },
+                    onToggleFavorite = { toggleFavorite(item) },
+                )
+            }
+            HorizontalDivider()
         }
     }
 
