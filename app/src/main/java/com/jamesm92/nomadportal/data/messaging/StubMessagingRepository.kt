@@ -158,6 +158,7 @@ class StubMessagingRepository(private val scope: CoroutineScope) : MessagingRepo
             autoAnnounceMasterEnabled = true,
             lastAnnounceAtMillis = System.currentTimeMillis(),
             lxmfAddress = "stub0000000000000000000000000000",
+            publicKeyHex = "ab".repeat(64), // 128 hex chars, matches the real 64-byte public key shape
             identityHash = "stubidentity000000000000000000000",
             hostedNodeHash = null,
             displayName = "Stub User",
@@ -227,6 +228,14 @@ class StubMessagingRepository(private val scope: CoroutineScope) : MessagingRepo
     )
 
     override fun propagationSyncStatus(): StateFlow<PropagationSyncStatus> = propagationSyncStatus.asStateFlow()
+
+    override suspend fun importScannedContact(destinationHash: String, publicKeyHex: String) {
+        // Same "manual/scanned entry favorites the contact" convention as
+        // RealMessagingRepository's backing orchestrator call — no real
+        // RNS.Identity to register against here, just the observable
+        // side effect a caller would see.
+        setFavorite(destinationHash, true)
+    }
 
     override suspend fun triggerPropagationSync(): String {
         propagationSyncStatus.value = propagationSyncStatus.value.copy(

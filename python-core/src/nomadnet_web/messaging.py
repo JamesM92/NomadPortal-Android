@@ -520,13 +520,60 @@ class MessagingService:
         decisions live in orchestrator.py, which is the layer that
         actually has interface-state visibility; see its own module-level
         doc comment on the auto-announce section for why). Just this
-        user's last-announce timestamp (unix seconds, None if never) and
-        LXMF address (None if no router exists yet)."""
+        user's last-announce timestamp (unix seconds, None if never),
+        LXMF address (None if no router exists yet), and this identity's
+        own public key (hex, `identity.get_public_key()` — encryption +
+        signing public keys concatenated, 64 bytes/128 hex chars; None
+        if no identity exists yet). The public key is what makes real
+        QR-code identity sharing reliable — see
+        `import_scanned_contact()`'s own doc comment for why."""
         data = self._user_routers.get(user_sub)
+        identity = data["identity"] if data else None
         return {
             "last_announce_at": self._last_announce_at.get(user_sub),
             "lxmf_address": data["dest"].hexhash if data else None,
+            "public_key": identity.get_public_key().hex() if identity else None,
         }
+
+    def import_scanned_contact(self, dest_hash_hex: str, public_key_hex: str) -> tuple[bool, str]:
+        """Registers a scanned/imported identity directly, without
+        waiting to hear a real announce from it first — the real
+        reliability benefit of encoding the public key in a QR code, not
+        just the destination hash (confirmed real against Columba's own
+        source during the Columba-parity-audit fresh pass: its QR format
+        is `lxma://<dest_hash_hex>:<public_key_hex>`, exactly this same
+        shape, for exactly this reason).
+
+        `RNS.Identity.remember(packet_hash, destination_hash, public_key,
+        app_data=None)` is the same call RNS's own announce-processing
+        path uses internally to populate `Identity.known_destinations` —
+        calling it directly here just skips waiting for a real announce
+        packet to trigger it. `packet_hash=b""` is fine: `Identity.recall()`
+        never reads it back (see its own source — the stored `packet_hash`
+        entry only exists for `Reticulum._used_destination_data()`
+        bookkeeping, harmless as an empty placeholder here).
+
+        Without this, a freshly-scanned contact (someone you haven't yet
+        heard a real mesh announce from) would still fail to receive a
+        message until path discovery independently succeeds — the exact
+        gap this closes. Returns (False, reason) for malformed input
+        rather than raising, matching this module's other "validate,
+        don't crash on bad input from a scan" methods."""
+        try:
+            dest_hash = bytes.fromhex(dest_hash_hex)
+            public_key = bytes.fromhex(public_key_hex)
+        except ValueError:
+            return False, "Not valid hex"
+        if len(dest_hash) != 16:
+            return False, "Destination hash must be 16 bytes"
+        try:
+            import RNS
+            if len(public_key) != RNS.Identity.KEYSIZE // 8:
+                return False, "Public key is the wrong length for this identity type"
+            RNS.Identity.remember(packet_hash=b"", destination_hash=dest_hash, public_key=public_key)
+            return True, "Contact imported"
+        except Exception as exc:
+            return False, f"Could not import: {exc}"
 
     # ------------------------------------------------------------------
     # Public API

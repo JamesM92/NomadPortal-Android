@@ -598,6 +598,7 @@ fun ConversationListScreen(
         AddByAddressDialog(
             title = "Message an address",
             onDismiss = { showAddByAddress = false },
+            messagingRepository = repository,
             onConfirm = { hash ->
                 showAddByAddress = false
                 // See NodeListScreen's identical comment: an address
@@ -615,6 +616,7 @@ fun ConversationListScreen(
         AddByAddressDialog(
             title = "Call an address",
             onDismiss = { showCallByAddress = false },
+            messagingRepository = repository,
             onConfirm = { hash ->
                 showCallByAddress = false
                 // Same convention as "Message an address" above, per

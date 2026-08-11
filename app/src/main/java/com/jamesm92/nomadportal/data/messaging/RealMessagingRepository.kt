@@ -182,6 +182,16 @@ class RealMessagingRepository : MessagingRepository {
         }
     }
 
+    override suspend fun importScannedContact(destinationHash: String, publicKeyHex: String) {
+        withContext(Dispatchers.IO) {
+            try {
+                orchestrator.callAttr("import_scanned_contact", destinationHash, publicKeyHex)
+            } catch (e: PyException) {
+                throw IOException(e.message, e)
+            }
+        }
+    }
+
     private fun fetchPropagationSyncStatus(): PropagationSyncStatus {
         val obj = JSONObject(orchestrator.callAttr("get_propagation_sync_status_json").toString())
         return PropagationSyncStatus(
@@ -235,6 +245,7 @@ class RealMessagingRepository : MessagingRepository {
                 (obj.optDouble("last_announce_at", 0.0) * 1000).toLong()
             },
             lxmfAddress = if (obj.isNull("lxmf_address")) null else obj.optString("lxmf_address"),
+            publicKeyHex = obj.optStringOrNull("public_key"),
             identityHash = obj.optStringOrNull("identity_hash"),
             hostedNodeHash = obj.optStringOrNull("hosted_node_hash"),
             displayName = if (obj.isNull("display_name")) null else obj.optString("display_name"),

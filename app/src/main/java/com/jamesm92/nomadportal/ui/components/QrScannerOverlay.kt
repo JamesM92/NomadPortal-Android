@@ -52,15 +52,18 @@ import com.jamesm92.nomadportal.permissions.hasCameraPermission
  * NavHost destination, so it can be dropped into
  * [AddByAddressDialog] without touching that dialog's own call sites.
  *
- * [onResult] fires once, with a normalized hex address, the moment a
- * QR code decodes to something that passes [normalizeScannedAddress]'s
- * own validation — codes that don't decode to a plausible address are
- * silently ignored (the preview just keeps scanning), not treated as an
- * error, since a camera pointed at the real world sees plenty of
- * non-address QR codes before finding the right one.
+ * [onResult] fires once, with a normalized hex destination hash (and a
+ * public key hex string alongside it, when the scanned code was in this
+ * app's own [buildIdentityQrPayload] `lxma://` shape rather than a bare
+ * address), the moment a QR code decodes to something that passes
+ * [normalizeScannedText]'s own validation — codes that don't decode to a
+ * plausible address are silently ignored (the preview just keeps
+ * scanning), not treated as an error, since a camera pointed at the real
+ * world sees plenty of non-address QR codes before finding the right
+ * one.
  */
 @Composable
-fun QrScannerOverlay(onResult: (String) -> Unit, onCancel: () -> Unit) {
+fun QrScannerOverlay(onResult: (destinationHash: String, publicKeyHex: String?) -> Unit, onCancel: () -> Unit) {
     val context = LocalContext.current
     var hasPermission by remember { mutableStateOf(hasCameraPermission(context)) }
     val permissionLauncher = rememberLauncherForActivityResult(
@@ -115,7 +118,7 @@ fun QrScannerOverlay(onResult: (String) -> Unit, onCancel: () -> Unit) {
  * hack.
  */
 @Composable
-private fun QrCameraPreview(onDecoded: (String) -> Unit) {
+private fun QrCameraPreview(onDecoded: (destinationHash: String, publicKeyHex: String?) -> Unit) {
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
     // Guards against onDecoded firing more than once — analysis frames
@@ -140,10 +143,10 @@ private fun QrCameraPreview(onDecoded: (String) -> Unit) {
                 analysis.setAnalyzer(ContextCompat.getMainExecutor(ctx)) { imageProxy ->
                     if (!decoded) {
                         val text = decodeQrFromImageProxy(imageProxy)
-                        val normalized = text?.let(::normalizeScannedAddress)
+                        val normalized = text?.let(::normalizeScannedText)
                         if (normalized != null) {
                             decoded = true
-                            onDecoded(normalized)
+                            onDecoded(normalized.destinationHash, normalized.publicKeyHex)
                         }
                     }
                     imageProxy.close()
@@ -192,21 +195,22 @@ private fun decodeQrFromImageProxy(imageProxy: ImageProxy): String? = try {
 }
 
 /**
- * Defensive parsing for a scanned code's text: this app's own generator
- * ([generateQrBitmap] callers) encodes nothing but the raw hex address,
- * but a code from elsewhere might wrap it in a URI scheme (this app
- * doesn't know Columba's/Sideband's exact QR payload format — never
- * confirmed against their source, unlike everything else this app
- * treats as verified). Strips a possible scheme/path prefix, then
- * applies the exact same validation
- * [AddByAddressDialog]'s own text field already does — rejects anything
- * that isn't plausible even-length hex, same "an invalid or unreachable
- * address still just fails the normal way once used" philosophy as
- * manual entry, not a special QR-only error path.
+ * Parses a scanned code's raw text into a destination hash (and public
+ * key, when present) — tries [parseIdentityQrPayload]'s real `lxma://`
+ * shape first (this app's own generator, and interop-compatible with
+ * Columba's identity-sharing QR codes — confirmed against its source),
+ * then falls back to treating the whole thing as a bare hex address
+ * (a code from something else entirely, or this app's own pre-`lxma://`
+ * QR codes from before this format existed). Either way applies the
+ * exact same hex validation [AddByAddressDialog]'s own text field
+ * already does — an invalid or unreachable address still just fails the
+ * normal way once used, same philosophy as manual entry, not a special
+ * QR-only error path.
  */
-private fun normalizeScannedAddress(raw: String): String? {
+private fun normalizeScannedText(raw: String): ScannedIdentity? {
+    parseIdentityQrPayload(raw)?.let { return it }
     val candidate = raw.trim().substringAfterLast('/').substringAfterLast(':').lowercase()
     val isValidHex = candidate.isNotEmpty() && candidate.length % 2 == 0 &&
         candidate.all { it in "0123456789abcdef" }
-    return if (isValidHex) candidate else null
+    return if (isValidHex) ScannedIdentity(candidate, publicKeyHex = null) else null
 }

@@ -282,6 +282,18 @@ data class AnnounceStatus(
     val lastAnnounceAtMillis: Long?,
     /** Null before the delivery router exists (e.g. RNS still starting up). */
     val lxmfAddress: String?,
+    /** This identity's real RNS public key, hex (encryption + signing
+     * keys concatenated, 64 bytes/128 hex chars) — null under the same
+     * conditions as [lxmfAddress] (they're derived from the same
+     * identity together, so in practice either both are null or both
+     * aren't). Encoded alongside [lxmfAddress] in this device's own QR
+     * code (see [com.jamesm92.nomadportal.ui.components.buildIdentityQrPayload])
+     * — carrying the public key, not just the address, is what lets a
+     * device that scans it register the contact immediately via
+     * [MessagingRepository.importScannedContact] rather than waiting for
+     * a real mesh announce first (confirmed real against Columba's own QR format
+     * during a fresh Columba-parity-audit pass, not invented). */
+    val publicKeyHex: String?,
     /** The raw RNS Identity hash — a genuinely different value from
      * [lxmfAddress] (that's the "lxmf.delivery" *destination* hash
      * derived from this identity, not the identity's own hash). Null

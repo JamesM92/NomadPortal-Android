@@ -152,4 +152,23 @@ interface MessagingRepository {
      * [propagationSyncStatus]'s own transferState/transferProgress is
      * what shows the real, in-progress mailbox round trip afterward. */
     suspend fun triggerPropagationSync(): String
+
+    /**
+     * Registers a scanned QR contact's real identity (destination hash +
+     * public key) immediately, without waiting to hear a real mesh
+     * announce from it first — the real reliability benefit of
+     * [AnnounceStatus.publicKeyHex] existing at all, see that field's own
+     * doc comment. Also favorites the contact, same "a deliberately
+     * scanned/entered address is at least as intentional as one typed by
+     * hand" convention every other manual-entry path in this app already
+     * follows.
+     *
+     * Throws on failure (malformed hex, wrong key length) with a
+     * UI-displayable reason, same contract as [sendMessage] — a caller
+     * that doesn't care about the failure reason (e.g. a best-effort call
+     * fired alongside filling in a scanned address either way) can just
+     * swallow it, same as [AddByAddressDialog]'s own graceful-degradation
+     * philosophy for an invalid/unreachable manually-entered address.
+     */
+    suspend fun importScannedContact(destinationHash: String, publicKeyHex: String)
 }

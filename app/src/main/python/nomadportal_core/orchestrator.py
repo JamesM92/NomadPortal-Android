@@ -1625,6 +1625,28 @@ def set_contact_blocked(hash_hex: str, value: bool) -> bool:
     return store.set_blocked(hash_hex, value)
 
 
+def import_scanned_contact(dest_hash_hex: str, public_key_hex: str) -> None:
+    """Registers a scanned QR contact's real identity (hash + public
+    key) immediately — see messaging.py's own `import_scanned_contact`
+    doc comment for the full "why this beats waiting for an announce"
+    rationale. Also favorites the contact, same convention as
+    `set_contact_favorite`'s own callers use for manually-entered
+    addresses (an address someone deliberately scanned is at least as
+    intentional as one typed by hand) — upsert-then-favorite, with the
+    same live-peer-name preservation those callers already document, in
+    case a real announce from this exact peer arrived first.
+
+    Raises RuntimeError with a UI-displayable reason on failure (bad
+    hex, wrong key length, no messaging service yet) — same "raise on
+    failure" contract as send_message/trigger_propagation_sync."""
+    if _messaging is None:
+        raise RuntimeError("Messaging isn't ready yet — try again shortly")
+    ok, message = _messaging.import_scanned_contact(dest_hash_hex, public_key_hex)
+    if not ok:
+        raise RuntimeError(message)
+    set_contact_favorite(dest_hash_hex, True)
+
+
 def mark_conversation_unread(contact_hash: str) -> None:
     """The inverse of mark_conversation_read, but deliberately not its
     mirror image: marking every message in a conversation unread again
@@ -1967,7 +1989,13 @@ def get_announce_status_json() -> str:
     means disabled for that interface, there's no separate enabled
     flag), last_announce_at (unix seconds, nullable), lxmf_address
     (nullable — null before the delivery router exists, e.g. RNS still
-    starting up), identity_hash (nullable — the raw RNS Identity hash,
+    starting up), public_key (nullable, hex — this identity's real RNS
+    public key; see messaging.py's own get_announce_status doc comment.
+    Powers real QR-code identity sharing: encoding this alongside
+    lxmf_address, not just the address alone, is what lets a scanned
+    contact be immediately reachable without waiting for a mesh
+    announce — see import_scanned_contact()'s own doc comment),
+    identity_hash (nullable — the raw RNS Identity hash,
     a genuinely different value from lxmf_address: that's the "lxmf.
     delivery" *destination* hash derived from this identity, not the
     identity's own hash), hosted_node_hash (nullable — null unless
@@ -1980,10 +2008,12 @@ def get_announce_status_json() -> str:
     import json
     lxmf_address = None
     last_announce_at = None
+    public_key = None
     if _messaging is not None:
         status = _messaging.get_announce_status(user_sub="")
         lxmf_address = status.get("lxmf_address")
         last_announce_at = status.get("last_announce_at")
+        public_key = status.get("public_key")
     display_name = None
     identity_hash = None
     icon_glyph = None
@@ -2027,6 +2057,7 @@ def get_announce_status_json() -> str:
         "auto_announce_master_enabled": _auto_announce_master_enabled,
         "last_announce_at": last_announce_at,
         "lxmf_address": lxmf_address,
+        "public_key": public_key,
         "identity_hash": identity_hash,
         "hosted_node_hash": hosted_node_hash,
         "display_name": display_name,

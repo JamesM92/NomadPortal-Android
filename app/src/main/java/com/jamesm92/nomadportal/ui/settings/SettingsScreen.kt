@@ -106,6 +106,7 @@ import com.jamesm92.nomadportal.ui.components.MinutesField
 import com.jamesm92.nomadportal.ui.components.PanicWipeLogo
 import com.jamesm92.nomadportal.ui.components.SearchField
 import com.jamesm92.nomadportal.ui.components.VerticalScrollIndicator
+import com.jamesm92.nomadportal.ui.components.buildIdentityQrPayload
 import com.jamesm92.nomadportal.ui.components.generateQrBitmap
 import com.jamesm92.nomadportal.ui.theme.NomadAccent
 import com.jamesm92.nomadportal.ui.theme.NomadBg3
@@ -507,14 +508,11 @@ fun SettingsScreen(
                         onToggleExpanded = { toggleSection(SettingsSection.ADDRESSES) },
                     ) {
                         announceStatus?.let { status ->
+                            val canShowQr = status.lxmfAddress != null && status.publicKeyHex != null
                             AddressRow(
                                 label = "LXMF address",
                                 value = status.lxmfAddress,
-                                onShowQr = if (status.lxmfAddress != null) {
-                                    { showQrDialog = true }
-                                } else {
-                                    null
-                                },
+                                onShowQr = if (canShowQr) { { showQrDialog = true } } else null,
                             )
                             AddressRow(label = "Identity hash", value = status.identityHash)
                             AddressRow(
@@ -522,9 +520,11 @@ fun SettingsScreen(
                                 value = status.hostedNodeHash,
                                 placeholder = "Not currently hosting a site",
                             )
-                            if (showQrDialog) {
+                            if (showQrDialog && canShowQr) {
                                 AddressQrDialog(
-                                    address = status.lxmfAddress!!,
+                                    address = status.lxmfAddress,
+                                    publicKeyHex = status.publicKeyHex,
+                                    identityHash = status.identityHash,
                                     onDismiss = { showQrDialog = false },
                                 )
                             }
@@ -763,18 +763,27 @@ private fun AddressRow(
     }
 }
 
-/** QR-encoded LXMF address, for another device to scan via
+/** QR-encoded identity, for another device to scan via
  * [com.jamesm92.nomadportal.ui.components.QrScannerOverlay] (reachable
  * from [com.jamesm92.nomadportal.ui.components.AddByAddressDialog]'s own
- * scan icon) — this and that scanner share the exact same "raw hex
- * address, nothing else encoded" contract, see
- * [com.jamesm92.nomadportal.ui.components.generateQrBitmap]'s own doc
- * comment. Generated fresh each time this dialog opens (cheap, no need
- * to cache) via [remember] keyed on [address] so it doesn't regenerate
- * every recomposition. */
+ * scan icon). Encodes both [address] and [publicKeyHex] via
+ * [com.jamesm92.nomadportal.ui.components.buildIdentityQrPayload]'s real
+ * `lxma://` format — not just the address — so the scanning device can
+ * register this identity immediately rather than waiting for a real mesh
+ * announce first; see that function's own doc comment for the full
+ * rationale (confirmed real against Columba's own QR format during a
+ * fresh Columba-parity-audit pass, not invented). Generated fresh each
+ * time this dialog opens (cheap, no need to cache) via [remember] keyed
+ * on the payload so it doesn't regenerate every recomposition. */
 @Composable
-private fun AddressQrDialog(address: String, onDismiss: () -> Unit) {
-    val bitmap = remember(address) { generateQrBitmap(address).asImageBitmap() }
+private fun AddressQrDialog(
+    address: String,
+    publicKeyHex: String,
+    identityHash: String?,
+    onDismiss: () -> Unit,
+) {
+    val payload = remember(address, publicKeyHex) { buildIdentityQrPayload(address, publicKeyHex) }
+    val bitmap = remember(payload) { generateQrBitmap(payload).asImageBitmap() }
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text("Your LXMF Address") },
@@ -786,17 +795,37 @@ private fun AddressQrDialog(address: String, onDismiss: () -> Unit) {
                     modifier = Modifier.fillMaxWidth(),
                 )
                 Text(
+                    text = "LXMF address",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = NomadTextDim,
+                    modifier = Modifier.fillMaxWidth().padding(top = 12.dp),
+                )
+                Text(
                     text = address,
                     fontFamily = NomadMono,
                     style = MaterialTheme.typography.bodySmall,
-                    color = NomadTextDim,
-                    modifier = Modifier.padding(top = 12.dp),
+                    modifier = Modifier.fillMaxWidth(),
                 )
+                if (identityHash != null) {
+                    Text(
+                        text = "Identity hash",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = NomadTextDim,
+                        modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
+                    )
+                    Text(
+                        text = identityHash,
+                        fontFamily = NomadMono,
+                        style = MaterialTheme.typography.bodySmall,
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                }
                 Text(
-                    text = "Someone can scan this to add you as a contact.",
+                    text = "Someone can scan this to add you as a contact, immediately " +
+                        "reachable — no need to wait for a mesh announce first.",
                     style = MaterialTheme.typography.labelSmall,
                     color = NomadTextDim,
-                    modifier = Modifier.padding(top = 4.dp),
+                    modifier = Modifier.padding(top = 12.dp),
                 )
             }
         },

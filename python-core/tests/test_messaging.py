@@ -17,11 +17,13 @@ entry dict and calling ``save_sent`` — which is deterministic and runs
 before the (stubbed-out) thread would begin.
 """
 
+import os
 import time
 import types
 
 import pytest
 
+import RNS
 from nomadnet_web.messaging import MessagingService
 
 LONG_MESSAGE = "x" * 500  # comfortably past the old 120-char preview cutoff
@@ -315,3 +317,61 @@ def test_mark_read_delegates_to_message_store(tmp_path):
 
     assert store.mark_read_calls == [("r1", "u1")]
     assert store.mark_unread_calls == []
+
+
+# ---------------------------------------------------------------------------
+# import_scanned_contact — real RNS.Identity.remember()/recall() round trip,
+# not stubbed. Unlike _deliver()'s background thread (real network I/O, out
+# of scope for this style of test — see this file's own top doc comment),
+# Identity.remember()/recall() are pure local bookkeeping with no network
+# dependency, so this exercises the real RNS call, not a fake of it. The
+# `_no_use=True` recall() calls below are a test-only convenience (skips a
+# RNS.Reticulum.get_instance() bookkeeping call that needs a live Reticulum
+# instance this test harness doesn't construct) — production code paths
+# always run with a real Reticulum instance already up, so this differs from
+# real usage only in that one always-True flag, not in the mechanism itself.
+# ---------------------------------------------------------------------------
+
+def test_import_scanned_contact_rejects_invalid_hex(tmp_path):
+    svc = MessagingService(storage_path=str(tmp_path), message_store=_StubMessageStore())
+
+    ok, message = svc.import_scanned_contact("not-hex", "also-not-hex")
+
+    assert ok is False
+    assert "hex" in message.lower()
+
+
+def test_import_scanned_contact_rejects_wrong_length_hash(tmp_path):
+    svc = MessagingService(storage_path=str(tmp_path), message_store=_StubMessageStore())
+    real_identity = RNS.Identity()
+
+    ok, message = svc.import_scanned_contact("aabb", real_identity.get_public_key().hex())
+
+    assert ok is False
+    assert "16 bytes" in message
+
+
+def test_import_scanned_contact_rejects_wrong_length_public_key(tmp_path):
+    svc = MessagingService(storage_path=str(tmp_path), message_store=_StubMessageStore())
+
+    ok, message = svc.import_scanned_contact(DEST_HASH, "aabb")
+
+    assert ok is False
+    assert "wrong length" in message.lower()
+
+
+def test_import_scanned_contact_makes_the_identity_immediately_recallable(tmp_path):
+    """The actual point of this feature: after import, RNS.Identity.recall()
+    resolves this destination hash without ever having seen a real
+    announce for it — confirmed via a real Identity.remember()/recall()
+    round trip, not mocked."""
+    svc = MessagingService(storage_path=str(tmp_path), message_store=_StubMessageStore())
+    real_identity = RNS.Identity()
+    dest_hash_hex = os.urandom(16).hex()
+
+    ok, message = svc.import_scanned_contact(dest_hash_hex, real_identity.get_public_key().hex())
+
+    assert ok is True
+    recalled = RNS.Identity.recall(bytes.fromhex(dest_hash_hex), _no_use=True)
+    assert recalled is not None
+    assert recalled.get_public_key() == real_identity.get_public_key()

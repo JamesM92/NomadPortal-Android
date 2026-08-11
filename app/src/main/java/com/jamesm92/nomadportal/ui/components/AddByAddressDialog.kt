@@ -12,9 +12,12 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.text.TextStyle
+import com.jamesm92.nomadportal.data.messaging.MessagingRepository
 import com.jamesm92.nomadportal.ui.theme.NomadMono
+import kotlinx.coroutines.launch
 
 /**
  * Companion to [SearchField] on Nodes/Messages: search only finds
@@ -37,24 +40,50 @@ import com.jamesm92.nomadportal.ui.theme.NomadMono
  * scanning (not nested inside it — a camera preview needs real screen
  * space, an `AlertDialog`'s content area doesn't offer that), so this
  * composable's own call sites need no changes to support it.
+ *
+ * [messagingRepository], when non-null, gets a best-effort
+ * [MessagingRepository.importScannedContact] call the instant a scan
+ * decodes a real `lxma://` identity payload (hash *and* public key, not
+ * just a bare hash) — this is what makes the scanned contact reachable
+ * immediately rather than only once a real mesh announce arrives, see
+ * that method's own doc comment. Fire-and-forget and failure-tolerant on
+ * purpose: [value] still fills in and [onConfirm] still works normally
+ * either way, exactly this app's usual "an invalid/unreachable address
+ * still just fails the normal way once used" degradation, not a new
+ * QR-only failure mode. Left null at [NodeListScreen]'s own call site
+ * (Sites' manual/QR address entry) — this benefit is specifically about
+ * *identity* sharing (Columba's own real QR feature is identity-only
+ * too), not general site-address bookmarking.
  */
 @Composable
 fun AddByAddressDialog(
     title: String,
     onDismiss: () -> Unit,
     onConfirm: (hash: String) -> Unit,
+    messagingRepository: MessagingRepository? = null,
 ) {
     var value by remember { mutableStateOf("") }
     var scanning by remember { mutableStateOf(false) }
+    val scope = rememberCoroutineScope()
     val trimmed = value.trim().lowercase()
     val isValidHex = trimmed.isNotEmpty() && trimmed.length % 2 == 0 &&
         trimmed.all { it in "0123456789abcdef" }
 
     if (scanning) {
         QrScannerOverlay(
-            onResult = { scanned ->
-                value = scanned
+            onResult = { hash, publicKeyHex ->
+                value = hash
                 scanning = false
+                if (messagingRepository != null && publicKeyHex != null) {
+                    scope.launch {
+                        try {
+                            messagingRepository.importScannedContact(hash, publicKeyHex)
+                        } catch (e: Exception) {
+                            // Best-effort — value/onConfirm's own normal
+                            // "unreachable address" path still covers this.
+                        }
+                    }
+                }
             },
             onCancel = { scanning = false },
         )
