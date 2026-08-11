@@ -241,6 +241,19 @@ class RealMessagingRepository : MessagingRepository {
     private fun JSONObject.optStringOrNull(key: String): String? =
         if (isNull(key)) null else optString(key)
 
+    /** Same "absent or JSON null → Kotlin null" rule as [optStringOrNull],
+     * for the delivery-diagnostic fields (rssi/snr/quality/etc.) that are
+     * genuinely absent for most messages today — see [Message]'s own doc
+     * comment for why that's expected, not an error. */
+    private fun JSONObject.optDoubleOrNull(key: String): Double? =
+        if (isNull(key)) null else optDouble(key)
+
+    private fun JSONObject.optBooleanOrNull(key: String): Boolean? =
+        if (isNull(key)) null else optBoolean(key)
+
+    private fun JSONObject.optIntOrNull(key: String): Int? =
+        if (isNull(key)) null else optInt(key)
+
     private fun parseContact(obj: JSONObject): Contact {
         val hash = obj.getString("hash")
         // messaging.py stores a contact's icon as one of two mutually
@@ -302,6 +315,13 @@ class RealMessagingRepository : MessagingRepository {
             },
             attachment = obj.optJSONObject("attachment")?.let(::parseAttachment),
             expiresAtMillis = if (obj.isNull("expires_at")) null else (obj.optDouble("expires_at", 0.0) * 1000).toLong(),
+            deliveryMethod = obj.optStringOrNull("method"),
+            transportEncrypted = obj.optBooleanOrNull("transport_encrypted"),
+            deliveryAttempts = obj.optIntOrNull("delivery_attempts"),
+            rssi = obj.optDoubleOrNull("rssi"),
+            snr = obj.optDoubleOrNull("snr"),
+            quality = obj.optDoubleOrNull("quality"),
+            stateChangedAtMillis = obj.optDoubleOrNull("state_changed_at")?.let { (it * 1000).toLong() },
         )
     }
 

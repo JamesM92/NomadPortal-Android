@@ -23,11 +23,13 @@ import androidx.compose.material.icons.filled.AudioFile
 import androidx.compose.material.icons.filled.BrokenImage
 import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.Share
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -76,6 +78,7 @@ fun MessageBubble(message: Message, modifier: Modifier = Modifier) {
         bottomStart = if (message.isSent) 12.dp else 2.dp,
         bottomEnd = if (message.isSent) 2.dp else 12.dp,
     )
+    var detailsOpen by remember { mutableStateOf(false) }
 
     Box(
         modifier = modifier.fillMaxWidth(),
@@ -119,7 +122,16 @@ fun MessageBubble(message: Message, modifier: Modifier = Modifier) {
                 // M3 role goes, a genuine legibility fix picked up for
                 // free by moving onto the real type scale, not a
                 // deliberate size this row still needs to hit.
-                Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                // Tapping this row opens the delivery-details dialog
+                // below — per the same "tap opens technical info" pattern
+                // as NetworkScreen's own announce rows (a real per-message
+                // counterpart to that, not a copy of it: real LXMessage
+                // delivery diagnostics, see MessageBubble's own dialog
+                // doc comment for what's actually backed by real data).
+                Row(
+                    modifier = Modifier.clickable { detailsOpen = true },
+                    horizontalArrangement = Arrangement.spacedBy(4.dp),
+                ) {
                     Text(
                         text = formatMessageTimestamp(message.timestampMillis),
                         style = MaterialTheme.typography.labelSmall,
@@ -140,7 +152,82 @@ fun MessageBubble(message: Message, modifier: Modifier = Modifier) {
             }
         }
     }
+
+    if (detailsOpen) {
+        MessageDeliveryDetailsDialog(message = message, onDismiss = { detailsOpen = false })
+    }
 }
+
+/**
+ * Real per-message delivery diagnostics — see [Message]'s own doc comment
+ * for exactly which fields are backed by real LXMF/RNS data vs. honestly
+ * absent today. Deliberately doesn't hide RSSI/SNR/quality rows when
+ * they're null (rather than omitting them entirely) — showing "not
+ * reported by this interface" makes clear this is a real, known gap
+ * (no active interface reports it yet, not a bug), the same "real data or
+ * an honest gap, never faked" rule this app follows everywhere else.
+ */
+@Composable
+private fun MessageDeliveryDetailsDialog(message: Message, onDismiss: () -> Unit) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(if (message.isSent) "Delivery Details" else "Message Details") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                DetailRow(if (message.isSent) "Sent" else "Received", formatDetailTimestamp(message.timestampMillis))
+                if (message.isSent) {
+                    message.deliveryState?.let { state ->
+                        DetailRow(
+                            "State",
+                            when (state) {
+                                DeliveryState.QUEUED -> "Queued"
+                                DeliveryState.DELIVERED -> "Delivered"
+                                DeliveryState.FAILED -> "Failed"
+                            },
+                        )
+                    }
+                    message.stateChangedAtMillis?.let { DetailRow("Updated", formatDetailTimestamp(it)) }
+                    message.deliveryAttempts?.let { DetailRow("Delivery attempts", it.toString()) }
+                }
+                DetailRow("Method", formatDeliveryMethod(message.deliveryMethod))
+                message.transportEncrypted?.let { DetailRow("Transport encrypted", if (it) "Yes" else "No") }
+                DetailRow("RSSI", formatRfStat(message.rssi, "dBm"))
+                DetailRow("SNR", formatRfStat(message.snr, "dB"))
+                DetailRow("Link quality", formatRfStat(message.quality, "%"))
+            }
+        },
+        confirmButton = { TextButton(onClick = onDismiss) { Text("Close") } },
+    )
+}
+
+@Composable
+private fun DetailRow(label: String, value: String) {
+    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+        Text(text = label, style = MaterialTheme.typography.bodySmall, color = NomadTextDim)
+        Text(text = value, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurface)
+    }
+}
+
+/** "Opportunistic"/"Direct"/"Propagated"/"Paper" from messaging.py's own
+ * lowercase labels (mirroring LXMessage.method's real constants — see
+ * that module's `_LXMF_METHOD_NAMES`), title-cased for display. Null
+ * means the delivery/receive event that would populate it hasn't
+ * happened yet (e.g. still queued) — shown as "Pending", not "Unknown"
+ * (which messaging.py reserves for LXMessage.method's own real UNKNOWN
+ * constant, a genuinely different case). */
+private fun formatDeliveryMethod(method: String?): String =
+    method?.replaceFirstChar { it.uppercase() } ?: "Pending"
+
+/** Shared formatter for RSSI/SNR/link-quality — see [MessageDeliveryDetailsDialog]'s
+ * own doc comment for why null is expected, not an error, for most
+ * messages today. */
+private fun formatRfStat(value: Double?, unit: String): String =
+    if (value == null) "Not reported by this interface" else "%.1f %s".format(value, unit)
+
+private val detailTimeFormatter = DateTimeFormatter.ofPattern("MMM d, h:mm a", Locale.getDefault())
+
+private fun formatDetailTimestamp(timestampMillis: Long): String =
+    Instant.ofEpochMilli(timestampMillis).atZone(ZoneId.systemDefault()).format(detailTimeFormatter)
 
 /** Absolute time-of-day, not relative — the standard chat-app convention
  * for an individual message, unlike the "3m ago"/"just now" relative

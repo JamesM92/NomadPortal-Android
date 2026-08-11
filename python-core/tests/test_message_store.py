@@ -106,3 +106,53 @@ def test_mark_read_and_mark_unread_are_a_no_op_for_unknown_id(tmp_path):
     store.mark_unread("does-not-exist")
 
     assert store.received_messages()[0]["read"] is False
+
+
+def test_update_sent_stamps_state_and_diagnostic_fields(tmp_path):
+    store = _make_store(tmp_path)
+    store.save_sent({"id": "s1", "dest": "aa", "state": "queued"})
+
+    store.update_sent(
+        "s1", "delivered",
+        method="opportunistic", transport_encrypted=True,
+        delivery_attempts=1, rssi=-72.0, snr=8.5, quality=91.0,
+    )
+
+    msg = store.sent_messages()[0]
+    assert msg["state"] == "delivered"
+    assert msg["method"] == "opportunistic"
+    assert msg["transport_encrypted"] is True
+    assert msg["delivery_attempts"] == 1
+    assert msg["rssi"] == -72.0
+    assert msg["snr"] == 8.5
+    assert msg["quality"] == 91.0
+    assert isinstance(msg["state_changed_at"], float)
+
+
+def test_update_sent_diagnostic_kwargs_default_to_not_touching_existing_values(tmp_path):
+    store = _make_store(tmp_path)
+    store.save_sent({"id": "s1", "dest": "aa", "state": "queued"})
+    store.update_sent("s1", "delivered", method="direct", rssi=-50.0)
+
+    # A second update_sent call with no diagnostic kwargs (e.g. a bare
+    # state change) must not clobber the values the first call set —
+    # None means "don't touch", not "clear".
+    store.update_sent("s1", "delivered")
+
+    msg = store.sent_messages()[0]
+    assert msg["method"] == "direct"
+    assert msg["rssi"] == -50.0
+
+
+def test_update_sent_real_id_rewrite_still_works_alongside_diagnostics(tmp_path):
+    store = _make_store(tmp_path)
+    store.save_sent({"id": "client-uuid", "dest": "aa", "state": "queued"})
+
+    store.update_sent(
+        "client-uuid", "delivered", real_id="real-lxmf-hash",
+        method="opportunistic",
+    )
+
+    msg = store.sent_messages()[0]
+    assert msg["id"] == "real-lxmf-hash"
+    assert msg["method"] == "opportunistic"

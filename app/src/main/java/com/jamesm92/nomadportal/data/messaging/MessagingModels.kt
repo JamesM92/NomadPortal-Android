@@ -136,6 +136,40 @@ data class Message(
      * actually removes an expired message; this field is just the
      * schedule. */
     val expiresAtMillis: Long? = null,
+    /**
+     * Real per-message delivery diagnostics, mirroring LXMF's own
+     * `LXMessage` attributes directly (confirmed against the installed
+     * LXMF package's source, not guessed) — captured at send-delivery/
+     * -failure time for a sent message, or at receive time for a
+     * received one (see messaging.py's `_delivered`/`_failed`/
+     * `_on_delivery`). All null until the underlying event has actually
+     * happened (e.g. [deliveryMethod] stays null while [deliveryState]
+     * is still [DeliveryState.QUEUED] — nothing to report yet).
+     *
+     * [rssi]/[snr]/[quality] are honestly null for essentially every
+     * message on this app today, not a bug: RNS only populates them
+     * when the *receiving* interface reports real radio stats (only
+     * RNode does, confirmed against RNS's own Transport.py — and RNode
+     * isn't wired up for real in this app yet). Render "not reported by
+     * this interface" rather than treating null as an error — this will
+     * start populating for real the moment a radio interface that
+     * reports it is actually attached.
+     */
+    val deliveryMethod: String? = null,
+    val transportEncrypted: Boolean? = null,
+    /** Only meaningful for a sent message — no receive-side equivalent. */
+    val deliveryAttempts: Int? = null,
+    val rssi: Double? = null,
+    val snr: Double? = null,
+    /** LXMF's own `q` (link quality) field — not to be confused with
+     * [com.jamesm92.nomadportal.data.browsing.NodeInfo]'s or any other
+     * screen's own "announces heard" counts; this is per-message. */
+    val quality: Double? = null,
+    /** When [deliveryState] last changed (queued → delivered/failed),
+     * distinct from [timestampMillis] (when the message was originally
+     * queued/received) — only meaningful for a sent message, null until
+     * the first state change actually lands. */
+    val stateChangedAtMillis: Long? = null,
 )
 
 data class ConversationSummary(

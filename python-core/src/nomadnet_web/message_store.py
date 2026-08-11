@@ -40,14 +40,53 @@ class MessageStore:
         with self._lock:
             return list(self._received)
 
-    def update_sent(self, msg_id: str, state: str, real_id: str = None) -> None:
-        """Update state (and optionally final ID) of a queued sent message."""
+    def update_sent(
+        self,
+        msg_id: str,
+        state: str,
+        real_id: str = None,
+        method: str = None,
+        transport_encrypted: bool = None,
+        delivery_attempts: int = None,
+        rssi: float = None,
+        snr: float = None,
+        quality: float = None,
+    ) -> None:
+        """Update state (and optionally final ID) of a queued sent message.
+
+        The diagnostic kwargs (method/transport_encrypted/delivery_attempts/
+        rssi/snr/quality) mirror LXMessage's own same-named attributes
+        (confirmed directly against the installed LXMF package's
+        LXMessage.py — not guessed), captured by messaging.py's delivery/
+        failed callbacks at the moment they fire and threaded through here
+        so a message's real delivery diagnostics survive into storage, not
+        just its final state. Each is `None` by default meaning "don't
+        touch this field" (not "clear it") — a `_failed` callback, for
+        instance, still knows `method`/`transport_encrypted` even though
+        there's no successful delivery to report attempts/RF stats for.
+
+        `state_changed_at` is stamped unconditionally on every call — a
+        genuine "when did this reach its current state" timestamp,
+        distinct from the entry's own `sent_at` (when it was queued)."""
         with self._lock:
             for m in self._sent:
                 if m.get("id") == msg_id:
                     m["state"] = state
+                    m["state_changed_at"] = time.time()
                     if real_id and real_id != msg_id:
                         m["id"] = real_id
+                    if method is not None:
+                        m["method"] = method
+                    if transport_encrypted is not None:
+                        m["transport_encrypted"] = transport_encrypted
+                    if delivery_attempts is not None:
+                        m["delivery_attempts"] = delivery_attempts
+                    if rssi is not None:
+                        m["rssi"] = rssi
+                    if snr is not None:
+                        m["snr"] = snr
+                    if quality is not None:
+                        m["quality"] = quality
                     snapshot = self._snapshot()
                     break
             else:

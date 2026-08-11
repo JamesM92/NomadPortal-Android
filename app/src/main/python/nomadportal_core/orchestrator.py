@@ -1381,12 +1381,28 @@ def _conversation_entries() -> list:
         peer = peers_by_hash.get(h)
         my_sent = [
             {"id": m["id"], "content": m["content"], "ts": m["sent_at"], "is_sent": True, "state": m["state"],
-             "attachment": m.get("attachment"), "expires_at": m.get("expires_at")}
+             "attachment": m.get("attachment"), "expires_at": m.get("expires_at"),
+             # Delivery diagnostics — see message_store.py's update_sent()
+             # doc comment for what each of these means and why rssi/snr/
+             # quality are honestly None most of the time. state_changed_at
+             # is null until the first update_sent() call actually lands
+             # (i.e. still genuinely "queued", no delivery/failure yet).
+             "method": m.get("method"), "transport_encrypted": m.get("transport_encrypted"),
+             "delivery_attempts": m.get("delivery_attempts"),
+             "rssi": m.get("rssi"), "snr": m.get("snr"), "quality": m.get("quality"),
+             "state_changed_at": m.get("state_changed_at")}
             for m in sent if m["dest"] == h
         ]
         my_received = [
             {"id": m["id"], "content": m["content"], "ts": m["received_at"], "is_sent": False, "state": None,
-             "read": m.get("read", False), "attachment": m.get("attachment"), "expires_at": m.get("expires_at")}
+             "read": m.get("read", False), "attachment": m.get("attachment"), "expires_at": m.get("expires_at"),
+             # Same diagnostic fields as a sent message — see
+             # messaging.py's _on_delivery() for how these are captured.
+             # No "delivery_attempts"/"state_changed_at" equivalent for a
+             # received message — those are sent-side delivery-tracking
+             # concepts with no receive-side counterpart.
+             "method": m.get("method"), "transport_encrypted": m.get("transport_encrypted"),
+             "rssi": m.get("rssi"), "snr": m.get("snr"), "quality": m.get("quality")}
             for m in received if m["source"] == h
         ]
         all_msgs = sorted(my_sent + my_received, key=lambda m: m["ts"])

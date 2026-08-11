@@ -30,6 +30,19 @@ PATH_WAIT = 10  # seconds to wait for identity recall after path request
 # before waiting on a round trip through Chaquopy).
 MAX_ATTACHMENT_BYTES = 10 * 1024 * 1024
 
+# LXMessage.method's real int constants (confirmed directly against the
+# installed LXMF package's LXMessage.py, not guessed) — mapped to the
+# lowercase labels this app surfaces in delivery-diagnostics. UNKNOWN/
+# absent maps to "unknown" via .get()'s own default at each call site,
+# not listed here.
+_LXMF_METHOD_NAMES = {
+    0x00: "unknown",
+    0x01: "opportunistic",
+    0x02: "direct",
+    0x03: "propagated",
+    0x05: "paper",
+}
+
 
 def _sanitize_attachment_filename(name: str) -> str:
     """Strip any path component/traversal sequence from a peer- or
@@ -719,6 +732,16 @@ class MessagingService:
             # this feature too, no migration needed) means "never
             # expires" — see message_store.py's purge_expired.
             "expires_at":  received_at + disappearing_seconds if disappearing_seconds > 0 else None,
+            # Same delivery-diagnostic fields as a sent message's
+            # update_sent() call — see that call site's own doc comment
+            # for why rssi/snr/quality are honestly None for essentially
+            # every message today. Known immediately here (no async
+            # delivery step to wait on the way a sent message has), so
+            # stamped directly into the entry rather than needing a
+            # later update.
+            "method":              _LXMF_METHOD_NAMES.get(message.method, "unknown"),
+            "transport_encrypted": message.transport_encrypted,
+            "rssi": message.rssi, "snr": message.snr, "quality": message.q,
         }
 
         log.info(
@@ -901,15 +924,47 @@ class MessagingService:
 
                 # Callbacks update the store whenever delivery completes —
                 # no fixed wait so long messages don't time out prematurely.
+                #
+                # Both callbacks also capture `_m`'s own delivery-
+                # diagnostic attributes (method/transport_encrypted/
+                # delivery_attempts/rssi/snr/q — confirmed real fields on
+                # LXMessage directly against the installed LXMF source,
+                # not guessed) into storage. rssi/snr/q are honestly None
+                # for essentially every message on this app today: RNS
+                # only populates them when the *receiving* interface
+                # reports real radio stats (confirmed against RNS's own
+                # Transport.py — gated on an interface exposing
+                # `r_stat_rssi`/`r_stat_snr`/`r_stat_q`), and only
+                # RNodeInterface does that; TCP and this app's own
+                # Bluetooth-mesh interface don't (RNode itself isn't wired
+                # up in this app yet either — see RealInterfaceController's
+                # own doc comment). Stored as None rather than fabricated,
+                # same "real data or an honest gap" rule as everywhere
+                # else in this app — the UI is expected to show "not
+                # reported by this interface" rather than a fake number,
+                # and this will start populating for real the moment a
+                # radio interface that reports it is actually attached.
                 def _delivered(_m):
                     real_id = _m.hash.hex() if _m.hash else msg_id
                     if self._msg_store:
-                        self._msg_store.update_sent(msg_id, "delivered", real_id=real_id)
+                        self._msg_store.update_sent(
+                            msg_id, "delivered", real_id=real_id,
+                            method=_LXMF_METHOD_NAMES.get(_m.method, "unknown"),
+                            transport_encrypted=_m.transport_encrypted,
+                            delivery_attempts=_m.delivery_attempts,
+                            rssi=_m.rssi, snr=_m.snr, quality=_m.q,
+                        )
                     log.info("Delivered %s → %s", msg_id[:8], dest_hash_hex[:16])
 
                 def _failed(_m):
                     if self._msg_store:
-                        self._msg_store.update_sent(msg_id, "failed")
+                        self._msg_store.update_sent(
+                            msg_id, "failed",
+                            method=_LXMF_METHOD_NAMES.get(_m.method, "unknown"),
+                            transport_encrypted=_m.transport_encrypted,
+                            delivery_attempts=_m.delivery_attempts,
+                            rssi=_m.rssi, snr=_m.snr, quality=_m.q,
+                        )
                     log.warning("Delivery failed %s → %s", msg_id[:8], dest_hash_hex[:16])
 
                 lxmf_msg.register_delivery_callback(_delivered)
