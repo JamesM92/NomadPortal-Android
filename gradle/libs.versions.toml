@@ -27,6 +27,18 @@ micron2compose = "0.0.1"
 # Same "ignored while the includeBuild substitution is active" shape as
 # micron2compose above — RNS_BLE_Wrapper isn't published either.
 rnsbleCore = "0.0.1"
+# QR scanning (add-contact-by-QR) — CameraX, not ML Kit/Play Services
+# Vision: this app has no other Google-Play-Services dependency anywhere,
+# and CameraX + a plain decode library keeps that true. Verified against
+# Google's own Maven metadata (dl.google.com/android/maven2/androidx/camera/
+# camera-core/maven-metadata.xml) — 1.6.1 is the latest non-alpha/beta/rc
+# release as of this pin, not guessed.
+cameraX = "1.6.1"
+# QR encode/decode — pure Java, no Android/Play-Services dependency,
+# consistent with the CameraX choice above. Verified against Maven
+# Central's own listing (central.sonatype.com/artifact/com.google.zxing/core) —
+# 3.5.4 is the latest release as of this pin.
+zxingCore = "3.5.4"
 
 [libraries]
 androidx-core-ktx = { group = "androidx.core", name = "core-ktx", version.ref = "coreKtx" }
@@ -45,6 +57,11 @@ androidx-navigation-compose = { group = "androidx.navigation", name = "navigatio
 androidx-datastore-preferences = { group = "androidx.datastore", name = "datastore-preferences", version.ref = "datastorePreferences" }
 micron2compose = { group = "com.github.JamesM92", name = "micron2compose", version.ref = "micron2compose" }
 rnsble-core = { group = "com.jamesm92.rnsble", name = "rnsble-core", version.ref = "rnsbleCore" }
+androidx-camera-core = { group = "androidx.camera", name = "camera-core", version.ref = "cameraX" }
+androidx-camera-camera2 = { group = "androidx.camera", name = "camera-camera2", version.ref = "cameraX" }
+androidx-camera-lifecycle = { group = "androidx.camera", name = "camera-lifecycle", version.ref = "cameraX" }
+androidx-camera-view = { group = "androidx.camera", name = "camera-view", version.ref = "cameraX" }
+zxing-core = { group = "com.google.zxing", name = "core", version.ref = "zxingCore" }
 junit = { group = "junit", name = "junit", version.ref = "junit" }
 androidx-junit = { group = "androidx.test.ext", name = "junit", version.ref = "androidxJunit" }
 androidx-espresso-core = { group = "androidx.test.espresso", name = "espresso-core", version.ref = "espressoCore" }

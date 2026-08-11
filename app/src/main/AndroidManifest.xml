@@ -51,6 +51,17 @@
          its capture thread), never a blocked/failed call. -->
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
 
+    <!-- QR-code contact scanning (permissions/CameraPermission.kt,
+         ui/components/QrScannerOverlay.kt). Same "never block, always
+         degrade gracefully on denial" rule as RECORD_AUDIO/Bluetooth
+         above — a denial just means the QR-scan affordance shows a
+         "camera permission needed" message instead of a preview; typing
+         an address by hand (AddByAddressDialog's own text field) always
+         still works regardless. Requested only when the scanner is
+         actually opened, not proactively at app launch. -->
+    <uses-permission android:name="android.permission.CAMERA" />
+    <uses-feature android:name="android.hardware.camera.any" android:required="false" />
+
     <application
         android:name=".NomadPortalApp"
         android:allowBackup="false"

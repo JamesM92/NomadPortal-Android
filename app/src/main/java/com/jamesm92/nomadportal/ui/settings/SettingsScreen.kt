@@ -3,6 +3,7 @@ package com.jamesm92.nomadportal.ui.settings
 import android.content.ClipData
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -38,6 +39,8 @@ import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.ExpandLess
 import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material.icons.filled.PowerSettingsNew
+import androidx.compose.material.icons.filled.QrCode
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Badge
 import androidx.compose.material3.BadgedBox
 import androidx.compose.material3.Button
@@ -69,6 +72,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.platform.ClipEntry
 import androidx.compose.ui.platform.LocalClipboard
 import androidx.compose.ui.input.pointer.pointerInput
@@ -102,6 +106,7 @@ import com.jamesm92.nomadportal.ui.components.MinutesField
 import com.jamesm92.nomadportal.ui.components.PanicWipeLogo
 import com.jamesm92.nomadportal.ui.components.SearchField
 import com.jamesm92.nomadportal.ui.components.VerticalScrollIndicator
+import com.jamesm92.nomadportal.ui.components.generateQrBitmap
 import com.jamesm92.nomadportal.ui.theme.NomadAccent
 import com.jamesm92.nomadportal.ui.theme.NomadBg3
 import com.jamesm92.nomadportal.ui.theme.NomadMono
@@ -495,19 +500,34 @@ fun SettingsScreen(
                 }
 
                 item {
+                    var showQrDialog by remember { mutableStateOf(false) }
                     CollapsibleSection(
                         title = "Addresses",
                         expanded = SettingsSection.ADDRESSES in expandedSections,
                         onToggleExpanded = { toggleSection(SettingsSection.ADDRESSES) },
                     ) {
                         announceStatus?.let { status ->
-                            AddressRow(label = "LXMF address", value = status.lxmfAddress)
+                            AddressRow(
+                                label = "LXMF address",
+                                value = status.lxmfAddress,
+                                onShowQr = if (status.lxmfAddress != null) {
+                                    { showQrDialog = true }
+                                } else {
+                                    null
+                                },
+                            )
                             AddressRow(label = "Identity hash", value = status.identityHash)
                             AddressRow(
                                 label = "Site address",
                                 value = status.hostedNodeHash,
                                 placeholder = "Not currently hosting a site",
                             )
+                            if (showQrDialog) {
+                                AddressQrDialog(
+                                    address = status.lxmfAddress!!,
+                                    onDismiss = { showQrDialog = false },
+                                )
+                            }
                         }
                     }
                 }
@@ -692,9 +712,17 @@ private fun ToggleRow(
  * [placeholder] instead in a dimmed/italic-equivalent style, rather
  * than an empty row — most relevantly "Node address" before any real
  * SiteServer exists to host one (see [AnnounceStatus.hostedNodeHash]'s
- * own doc comment). */
+ * own doc comment). [onShowQr] (only offered on the LXMF address row —
+ * per the Columba-parity-audit's "QR-code identity sharing" finding,
+ * the address someone would actually want to scan to add you as a
+ * contact) adds a second icon button opening [AddressQrDialog]. */
 @Composable
-private fun AddressRow(label: String, value: String?, placeholder: String = "Not available yet") {
+private fun AddressRow(
+    label: String,
+    value: String?,
+    placeholder: String = "Not available yet",
+    onShowQr: (() -> Unit)? = null,
+) {
     val scope = rememberCoroutineScope()
     val clipboard = LocalClipboard.current
     Column(modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp)) {
@@ -716,6 +744,11 @@ private fun AddressRow(label: String, value: String?, placeholder: String = "Not
                 // treatment) — per explicit direction, Main tab's own
                 // sizing stays as it already was; only the sub-tabs got
                 // shrunk.
+                if (onShowQr != null) {
+                    IconButton(onClick = onShowQr) {
+                        Icon(Icons.Filled.QrCode, contentDescription = "Show QR code for $label")
+                    }
+                }
                 IconButton(
                     onClick = {
                         scope.launch {
@@ -728,6 +761,49 @@ private fun AddressRow(label: String, value: String?, placeholder: String = "Not
             }
         }
     }
+}
+
+/** QR-encoded LXMF address, for another device to scan via
+ * [com.jamesm92.nomadportal.ui.components.QrScannerOverlay] (reachable
+ * from [com.jamesm92.nomadportal.ui.components.AddByAddressDialog]'s own
+ * scan icon) — this and that scanner share the exact same "raw hex
+ * address, nothing else encoded" contract, see
+ * [com.jamesm92.nomadportal.ui.components.generateQrBitmap]'s own doc
+ * comment. Generated fresh each time this dialog opens (cheap, no need
+ * to cache) via [remember] keyed on [address] so it doesn't regenerate
+ * every recomposition. */
+@Composable
+private fun AddressQrDialog(address: String, onDismiss: () -> Unit) {
+    val bitmap = remember(address) { generateQrBitmap(address).asImageBitmap() }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Your LXMF Address") },
+        text = {
+            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                Image(
+                    bitmap = bitmap,
+                    contentDescription = "QR code for $address",
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                Text(
+                    text = address,
+                    fontFamily = NomadMono,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = NomadTextDim,
+                    modifier = Modifier.padding(top = 12.dp),
+                )
+                Text(
+                    text = "Someone can scan this to add you as a contact.",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = NomadTextDim,
+                    modifier = Modifier.padding(top = 4.dp),
+                )
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = onDismiss) { Text("Close") }
+        },
+    )
 }
 
 /** One configured TCP connection: name/host:port, its own enable
