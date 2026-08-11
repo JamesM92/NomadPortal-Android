@@ -95,4 +95,8 @@ class NoopInterfaceController(
     // matching this class's own convention throughout.
     override fun bluetoothMeshStatus(): Flow<BluetoothMeshStatus> =
         flowOf(BluetoothMeshStatus(neighborCount = 0, lastActivityAtMillis = null))
+
+    // No real RNS Transport/path table here — persisted-intent-only,
+    // matching this class's own convention throughout.
+    override fun announceInterfaces(): Flow<Map<String, String>> = flowOf(emptyMap())
 }

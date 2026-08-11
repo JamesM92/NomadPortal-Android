@@ -44,6 +44,7 @@ import com.jamesm92.nomadportal.connectivity.TcpConnectionsRepository
 import com.jamesm92.nomadportal.data.browsing.BrowserRepository
 import com.jamesm92.nomadportal.data.browsing.NodeInfo
 import com.jamesm92.nomadportal.data.calling.CallRepository
+import com.jamesm92.nomadportal.data.messaging.AnnounceStatus
 import com.jamesm92.nomadportal.data.messaging.ConversationSummary
 import com.jamesm92.nomadportal.data.messaging.MessagingRepository
 import com.jamesm92.nomadportal.ui.browser.NodeRow
@@ -80,16 +81,22 @@ import kotlinx.coroutines.launch
  * - **Type** (Peers / Sites / All) is real and implemented — it's
  *   exactly the LXMF-peer-vs-NomadNet-node distinction this app already
  *   tracks natively.
- * - **Network** (i.e. filtering by *which interface* delivered a given
- *   announce) is **not implemented — a real, honest data-model gap, not
- *   an oversight**: RNS's own announce propagation is interface-agnostic
- *   beyond the first hop (an announce can and does cross multiple
- *   interface types as it relays across the mesh), and neither
- *   `lxmf_tracker.py` nor `browser.py` currently records which interface
- *   *first* delivered a given announce at all. Building this for real
- *   would mean new tracking plumbing on the Python side, not just a UI
- *   affordance here — flagged as a follow-up decision point, not
- *   silently faked or silently dropped.
+ * - **Network** (i.e. filtering by *which interface* currently has the
+ *   best path to a given announce) is now also real and implemented —
+ *   [InterfaceController.announceInterfaces] reads
+ *   `RNS.Transport.next_hop_interface()`, a real, already-existing
+ *   public RNS API against state RNS's own routing already maintains
+ *   (`Transport.path_table`). This corrects an earlier, real mistake in
+ *   this same file's own doc comment: "not buildable without new
+ *   tracking plumbing" was wrong — confirmed directly against RNS's
+ *   installed source during a fresh Columba-parity-audit pass, not
+ *   guessed. **Honest limitation that remains**: it's a *live* snapshot
+ *   each poll, not a history — it reflects whichever interface
+ *   currently has the best known path right now, and doesn't remember
+ *   "also seen via a different interface once" the way a real
+ *   interface-sighting-history table would (confirmed real in Columba's
+ *   own schema during that same pass — a genuinely bigger feature, not
+ *   attempted here).
  *
  * Interface status itself keeps its original scope/honesty rules — see
  * [BluetoothMeshStatus]'s own doc comment for what "neighbor" does and
@@ -211,6 +218,7 @@ fun NetworkScreen(
             }
 
             AnnouncesSection(
+                interfaceController = interfaceController,
                 messagingRepository = messagingRepository,
                 callRepository = callRepository,
                 browserRepository = browserRepository,
@@ -325,11 +333,35 @@ private fun formatAnnounceTime(millis: Long): String {
     }
 }
 
-/** The type filter dimension that's actually real — see this file's own
- * top doc comment for why an interface/"network" filter dimension isn't
- * implemented alongside this one. */
+/** [key] is one of [AnnounceStatus]'s own interface-key constants (or
+ * null, meaning RNS currently has no known path to this destination at
+ * all) — see [InterfaceController.announceInterfaces]'s own doc comment
+ * for why "no path known" is a real, honest, expected state, not an
+ * error. */
+private fun formatNetworkLabel(key: String?): String = when (key) {
+    AnnounceStatus.INTERFACE_TCP -> "TCP"
+    AnnounceStatus.INTERFACE_BLUETOOTH -> "Bluetooth mesh"
+    AnnounceStatus.INTERFACE_RNODE -> "RNode"
+    AnnounceStatus.INTERFACE_WIFI_DISCOVERY -> "Local network discovery"
+    else -> "No path known"
+}
+
 private enum class AnnounceTypeFilter(val label: String) {
     ALL("All"), PEERS("Peers"), SITES("Sites")
+}
+
+/** The network/interface filter dimension — see this file's own top doc
+ * comment for the real mechanism ([InterfaceController.announceInterfaces])
+ * and its one honest limitation (a live snapshot, not history). [key]
+ * null means [ALL] (no filtering); every other option's [key] matches
+ * one of [com.jamesm92.nomadportal.data.messaging.AnnounceStatus]'s own
+ * interface-key constants. */
+private enum class NetworkFilter(val key: String?, val label: String) {
+    ALL(null, "All"),
+    TCP(AnnounceStatus.INTERFACE_TCP, "TCP"),
+    BLUETOOTH(AnnounceStatus.INTERFACE_BLUETOOTH, "Bluetooth"),
+    RNODE(AnnounceStatus.INTERFACE_RNODE, "RNode"),
+    WIFI(AnnounceStatus.INTERFACE_WIFI_DISCOVERY, "Local"),
 }
 
 /** One row in [NetworkScreen]'s unified announces browser — either an
@@ -374,6 +406,7 @@ private sealed class AnnounceItem {
  */
 @Composable
 private fun AnnouncesSection(
+    interfaceController: InterfaceController,
     messagingRepository: MessagingRepository,
     callRepository: CallRepository,
     browserRepository: BrowserRepository,
@@ -394,6 +427,7 @@ private fun AnnouncesSection(
         )
         if (expanded) {
             AnnouncesSectionBody(
+                interfaceController = interfaceController,
                 messagingRepository = messagingRepository,
                 callRepository = callRepository,
                 browserRepository = browserRepository,
@@ -430,6 +464,7 @@ private fun ExpandableSectionHeader(title: String, count: Int?, expanded: Boolea
 
 @Composable
 private fun AnnouncesSectionBody(
+    interfaceController: InterfaceController,
     messagingRepository: MessagingRepository,
     callRepository: CallRepository,
     browserRepository: BrowserRepository,
@@ -439,10 +474,16 @@ private fun AnnouncesSectionBody(
 ) {
     val conversations by messagingRepository.conversations().collectAsState(initial = emptyList())
     val nodes by browserRepository.discoveredNodes().collectAsState(initial = emptyList())
+    // Live "which interface currently has the best path" lookup — see
+    // InterfaceController.announceInterfaces' own doc comment for what
+    // this does/doesn't prove. Keyed by hash; a hash with no entry has
+    // no currently-known path at all.
+    val announceInterfaces by interfaceController.announceInterfaces().collectAsState(initial = emptyMap())
     val scope = rememberCoroutineScope()
     var searchQuery by remember { mutableStateOf("") }
     var sortOption by remember { mutableStateOf(SortOption.RECENT) }
     var typeFilter by remember { mutableStateOf(AnnounceTypeFilter.ALL) }
+    var networkFilter by remember { mutableStateOf(NetworkFilter.ALL) }
     var infoTarget by remember { mutableStateOf<AnnounceItem?>(null) }
 
     val combined: List<AnnounceItem> = remember(conversations, nodes, typeFilter) {
@@ -451,12 +492,17 @@ private fun AnnouncesSectionBody(
             if (typeFilter != AnnounceTypeFilter.PEERS) addAll(nodes.map { AnnounceItem.Site(it) })
         }
     }
-    val filtered = if (searchQuery.isBlank()) {
+    val searched = if (searchQuery.isBlank()) {
         combined
     } else {
         combined.filter {
             it.displayName.contains(searchQuery, ignoreCase = true) || it.hash.contains(searchQuery, ignoreCase = true)
         }
+    }
+    val filtered = if (networkFilter == NetworkFilter.ALL) {
+        searched
+    } else {
+        searched.filter { announceInterfaces[it.hash] == networkFilter.key }
     }
     val sorted = when (sortOption) {
         SortOption.RECENT -> filtered.sortedByDescending { it.lastAnnounceMillis }
@@ -490,13 +536,28 @@ private fun AnnouncesSectionBody(
             SortDropdown(selected = sortOption, onSelect = { sortOption = it })
         }
         Row(
-            modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp),
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp),
             horizontalArrangement = Arrangement.spacedBy(8.dp),
         ) {
             AnnounceTypeFilter.entries.forEach { option ->
                 FilterChip(
                     selected = typeFilter == option,
                     onClick = { typeFilter = option },
+                    label = { Text(option.label) },
+                )
+            }
+        }
+        // Second filter-chip row, same "one row per dimension" shape as
+        // Columba's own real AnnounceFilterChips (confirmed against its
+        // source) — Type above, Network here.
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            NetworkFilter.entries.forEach { option ->
+                FilterChip(
+                    selected = networkFilter == option,
+                    onClick = { networkFilter = option },
                     label = { Text(option.label) },
                 )
             }
@@ -550,6 +611,7 @@ private fun AnnouncesSectionBody(
     infoTarget?.let { item ->
         AnnounceTechnicalInfoDialog(
             item = item,
+            networkKey = announceInterfaces[item.hash],
             onDismiss = { infoTarget = null },
             onOpen = {
                 infoTarget = null
@@ -572,7 +634,12 @@ private fun AnnouncesSectionBody(
  * taps still do.
  */
 @Composable
-private fun AnnounceTechnicalInfoDialog(item: AnnounceItem, onDismiss: () -> Unit, onOpen: () -> Unit) {
+private fun AnnounceTechnicalInfoDialog(
+    item: AnnounceItem,
+    networkKey: String?,
+    onDismiss: () -> Unit,
+    onOpen: () -> Unit,
+) {
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text(item.displayName) },
@@ -580,6 +647,7 @@ private fun AnnounceTechnicalInfoDialog(item: AnnounceItem, onDismiss: () -> Uni
             Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
                 InfoRow("Type", if (item is AnnounceItem.Peer) "LXMF peer" else "NomadNet site")
                 InfoRow("Address", item.hash)
+                InfoRow("Network", formatNetworkLabel(networkKey))
                 InfoRow("Hops", if (item.hopCount < 0) "Unknown" else item.hopCount.toString())
                 InfoRow("Last announce", formatAnnounceTime(item.lastAnnounceMillis))
                 InfoRow("Announces heard", item.announceCount.toString())

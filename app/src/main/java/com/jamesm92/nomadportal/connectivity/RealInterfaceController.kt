@@ -175,6 +175,24 @@ class RealInterfaceController(
 
     override fun bluetoothMeshStatus(): Flow<BluetoothMeshStatus> = bluetoothMesh.status
 
+    override fun announceInterfaces(): Flow<Map<String, String>> = flow {
+        while (true) {
+            emit(fetchAnnounceInterfaces())
+            delay(POLL_INTERVAL_MS)
+        }
+    }.flowOn(Dispatchers.IO)
+
+    private fun fetchAnnounceInterfaces(): Map<String, String> {
+        val obj = JSONObject(orchestrator.callAttr("get_announce_interfaces_json").toString())
+        val result = mutableMapOf<String, String>()
+        val keys = obj.keys()
+        while (keys.hasNext()) {
+            val hash = keys.next()
+            result[hash] = obj.getString(hash)
+        }
+        return result
+    }
+
     private fun fetchHasDownTcpConnection(): Boolean {
         val obj = JSONObject(orchestrator.callAttr("get_tcp_connections_json").toString())
         if (!obj.optBoolean("master_enabled", true)) return false

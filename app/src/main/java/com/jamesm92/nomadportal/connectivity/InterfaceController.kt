@@ -153,4 +153,25 @@ interface InterfaceController {
      * hasn't started (or on [NoopInterfaceController]) — never
      * fabricated. */
     fun bluetoothMeshStatus(): Flow<BluetoothMeshStatus>
+
+    /**
+     * Live "which RNS interface currently has the best path" lookup for
+     * every currently-known LXMF peer/NomadNet-node hash — the real
+     * backing for the Network tab's own "filter announces by network"
+     * dimension. Keyed by lowercase hex destination hash; values are one
+     * of [com.jamesm92.nomadportal.data.messaging.AnnounceStatus.INTERFACE_TCP]/
+     * `INTERFACE_BLUETOOTH`/`INTERFACE_RNODE`/`INTERFACE_WIFI_DISCOVERY`
+     * (reusing that same 4-interface taxonomy throughout this app). A
+     * hash absent from the map means RNS currently has no known path to
+     * it at all (a stale/unreachable announce), not an error.
+     *
+     * A **live snapshot each poll, not a history** — reflects whichever
+     * interface currently has the best known path right now, the same
+     * one RNS's own routing would use. Doesn't remember "also seen via
+     * a different interface once" the way a real interface-sighting-
+     * history table would (confirmed real in Columba's own schema
+     * during a fresh audit pass, not attempted here — a genuinely
+     * bigger feature, not a corner cut by accident).
+     */
+    fun announceInterfaces(): Flow<Map<String, String>>
 }
