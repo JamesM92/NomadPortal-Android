@@ -205,6 +205,12 @@ class RealMessagingRepository(private val settings: SettingsRepository) : Messag
         settings.setMessagesContactsOnly(enabled)
     }
 
+    override suspend fun setRetryViaRelay(enabled: Boolean) {
+        withContext(Dispatchers.IO) {
+            orchestrator.callAttr("set_retry_via_relay", enabled)
+        }
+    }
+
     private fun fetchPropagationSyncStatus(): PropagationSyncStatus {
         val obj = JSONObject(orchestrator.callAttr("get_propagation_sync_status_json").toString())
         return PropagationSyncStatus(
@@ -278,6 +284,7 @@ class RealMessagingRepository(private val settings: SettingsRepository) : Messag
                 obj.optString("send_blocked_reason")
             },
             messagesContactsOnly = obj.optBoolean("contacts_only_messages", false),
+            retryViaRelay = obj.optBoolean("retry_via_relay", false),
         )
     }
 

@@ -166,6 +166,7 @@ class StubMessagingRepository(private val scope: CoroutineScope) : MessagingRepo
             sendBlocked = false,
             sendBlockedReason = null,
             messagesContactsOnly = false,
+            retryViaRelay = false,
         )
     )
 
@@ -173,6 +174,10 @@ class StubMessagingRepository(private val scope: CoroutineScope) : MessagingRepo
 
     override suspend fun setMessagesContactsOnly(enabled: Boolean) {
         announceStatus.value = announceStatus.value.copy(messagesContactsOnly = enabled)
+    }
+
+    override suspend fun setRetryViaRelay(enabled: Boolean) {
+        announceStatus.value = announceStatus.value.copy(retryViaRelay = enabled)
     }
 
     override suspend fun setAnnounceMax(interfaceKey: String, seconds: Int) {

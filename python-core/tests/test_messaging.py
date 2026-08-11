@@ -324,6 +324,106 @@ def test_get_contacts_only_messages_reflects_current_state(service):
 
 
 # ---------------------------------------------------------------------------
+# Retry via relay on send failure
+#
+# _should_retry_via_relay is the real decision logic, kept deliberately
+# separate from _attempt_relay_retry's actual LXMessage-construction
+# mechanics (which needs a real RNS/LXMF Router, same "not something a
+# unit test should exercise" reasoning as _deliver()'s own background
+# thread — see this file's own top doc comment) so it's testable here
+# with a lightweight fake router instead.
+# ---------------------------------------------------------------------------
+
+
+class _FakeRouter:
+    def __init__(self, outbound_propagation_node=None):
+        self._node = outbound_propagation_node
+
+    def get_outbound_propagation_node(self):
+        return self._node
+
+
+def test_should_retry_via_relay_false_by_default(service):
+    assert service._should_retry_via_relay(_FakeRouter(b"\xaa" * 16)) is False
+
+
+def test_should_retry_via_relay_false_with_no_propagation_node_even_if_enabled(service):
+    service.set_retry_via_relay(True)
+    assert service._should_retry_via_relay(_FakeRouter(None)) is False
+
+
+def test_should_retry_via_relay_true_when_enabled_and_node_available(service):
+    service.set_retry_via_relay(True)
+    assert service._should_retry_via_relay(_FakeRouter(b"\xaa" * 16)) is True
+
+
+def test_should_retry_via_relay_false_if_router_raises(service):
+    # A malformed/stale router object shouldn't crash the decision —
+    # same "never let a diagnostic-only check take down real delivery
+    # logic" caution as elsewhere in this file.
+    class _BrokenRouter:
+        def get_outbound_propagation_node(self):
+            raise RuntimeError("boom")
+
+    service.set_retry_via_relay(True)
+    assert service._should_retry_via_relay(_BrokenRouter()) is False
+
+
+def test_get_retry_via_relay_reflects_current_state(service):
+    assert service.get_retry_via_relay() is False
+    service.set_retry_via_relay(True)
+    assert service.get_retry_via_relay() is True
+
+
+class _FakeLxmMessage:
+    """Carries just the attribute names `_record_send_result` reads off
+    a real LXMessage (method/transport_encrypted/delivery_attempts/rssi/
+    snr/q/hash) — real RNS.Identity/LXMessage construction needs a live
+    Reticulum instance this test harness doesn't build, same reasoning
+    as every other real-network-dependent path this file leaves
+    unstubbed-but-untested."""
+
+    def __init__(self, method=0x01, transport_encrypted=True, delivery_attempts=1,
+                 rssi=None, snr=None, q=None, hash_bytes=b"\xbb" * 16):
+        self.method = method
+        self.transport_encrypted = transport_encrypted
+        self.delivery_attempts = delivery_attempts
+        self.rssi = rssi
+        self.snr = snr
+        self.q = q
+        self.hash = hash_bytes
+
+
+def test_record_send_result_delivered_stores_real_id_and_diagnostics(tmp_path):
+    store = _StubMessageStore()
+    store.updates = []
+    store.update_sent = lambda *a, **kw: store.updates.append((a, kw))
+    svc = MessagingService(storage_path=str(tmp_path), message_store=store)
+
+    svc._record_send_result("msg1", DEST_HASH, _FakeLxmMessage(), "delivered", via_relay=True)
+
+    assert len(store.updates) == 1
+    args, kwargs = store.updates[0]
+    assert args[:2] == ("msg1", "delivered")
+    assert kwargs["method"] == "opportunistic"
+    assert kwargs["transport_encrypted"] is True
+    assert kwargs["real_id"] == ("bb" * 16)
+
+
+def test_record_send_result_failed_does_not_set_real_id(tmp_path):
+    store = _StubMessageStore()
+    store.updates = []
+    store.update_sent = lambda *a, **kw: store.updates.append((a, kw))
+    svc = MessagingService(storage_path=str(tmp_path), message_store=store)
+
+    svc._record_send_result("msg1", DEST_HASH, _FakeLxmMessage(), "failed", via_relay=False)
+
+    args, kwargs = store.updates[0]
+    assert args[:2] == ("msg1", "failed")
+    assert kwargs["real_id"] is None
+
+
+# ---------------------------------------------------------------------------
 # mark_unread
 # ---------------------------------------------------------------------------
 

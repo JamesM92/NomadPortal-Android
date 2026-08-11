@@ -330,6 +330,16 @@ data class AnnounceStatus(
      * [autoAnnounceMasterEnabled], which is deliberately left
      * Python-side ephemeral). */
     val messagesContactsOnly: Boolean,
+    /** Live, enforced state of "Retry via relay on failure" — per the
+     * Columba-parity-audit's own real `MessageDeliveryRetrievalCard.kt`
+     * finding. When true, a failed direct/opportunistic send
+     * automatically gets one retry through a propagation node instead
+     * of just failing outright — the send-side complement to
+     * [PropagationSyncStatus]'s own pull-only sync. See
+     * [MessagingRepository.setRetryViaRelay]'s own doc comment for why
+     * this one, unlike [messagesContactsOnly], is deliberately left
+     * Python-side ephemeral rather than persisted. */
+    val retryViaRelay: Boolean,
 ) {
     companion object {
         const val INTERFACE_TCP = "tcp"

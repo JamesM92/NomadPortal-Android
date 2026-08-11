@@ -1668,6 +1668,24 @@ def set_messages_contacts_only(enabled: bool) -> None:
         _messaging.set_contacts_only_messages(enabled)
 
 
+def set_retry_via_relay(enabled: bool) -> None:
+    """"Retry via relay on failure" — per the Columba-parity-audit's own
+    real finding (`MessageDeliveryRetrievalCard.kt`, confirmed during a
+    fresh audit pass) — the send-side complement to this app's own
+    propagation-node *pull* sync (see [[nomadportal-android-columba-parity-audit]]/
+    `lxmf_sync.py`'s own module doc comment). Real enforcement lives in
+    messaging.py's `_should_retry_via_relay`/`_attempt_relay_retry` — see
+    that module's own doc comments; this is just the bridge setter.
+
+    In-memory only (mirrors `set_auto_announce_master`'s own shape),
+    deliberately **not** given the real DataStore persistence
+    `set_messages_contacts_only` gets — this is a delivery-reliability
+    preference, not a privacy-protective one, so resetting to off on
+    restart is an acceptable minor inconvenience, not a footgun."""
+    if _messaging is not None:
+        _messaging.set_retry_via_relay(enabled)
+
+
 def mark_conversation_unread(contact_hash: str) -> None:
     """The inverse of mark_conversation_read, but deliberately not its
     mirror image: marking every message in a conversation unread again
@@ -2018,6 +2036,8 @@ def get_announce_status_json() -> str:
     announce — see import_scanned_contact()'s own doc comment),
     contacts_only_messages (bool — the live, enforced allowlist-mode
     state; see set_messages_contacts_only()'s own doc comment),
+    retry_via_relay (bool — the live, enforced retry-on-failure state;
+    see set_retry_via_relay()'s own doc comment),
     identity_hash (nullable — the raw RNS Identity hash,
     a genuinely different value from lxmf_address: that's the "lxmf.
     delivery" *destination* hash derived from this identity, not the
@@ -2033,12 +2053,14 @@ def get_announce_status_json() -> str:
     last_announce_at = None
     public_key = None
     contacts_only_messages = False
+    retry_via_relay = False
     if _messaging is not None:
         status = _messaging.get_announce_status(user_sub="")
         lxmf_address = status.get("lxmf_address")
         last_announce_at = status.get("last_announce_at")
         public_key = status.get("public_key")
         contacts_only_messages = _messaging.get_contacts_only_messages()
+        retry_via_relay = _messaging.get_retry_via_relay()
     display_name = None
     identity_hash = None
     icon_glyph = None
@@ -2084,6 +2106,7 @@ def get_announce_status_json() -> str:
         "lxmf_address": lxmf_address,
         "public_key": public_key,
         "contacts_only_messages": contacts_only_messages,
+        "retry_via_relay": retry_via_relay,
         "identity_hash": identity_hash,
         "hosted_node_hash": hosted_node_hash,
         "display_name": display_name,

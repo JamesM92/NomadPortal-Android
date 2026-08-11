@@ -51,6 +51,7 @@ import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SecondaryTabRow
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Tab
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -665,6 +666,11 @@ fun ConversationListScreen(
 @Composable
 private fun PropagationSyncDialog(repository: MessagingRepository, onDismiss: () -> Unit) {
     val status by repository.propagationSyncStatus().collectAsState(initial = null)
+    // Only retryViaRelay is actually used from this — see this
+    // property's own doc comment. Pulling the whole AnnounceStatus flow
+    // just for one boolean is the same trade-off Settings' own Privacy
+    // section already accepts for the same reason.
+    val announceStatus by repository.announceStatus().collectAsState(initial = null)
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
     var syncing by remember { mutableStateOf(false) }
@@ -700,6 +706,33 @@ private fun PropagationSyncDialog(repository: MessagingRepository, onDismiss: ()
                         SyncInfoRow("Last pull", "$it message" + if (it == 1) "" else "s")
                     }
                     s.lastError?.let { SyncInfoRow("Last error", it) }
+                }
+                HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp))
+                // The send-side complement to the pull-sync above — per
+                // the Columba-parity-audit's own "retry via relay on
+                // failure" finding (MessageDeliveryRetrievalCard.kt).
+                // Off by default: this is a reliability preference, not
+                // something that needs to be pre-enabled to be safe.
+                announceStatus?.let { a ->
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text(
+                            text = "Retry via relay on failure",
+                            style = MaterialTheme.typography.bodyMedium,
+                            modifier = Modifier.weight(1f),
+                        )
+                        Switch(
+                            checked = a.retryViaRelay,
+                            onCheckedChange = {
+                                scope.launch { repository.setRetryViaRelay(it) }
+                            },
+                        )
+                    }
+                    Text(
+                        "If a direct send fails, automatically retry once through a " +
+                            "propagation node instead of just giving up.",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = NomadTextDim,
+                    )
                 }
             }
         },

@@ -183,4 +183,15 @@ interface MessagingRepository {
      * inconvenience like most of this app's other ephemeral toggles.
      */
     suspend fun setMessagesContactsOnly(enabled: Boolean)
+
+    /**
+     * "Retry via relay on failure" — see [AnnounceStatus.retryViaRelay]'s
+     * own doc comment for what this actually does. Unlike
+     * [setMessagesContactsOnly], this one is Python-bridge only, no
+     * Kotlin-side persistence — a delivery-reliability preference
+     * resetting to off on restart is an acceptable minor inconvenience,
+     * not the kind of footgun that justified real persistence for
+     * contacts-only mode.
+     */
+    suspend fun setRetryViaRelay(enabled: Boolean)
 }

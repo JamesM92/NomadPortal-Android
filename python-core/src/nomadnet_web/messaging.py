@@ -154,6 +154,8 @@ class MessagingService:
         self._user_routers: dict = {}
         # See set_contacts_only_messages()'s own doc comment.
         self._contacts_only_messages = False
+        # See set_retry_via_relay()'s own doc comment.
+        self._retry_via_relay = False
         os.makedirs(storage_path, exist_ok=True)
 
         # user_sub -> unix timestamp of that user's last successful
@@ -250,6 +252,108 @@ class MessagingService:
         (distinct from Kotlin's persisted DataStore copy, which is only
         the source of truth *at boot replay time*, not afterward)."""
         return self._contacts_only_messages
+
+    def set_retry_via_relay(self, enabled: bool) -> None:
+        """Per the Columba-parity-audit's own "retry via relay on
+        failure" finding (confirmed real against its source,
+        `MessageDeliveryRetrievalCard.kt`, during a fresh audit pass) —
+        the send-side complement to this app's own propagation-node
+        *pull* sync (lxmf_sync.py's `PropagationSyncService`, which only
+        ever retrieves messages queued *for* this device). When on, a
+        failed direct/opportunistic send automatically gets one retry
+        through a propagation node instead — see
+        `_should_retry_via_relay`/`_attempt_relay_retry`'s own doc
+        comments for the real mechanics.
+
+        Python-side ephemeral, same shape as `set_contacts_only_messages`
+        — but unlike that one, deliberately **not** given real Kotlin
+        DataStore persistence: this is a delivery-reliability preference,
+        not a privacy-protective one, so resetting to its default (off)
+        on restart is an acceptable minor inconvenience, not the kind of
+        footgun that justified extra persistence machinery for contacts-
+        only mode. Matches `_auto_announce_master_enabled`'s own already-
+        accepted ephemeral precedent."""
+        self._retry_via_relay = bool(enabled)
+
+    def get_retry_via_relay(self) -> bool:
+        return self._retry_via_relay
+
+    def _should_retry_via_relay(self, router) -> bool:
+        """The real decision logic, kept separate from
+        `_attempt_relay_retry`'s actual LXMessage-construction mechanics
+        so it's unit-testable without needing a live RNS/LXMF Router
+        (same "policy vs mechanism" split this module already uses
+        elsewhere, e.g. `_allows_sender` vs `_on_delivery`).
+
+        False whenever [set_retry_via_relay] is off, or when the router
+        has no outbound propagation node configured yet — real LXMF
+        (`LXMRouter.handle_outbound`, confirmed directly against its
+        source) raises immediately on a PROPAGATED-method send with none
+        set, so this check is what keeps a retry attempt from ever being
+        pointless/guaranteed-to-fail. `router.get_outbound_propagation_node()`
+        is populated as a side effect of `PropagationSyncService`'s own
+        already-running periodic sync loop (`set_outbound_propagation_node`,
+        called every tick once any propagation node is discovered) — this
+        method doesn't need to know anything about that service directly,
+        just read the router's own already-real field."""
+        if not self._retry_via_relay:
+            return False
+        try:
+            return router.get_outbound_propagation_node() is not None
+        except Exception:
+            return False
+
+    def _attempt_relay_retry(
+        self, msg_id: str, dest_hash_hex: str, lxmf_dest, source_dest,
+        content: str, title: str, fields: dict, router,
+    ) -> None:
+        """Builds and queues a second delivery attempt for the same
+        message content, this time with `desired_method=PROPAGATED` —
+        called once, from `_send()`'s own `_failed` callback, only after
+        [_should_retry_via_relay] has already confirmed a real
+        propagation node is configured. Updates the *same* `msg_id`
+        entry in message_store (not a duplicate message) once this
+        second attempt itself resolves — `_record_send_result`'s own
+        `via_relay=True` just changes the log line, the storage shape is
+        identical either way (so the UI's own delivery-diagnostics
+        dialog needs no special-casing for a relay-retried message)."""
+        import LXMF
+        try:
+            relay_msg = LXMF.LXMessage(
+                lxmf_dest, source_dest, content,
+                title=title or "", fields=fields or None,
+                desired_method=LXMF.LXMessage.PROPAGATED,
+            )
+            relay_msg.register_delivery_callback(
+                lambda m: self._record_send_result(msg_id, dest_hash_hex, m, "delivered", via_relay=True)
+            )
+            relay_msg.register_failed_callback(
+                lambda m: self._record_send_result(msg_id, dest_hash_hex, m, "failed", via_relay=True)
+            )
+            router.handle_outbound(relay_msg)
+            log.info("Retrying %s via relay after direct delivery failed", msg_id[:8])
+        except Exception:
+            log.exception("Retry-via-relay failed to queue for %s", msg_id[:8])
+
+    def _record_send_result(self, msg_id: str, dest_hash_hex: str, m, state: str, via_relay: bool) -> None:
+        """Shared storage-update logic for both the initial delivery
+        attempt and a relay retry's own delivered/failed outcome — see
+        `_attempt_relay_retry`'s own doc comment for why both write to
+        the same `msg_id` entry rather than creating a second one."""
+        if self._msg_store:
+            self._msg_store.update_sent(
+                msg_id, state,
+                real_id=(m.hash.hex() if state == "delivered" and m.hash else None),
+                method=_LXMF_METHOD_NAMES.get(m.method, "unknown"),
+                transport_encrypted=m.transport_encrypted,
+                delivery_attempts=m.delivery_attempts,
+                rssi=m.rssi, snr=m.snr, quality=m.q,
+            )
+        suffix = " (via relay)" if via_relay else ""
+        if state == "delivered":
+            log.info("Delivered %s → %s%s", msg_id[:8], dest_hash_hex[:16], suffix)
+        else:
+            log.warning("Delivery failed %s → %s%s", msg_id[:8], dest_hash_hex[:16], suffix)
 
     def purge_expired_messages(self) -> int:
         """Sweeps every disappearing message whose timer has elapsed —
@@ -1050,27 +1154,19 @@ class MessagingService:
                 # and this will start populating for real the moment a
                 # radio interface that reports it is actually attached.
                 def _delivered(_m):
-                    real_id = _m.hash.hex() if _m.hash else msg_id
-                    if self._msg_store:
-                        self._msg_store.update_sent(
-                            msg_id, "delivered", real_id=real_id,
-                            method=_LXMF_METHOD_NAMES.get(_m.method, "unknown"),
-                            transport_encrypted=_m.transport_encrypted,
-                            delivery_attempts=_m.delivery_attempts,
-                            rssi=_m.rssi, snr=_m.snr, quality=_m.q,
-                        )
-                    log.info("Delivered %s → %s", msg_id[:8], dest_hash_hex[:16])
+                    self._record_send_result(msg_id, dest_hash_hex, _m, "delivered", via_relay=False)
 
                 def _failed(_m):
-                    if self._msg_store:
-                        self._msg_store.update_sent(
-                            msg_id, "failed",
-                            method=_LXMF_METHOD_NAMES.get(_m.method, "unknown"),
-                            transport_encrypted=_m.transport_encrypted,
-                            delivery_attempts=_m.delivery_attempts,
-                            rssi=_m.rssi, snr=_m.snr, quality=_m.q,
+                    self._record_send_result(msg_id, dest_hash_hex, _m, "failed", via_relay=False)
+                    # Real "retry via relay" mechanic — see
+                    # _should_retry_via_relay's own doc comment for the
+                    # real precondition (a propagation node must already
+                    # be configured; this never guesses/fabricates one).
+                    if self._should_retry_via_relay(router):
+                        self._attempt_relay_retry(
+                            msg_id, dest_hash_hex, lxmf_dest, source_dest,
+                            content, title, fields, router,
                         )
-                    log.warning("Delivery failed %s → %s", msg_id[:8], dest_hash_hex[:16])
 
                 lxmf_msg.register_delivery_callback(_delivered)
                 lxmf_msg.register_failed_callback(_failed)
