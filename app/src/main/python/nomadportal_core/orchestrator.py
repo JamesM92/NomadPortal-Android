@@ -1647,6 +1647,27 @@ def import_scanned_contact(dest_hash_hex: str, public_key_hex: str) -> None:
     set_contact_favorite(dest_hash_hex, True)
 
 
+def set_messages_contacts_only(enabled: bool) -> None:
+    """Global "Messages from contacts only" allowlist toggle — per the
+    Columba-parity-audit's own real finding (`PrivacyCard.kt`, confirmed
+    during a fresh audit pass). Real enforcement lives in messaging.py's
+    `_on_delivery`/`_allows_sender` — see that function's own doc
+    comment; this is just the bridge setter.
+
+    In-memory on the Python side (mirrors `set_auto_announce_master`'s
+    own shape) — the real persisted copy lives in Kotlin's DataStore
+    (SettingsRepository), replayed into this at app startup via the
+    exact same `NomadPortalApp.kt` boot-sequence pattern the TCP/
+    Bluetooth/Wi-Fi/node-hosting toggles already use. Unlike auto-
+    announce-master (which is allowed to silently reset to its documented
+    default on every restart), a *privacy*-protective toggle silently
+    resetting to permissive would be a real footgun — that's specifically
+    why this one gets a real boot-time replay rather than being left
+    ephemeral like that one."""
+    if _messaging is not None:
+        _messaging.set_contacts_only_messages(enabled)
+
+
 def mark_conversation_unread(contact_hash: str) -> None:
     """The inverse of mark_conversation_read, but deliberately not its
     mirror image: marking every message in a conversation unread again
@@ -1995,6 +2016,8 @@ def get_announce_status_json() -> str:
     lxmf_address, not just the address alone, is what lets a scanned
     contact be immediately reachable without waiting for a mesh
     announce — see import_scanned_contact()'s own doc comment),
+    contacts_only_messages (bool — the live, enforced allowlist-mode
+    state; see set_messages_contacts_only()'s own doc comment),
     identity_hash (nullable — the raw RNS Identity hash,
     a genuinely different value from lxmf_address: that's the "lxmf.
     delivery" *destination* hash derived from this identity, not the
@@ -2009,11 +2032,13 @@ def get_announce_status_json() -> str:
     lxmf_address = None
     last_announce_at = None
     public_key = None
+    contacts_only_messages = False
     if _messaging is not None:
         status = _messaging.get_announce_status(user_sub="")
         lxmf_address = status.get("lxmf_address")
         last_announce_at = status.get("last_announce_at")
         public_key = status.get("public_key")
+        contacts_only_messages = _messaging.get_contacts_only_messages()
     display_name = None
     identity_hash = None
     icon_glyph = None
@@ -2058,6 +2083,7 @@ def get_announce_status_json() -> str:
         "last_announce_at": last_announce_at,
         "lxmf_address": lxmf_address,
         "public_key": public_key,
+        "contacts_only_messages": contacts_only_messages,
         "identity_hash": identity_hash,
         "hosted_node_hash": hosted_node_hash,
         "display_name": display_name,

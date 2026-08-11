@@ -4,6 +4,7 @@ import android.util.Base64
 import androidx.compose.ui.graphics.Color
 import com.chaquo.python.PyException
 import com.chaquo.python.Python
+import com.jamesm92.nomadportal.data.SettingsRepository
 import java.io.IOException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
@@ -32,8 +33,13 @@ import org.json.JSONObject
  * conversation-shaped themselves (a `ContactStore` entry alone
  * under-reports who you've talked to; message history alone misses
  * saved-but-never-messaged contacts).
+ *
+ * [settings] is used for exactly one thing today —
+ * [setMessagesContactsOnly]'s real DataStore persistence — not a general
+ * dependency every method here needs; every other method is a pure
+ * Python-bridge call, same as before this parameter existed.
  */
-class RealMessagingRepository : MessagingRepository {
+class RealMessagingRepository(private val settings: SettingsRepository) : MessagingRepository {
     private val orchestrator by lazy {
         Python.getInstance().getModule("nomadportal_core.orchestrator")
     }
@@ -192,6 +198,13 @@ class RealMessagingRepository : MessagingRepository {
         }
     }
 
+    override suspend fun setMessagesContactsOnly(enabled: Boolean) {
+        withContext(Dispatchers.IO) {
+            orchestrator.callAttr("set_messages_contacts_only", enabled)
+        }
+        settings.setMessagesContactsOnly(enabled)
+    }
+
     private fun fetchPropagationSyncStatus(): PropagationSyncStatus {
         val obj = JSONObject(orchestrator.callAttr("get_propagation_sync_status_json").toString())
         return PropagationSyncStatus(
@@ -264,6 +277,7 @@ class RealMessagingRepository : MessagingRepository {
             } else {
                 obj.optString("send_blocked_reason")
             },
+            messagesContactsOnly = obj.optBoolean("contacts_only_messages", false),
         )
     }
 

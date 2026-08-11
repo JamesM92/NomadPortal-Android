@@ -501,6 +501,50 @@ fun SettingsScreen(
                 }
 
                 item {
+                    // Per the Columba-parity-audit's own "Messages from
+                    // contacts only" finding (PrivacyCard.kt, confirmed
+                    // during a fresh audit pass) — a proactive allowlist,
+                    // complementing (not replacing) per-contact blocking
+                    // elsewhere in this app. Header-level Switch, same
+                    // "visible even while collapsed" shape as Auto
+                    // Announce's own master toggle above.
+                    CollapsibleSection(
+                        title = "Privacy",
+                        expanded = SettingsSection.PRIVACY in expandedSections,
+                        onToggleExpanded = { toggleSection(SettingsSection.PRIVACY) },
+                        headerTrailing = {
+                            announceStatus?.let { status ->
+                                Switch(
+                                    checked = status.messagesContactsOnly,
+                                    onCheckedChange = {
+                                        scope.launch { messagingRepository.setMessagesContactsOnly(it) }
+                                    },
+                                )
+                            }
+                        },
+                    ) {
+                        announceStatus?.let { status ->
+                            Text(
+                                text = "Messages from contacts only",
+                                style = MaterialTheme.typography.bodyMedium,
+                                modifier = Modifier.padding(start = 16.dp, end = 16.dp, top = 4.dp),
+                            )
+                            Text(
+                                text = if (status.messagesContactsOnly) {
+                                    "Only contacts can message you. Messages from unknown " +
+                                        "senders are silently discarded."
+                                } else {
+                                    "Anyone can send you messages, including unknown senders."
+                                },
+                                style = MaterialTheme.typography.bodySmall,
+                                color = NomadTextDim,
+                                modifier = Modifier.padding(start = 16.dp, end = 16.dp, bottom = 4.dp),
+                            )
+                        }
+                    }
+                }
+
+                item {
                     var showQrDialog by remember { mutableStateOf(false) }
                     CollapsibleSection(
                         title = "Addresses",
@@ -584,7 +628,7 @@ fun SettingsScreen(
  * single scrollable page — see that function's own doc comment for why
  * this isn't an accordion (multiple sections can be open at once). */
 private enum class SettingsSection {
-    TCP, BLUETOOTH, RNODE, LAN, HOSTING, ANNOUNCE, ADDRESSES, APPEARANCE
+    TCP, BLUETOOTH, RNODE, LAN, HOSTING, ANNOUNCE, PRIVACY, ADDRESSES, APPEARANCE
 }
 
 /**

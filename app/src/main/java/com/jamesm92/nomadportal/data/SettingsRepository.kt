@@ -50,6 +50,20 @@ class SettingsRepository(context: Context) {
     val hasSeenDisappearingMessagesNotice: Flow<Boolean> =
         boolFlow(KEY_DISAPPEARING_MESSAGES_NOTICE_SEEN, default = false)
 
+    // "Messages from contacts only" allowlist mode (per the Columba-
+    // parity-audit's own PrivacyCard.kt finding) — silently discards any
+    // inbound message from a sender who isn't already a known contact;
+    // real enforcement lives in messaging.py's _on_delivery. Defaults
+    // off (matches every other privacy-narrowing toggle in this app —
+    // nothing new gets *more* restrictive than before without the user
+    // explicitly opting in). Persisted here (unlike Settings' own Auto
+    // Announce master toggle, which is deliberately left Python-side
+    // ephemeral) specifically because a privacy-protective toggle
+    // silently resetting to permissive on every app restart would be a
+    // real footgun — see RealMessagingRepository's own doc comment for
+    // the boot-replay this enables.
+    val messagesContactsOnly: Flow<Boolean> = boolFlow(KEY_MESSAGES_CONTACTS_ONLY, default = false)
+
     // User-adjustable app-wide text scale, applied by NomadPortalTheme to
     // NomadTypography (see Theme.kt) — a multiplier, not an absolute size,
     // so it scales consistently with whatever base sizes the theme
@@ -69,6 +83,7 @@ class SettingsRepository(context: Context) {
     suspend fun setOnboardingComplete(completed: Boolean) = setBool(KEY_ONBOARDING_COMPLETE, completed)
     suspend fun setSeenDisappearingMessagesNotice(seen: Boolean) =
         setBool(KEY_DISAPPEARING_MESSAGES_NOTICE_SEEN, seen)
+    suspend fun setMessagesContactsOnly(enabled: Boolean) = setBool(KEY_MESSAGES_CONTACTS_ONLY, enabled)
 
     suspend fun setTextScale(scale: Float) {
         dataStore.edit { it[KEY_TEXT_SCALE] = scale.coerceIn(MIN_TEXT_SCALE, MAX_TEXT_SCALE) }
@@ -94,5 +109,6 @@ class SettingsRepository(context: Context) {
         private val KEY_TEXT_SCALE = floatPreferencesKey("text_scale")
         private val KEY_ONBOARDING_COMPLETE = booleanPreferencesKey("onboarding_complete")
         private val KEY_DISAPPEARING_MESSAGES_NOTICE_SEEN = booleanPreferencesKey("disappearing_messages_notice_seen")
+        private val KEY_MESSAGES_CONTACTS_ONLY = booleanPreferencesKey("messages_contacts_only")
     }
 }

@@ -319,6 +319,17 @@ data class AnnounceStatus(
     val iconAppearance: ContactIcon.Appearance?,
     val sendBlocked: Boolean,
     val sendBlockedReason: String?,
+    /** Live, enforced state of the "Messages from contacts only"
+     * allowlist mode — per the Columba-parity-audit's own real
+     * `PrivacyCard.kt` finding. When true, `messaging.py`'s
+     * `_on_delivery` silently discards any inbound message from a
+     * sender who isn't already a known contact — a proactive complement
+     * to per-sender blocking ([Contact.isBlocked]), not a replacement
+     * for it. See [MessagingRepository.setMessagesContactsOnly]'s own
+     * doc comment for why this one gets real persistence (unlike
+     * [autoAnnounceMasterEnabled], which is deliberately left
+     * Python-side ephemeral). */
+    val messagesContactsOnly: Boolean,
 ) {
     companion object {
         const val INTERFACE_TCP = "tcp"

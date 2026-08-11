@@ -133,6 +133,20 @@ class NomadPortalApp : Application() {
                     // further to do here at boot time.
                 }
             }
+            // Replays the persisted "Messages from contacts only" choice
+            // into messaging.py's own in-memory enforcement flag — same
+            // pattern as the four toggles above, and for the same reason
+            // (see SettingsRepository.messagesContactsOnly's own doc
+            // comment: this one specifically needs a real boot-time
+            // replay, unlike Settings' Auto Announce master toggle,
+            // which is allowed to stay ephemeral). Called directly
+            // against `orchestrator` rather than through
+            // `messagingRepository` — that repository isn't constructed
+            // until just below this block, and there's no need to wait
+            // for it when the plain bridge call already does the job.
+            if (settingsRepository.messagesContactsOnly.first()) {
+                orchestrator.callAttr("set_messages_contacts_only", true)
+            }
         }
 
         // Real, orchestrator-backed repositories (Aug 2026) — replaced
@@ -145,7 +159,7 @@ class NomadPortalApp : Application() {
         // finishes, since every bridge function degrades to an empty
         // result rather than erroring while _browser/_messaging are
         // still None.
-        messagingRepository = RealMessagingRepository()
+        messagingRepository = RealMessagingRepository(settingsRepository)
         browserRepository = RealBrowserRepository()
         // Phase 1a/1b of a real voice-call feature (signalling +
         // audio — see python-core's call_manager.py). Same

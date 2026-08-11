@@ -276,6 +276,54 @@ def test_is_blocked_false_with_no_contact_mgr(tmp_path):
 
 
 # ---------------------------------------------------------------------------
+# Contacts-only messaging (allowlist mode)
+# ---------------------------------------------------------------------------
+
+
+def test_allows_sender_true_by_default(service):
+    # contacts-only mode defaults off — every sender is allowed,
+    # regardless of whether a ContactStore entry exists.
+    service._contact_mgr = _StubContactMgr({})
+    assert service._allows_sender(DEST_HASH, "u1") is True
+
+
+def test_allows_sender_false_for_unknown_sender_when_contacts_only_enabled(service):
+    service.set_contacts_only_messages(True)
+    service._contact_mgr = _StubContactMgr({})
+    assert service._allows_sender(DEST_HASH, "u1") is False
+
+
+def test_allows_sender_true_for_known_contact_when_contacts_only_enabled(service):
+    service.set_contacts_only_messages(True)
+    # A real ContactStore entry exists (favorited, blocked=False, or any
+    # other real entry shape) — being *known* is what matters here, not
+    # any particular field on the entry.
+    service._contact_mgr = _StubContactMgr({DEST_HASH: {"favorited": True}})
+    assert service._allows_sender(DEST_HASH, "u1") is True
+
+
+def test_allows_sender_false_with_no_contact_mgr_when_contacts_only_enabled(tmp_path):
+    svc = MessagingService(storage_path=str(tmp_path), message_store=_StubMessageStore())
+    svc.set_contacts_only_messages(True)
+    assert svc._allows_sender(DEST_HASH, "u1") is False
+
+
+def test_set_contacts_only_messages_can_be_toggled_back_off(service):
+    service.set_contacts_only_messages(True)
+    service._contact_mgr = _StubContactMgr({})
+    assert service._allows_sender(DEST_HASH, "u1") is False
+
+    service.set_contacts_only_messages(False)
+    assert service._allows_sender(DEST_HASH, "u1") is True
+
+
+def test_get_contacts_only_messages_reflects_current_state(service):
+    assert service.get_contacts_only_messages() is False
+    service.set_contacts_only_messages(True)
+    assert service.get_contacts_only_messages() is True
+
+
+# ---------------------------------------------------------------------------
 # mark_unread
 # ---------------------------------------------------------------------------
 

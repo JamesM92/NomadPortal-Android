@@ -165,10 +165,15 @@ class StubMessagingRepository(private val scope: CoroutineScope) : MessagingRepo
             iconAppearance = ContactIcon.Appearance("hiking", Color(0xFF7EC8A0), Color.White),
             sendBlocked = false,
             sendBlockedReason = null,
+            messagesContactsOnly = false,
         )
     )
 
     override fun announceStatus(): StateFlow<AnnounceStatus> = announceStatus.asStateFlow()
+
+    override suspend fun setMessagesContactsOnly(enabled: Boolean) {
+        announceStatus.value = announceStatus.value.copy(messagesContactsOnly = enabled)
+    }
 
     override suspend fun setAnnounceMax(interfaceKey: String, seconds: Int) {
         updateInterfaceConfig(interfaceKey) { it.copy(announceMaxSeconds = seconds) }

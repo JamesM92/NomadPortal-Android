@@ -171,4 +171,16 @@ interface MessagingRepository {
      * philosophy for an invalid/unreachable manually-entered address.
      */
     suspend fun importScannedContact(destinationHash: String, publicKeyHex: String)
+
+    /**
+     * "Messages from contacts only" allowlist mode — see
+     * [AnnounceStatus.messagesContactsOnly]'s own doc comment for what
+     * this actually does. Unlike most of this interface's other
+     * `suspend fun` setters (Python-bridge only), this one also persists
+     * the choice (Kotlin DataStore) so it survives an app restart —
+     * deliberately, since a privacy-protective toggle silently resetting
+     * to permissive on restart would be a real footgun, not just a minor
+     * inconvenience like most of this app's other ephemeral toggles.
+     */
+    suspend fun setMessagesContactsOnly(enabled: Boolean)
 }

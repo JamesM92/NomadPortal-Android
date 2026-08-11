@@ -152,6 +152,8 @@ class MessagingService:
         self._identity_store = None
         # user_sub -> {"router": LXMRouter, "dest": Destination}
         self._user_routers: dict = {}
+        # See set_contacts_only_messages()'s own doc comment.
+        self._contacts_only_messages = False
         os.makedirs(storage_path, exist_ok=True)
 
         # user_sub -> unix timestamp of that user's last successful
@@ -202,6 +204,52 @@ class MessagingService:
             return False
         entry = self._contact_mgr.for_user(user_sub).get(hash_hex)
         return bool(entry.get("blocked")) if entry else False
+
+    def set_contacts_only_messages(self, enabled: bool) -> None:
+        """Global allowlist mode — per the Columba-parity-audit's own
+        "Messages from contacts only" finding (confirmed real against its
+        source, `PrivacyCard.kt`, during a fresh audit pass): when on,
+        `_on_delivery` silently discards any inbound message from a
+        sender who isn't already a known contact, the same "dropped
+        outright, never stored, never surfaced" enforcement `_is_blocked`
+        already uses — this is a stronger, proactive complement to that
+        reactive per-sender block list, not a replacement for it (both
+        checks run; either one dropping a message is final).
+
+        In-memory only, same as `orchestrator.py`'s own
+        `_auto_announce_master_enabled` — the real persisted source of
+        truth lives in Kotlin's DataStore (SettingsRepository), replayed
+        into this flag once at app startup via
+        `set_messages_contacts_only()`
+        (`NomadPortalApp.kt`'s own boot sequence, mirroring exactly how
+        the TCP/Bluetooth/Wi-Fi/node-hosting toggles already get replayed
+        the same way) — unlike auto-announce-master, a *privacy*-
+        protective toggle silently resetting to permissive on every
+        restart would be a real footgun, so this one deliberately does
+        get a real persisted replay, not left ephemeral."""
+        self._contacts_only_messages = bool(enabled)
+
+    def _allows_sender(self, hash_hex: str, user_sub: str) -> bool:
+        """True unless contacts-only mode is on and this sender isn't a
+        known contact — see `set_contacts_only_messages`'s own doc
+        comment for the real enforcement point and rationale. "Known
+        contact" means a real ContactStore entry exists (favorited,
+        manually added, or previously named) — matching every other
+        contact-identity check in this file, not "has ever messaged
+        before" (which would make an allowlist meaningless: the very
+        first message from anyone would already satisfy it)."""
+        if not self._contacts_only_messages:
+            return True
+        if not self._contact_mgr or not hash_hex:
+            return False
+        return self._contact_mgr.for_user(user_sub).get(hash_hex) is not None
+
+    def get_contacts_only_messages(self) -> bool:
+        """Current in-memory state — orchestrator.py's own status getter
+        reads this to report the live, enforced value back to the UI
+        (distinct from Kotlin's persisted DataStore copy, which is only
+        the source of truth *at boot replay time*, not afterward)."""
+        return self._contacts_only_messages
 
     def purge_expired_messages(self) -> int:
         """Sweeps every disappearing message whose timer has elapsed —
@@ -680,6 +728,16 @@ class MessagingService:
         # set_contact_blocked() only ever flips a flag in ContactStore.
         if self._is_blocked(source_hex, user_sub):
             log.info("Dropped inbound message from blocked contact %s", source_hex[:16])
+            return
+
+        # Same "dropped outright, before any content processing" shape
+        # as the blocked-sender check above — see _allows_sender's own
+        # doc comment for what "known contact" means here.
+        if not self._allows_sender(source_hex, user_sub):
+            log.info(
+                "Dropped inbound message from non-contact sender %s (contacts-only mode)",
+                source_hex[:16],
+            )
             return
 
         def _decode(val) -> str:
