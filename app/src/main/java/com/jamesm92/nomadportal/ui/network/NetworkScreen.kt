@@ -114,7 +114,21 @@ fun NetworkScreen(
     val bluetoothMeshStatus by interfaceController.bluetoothMeshStatus()
         .collectAsState(initial = BluetoothMeshStatus(neighborCount = 0, lastActivityAtMillis = null))
 
-    var announcesOpen by remember { mutableStateOf(false) }
+    // Both default collapsed except Announces — per a real on-device
+    // report ("a bunch of the hard written network stats at the top
+    // making it impossible to scroll and see the network search
+    // tools"): the interface-status block below used to always render
+    // fully expanded, with no way to scroll past it (the outer Column
+    // itself doesn't scroll — only Announces' own inner LazyColumn
+    // does), so on a device where that fixed content is tall enough it
+    // could crowd out — or entirely hide — Announces' search/sort/filter
+    // tools with no way to reach them. Wrapping Interfaces in the same
+    // collapsible pattern Announces already uses, and defaulting it
+    // closed, means Announces (what a user opening this tab most likely
+    // wants) always gets the screen by default; Interfaces is still one
+    // tap away, not removed.
+    var interfacesOpen by remember { mutableStateOf(false) }
+    var announcesOpen by remember { mutableStateOf(true) }
 
     Scaffold(
         topBar = { AdaptiveTopAppBar(title = { Text("Network") }) },
@@ -137,56 +151,64 @@ fun NetworkScreen(
                 .padding(innerPadding)
                 .dismissKeyboardOnTap(),
         ) {
-            Text(
-                text = "Live per-connection status is available for TCP and Bluetooth mesh. " +
-                    "RNode and local network discovery show on/off state only. Toggles live in Settings.",
-                style = MaterialTheme.typography.labelSmall,
-                color = NomadTextDim,
-                modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp),
+            ExpandableSectionHeader(
+                title = "Interfaces",
+                count = null,
+                expanded = interfacesOpen,
+                onToggle = { interfacesOpen = !interfacesOpen },
             )
-            HorizontalDivider()
+            if (interfacesOpen) {
+                Text(
+                    text = "Live per-connection status is available for TCP and Bluetooth mesh. " +
+                        "RNode and local network discovery show on/off state only. Toggles live in Settings.",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = NomadTextDim,
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp),
+                )
+                HorizontalDivider()
 
-            InterfaceStatusRow(
-                label = "TCP",
-                enabled = tcpEnabled,
-                detail = if (!tcpEnabled) {
-                    null
-                } else if (tcpConnections.isEmpty()) {
-                    "No connections configured"
-                } else {
-                    val online = tcpConnections.count { it.enabled && it.online }
-                    val configured = tcpConnections.count { it.enabled }
-                    "$online of $configured connections online"
-                },
-            )
-            if (tcpEnabled) {
-                // Plain forEach, not lazy — a user-configured connection
-                // list realistically stays small (single digits), unlike
-                // the Announces section below.
-                tcpConnections.forEach { connection -> TcpConnectionStatusRow(connection) }
+                InterfaceStatusRow(
+                    label = "TCP",
+                    enabled = tcpEnabled,
+                    detail = if (!tcpEnabled) {
+                        null
+                    } else if (tcpConnections.isEmpty()) {
+                        "No connections configured"
+                    } else {
+                        val online = tcpConnections.count { it.enabled && it.online }
+                        val configured = tcpConnections.count { it.enabled }
+                        "$online of $configured connections online"
+                    },
+                )
+                if (tcpEnabled) {
+                    // Plain forEach, not lazy — a user-configured connection
+                    // list realistically stays small (single digits), unlike
+                    // the Announces section below.
+                    tcpConnections.forEach { connection -> TcpConnectionStatusRow(connection) }
+                }
+                HorizontalDivider()
+
+                InterfaceStatusRow(
+                    label = "Bluetooth mesh",
+                    enabled = bluetoothMeshEnabled,
+                    detail = if (!bluetoothMeshEnabled) {
+                        null
+                    } else if (bluetoothMeshStatus.neighborCount == 0) {
+                        "On · no neighbors seen yet"
+                    } else {
+                        "On · ${bluetoothMeshStatus.neighborCount} neighbor" +
+                            (if (bluetoothMeshStatus.neighborCount == 1) "" else "s") +
+                            " seen · last ${formatRelativeTime(bluetoothMeshStatus.lastActivityAtMillis)}"
+                    },
+                )
+                HorizontalDivider()
+
+                InterfaceStatusRow(label = "RNode", enabled = rNodeEnabled)
+                HorizontalDivider()
+
+                InterfaceStatusRow(label = "Local network discovery", enabled = wifiDiscoveryEnabled)
+                HorizontalDivider()
             }
-            HorizontalDivider()
-
-            InterfaceStatusRow(
-                label = "Bluetooth mesh",
-                enabled = bluetoothMeshEnabled,
-                detail = if (!bluetoothMeshEnabled) {
-                    null
-                } else if (bluetoothMeshStatus.neighborCount == 0) {
-                    "On · no neighbors seen yet"
-                } else {
-                    "On · ${bluetoothMeshStatus.neighborCount} neighbor" +
-                        (if (bluetoothMeshStatus.neighborCount == 1) "" else "s") +
-                        " seen · last ${formatRelativeTime(bluetoothMeshStatus.lastActivityAtMillis)}"
-                },
-            )
-            HorizontalDivider()
-
-            InterfaceStatusRow(label = "RNode", enabled = rNodeEnabled)
-            HorizontalDivider()
-
-            InterfaceStatusRow(label = "Local network discovery", enabled = wifiDiscoveryEnabled)
-            HorizontalDivider()
 
             AnnouncesSection(
                 messagingRepository = messagingRepository,
@@ -384,7 +406,7 @@ private fun AnnouncesSection(
 }
 
 @Composable
-private fun ExpandableSectionHeader(title: String, count: Int, expanded: Boolean, onToggle: () -> Unit) {
+private fun ExpandableSectionHeader(title: String, count: Int?, expanded: Boolean, onToggle: () -> Unit) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -394,7 +416,7 @@ private fun ExpandableSectionHeader(title: String, count: Int, expanded: Boolean
         horizontalArrangement = Arrangement.SpaceBetween,
     ) {
         Text(
-            text = "$title ($count)",
+            text = if (count != null) "$title ($count)" else title,
             style = MaterialTheme.typography.titleMedium,
             color = MaterialTheme.colorScheme.secondary,
         )
