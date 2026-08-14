@@ -127,3 +127,57 @@ def test_disconnect_does_not_override_failed_state():
     session._fail("some real failure")
     session.disconnect()
     assert session.status()["state"] == RnshSession.STATE_FAILED
+
+
+def test_on_link_closed_unexpectedly_while_connected_records_an_error():
+    # Real scenario found via an on-device test against a real rnsh
+    # listener over a real RNode LoRa interface: RNS's own reliable
+    # Channel exceeded its retry count on a lossy/slow link and tore the
+    # Link down out from under an active session, with no CommandExited
+    # and no user-initiated disconnect() first.
+    session = _make_session()
+    session._state = RnshSession.STATE_CONNECTED
+
+    session._on_link_closed(link=None)
+
+    status = session.status()
+    assert status["state"] == RnshSession.STATE_CLOSED
+    assert status["error"] == "Connection lost (link closed unexpectedly)"
+
+
+def test_on_link_closed_after_clean_command_exit_does_not_add_an_error():
+    session = _make_session()
+    session._state = RnshSession.STATE_CONNECTED
+    session._on_message(session._msg["CommandExited"](return_code=0))
+
+    # RNS closes the link after a clean exit too — must not clobber the
+    # already-clean CLOSED state with a spurious "connection lost" error.
+    session._on_link_closed(link=None)
+
+    status = session.status()
+    assert status["state"] == RnshSession.STATE_CLOSED
+    assert status["error"] is None
+    assert status["exit_code"] == 0
+
+
+def test_on_link_closed_after_user_disconnect_does_not_add_an_error():
+    session = _make_session()
+    session._state = RnshSession.STATE_CONNECTED
+    session.disconnect()
+
+    # disconnect() already set CLOSED before tearing the link down; the
+    # resulting callback firing afterward must not add a spurious error.
+    session._on_link_closed(link=None)
+
+    assert session.status()["error"] is None
+
+
+def test_on_link_closed_does_not_override_failed_state():
+    session = _make_session()
+    session._fail("some real failure")
+
+    session._on_link_closed(link=None)
+
+    status = session.status()
+    assert status["state"] == RnshSession.STATE_FAILED
+    assert status["error"] == "some real failure"

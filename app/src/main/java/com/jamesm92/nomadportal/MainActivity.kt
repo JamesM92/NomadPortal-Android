@@ -37,6 +37,7 @@ class MainActivity : ComponentActivity() {
                         siteFileRepository = app.siteFileRepository,
                         callRepository = app.callRepository,
                         rnshRepository = app.rnshRepository,
+                        rnshHistoryRepository = app.rnshHistoryRepository,
                     )
                 }
             }

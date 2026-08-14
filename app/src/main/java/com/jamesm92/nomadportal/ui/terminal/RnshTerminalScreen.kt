@@ -1,5 +1,7 @@
 package com.jamesm92.nomadportal.ui.terminal
 
+import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -7,11 +9,17 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material3.Button
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -35,12 +43,20 @@ import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
 import com.jamesm92.nomadportal.data.rnsh.RnshConnectionState
+import com.jamesm92.nomadportal.data.rnsh.RnshHistoryEntry
+import com.jamesm92.nomadportal.data.rnsh.RnshHistoryOutcome
+import com.jamesm92.nomadportal.data.rnsh.RnshHistoryRepository
 import com.jamesm92.nomadportal.data.rnsh.RnshRepository
 import com.jamesm92.nomadportal.data.rnsh.RnshStatus
 import com.jamesm92.nomadportal.ui.components.AdaptiveTopAppBar
+import com.jamesm92.nomadportal.ui.components.Identicon
+import com.jamesm92.nomadportal.ui.components.hexToByteArray
+import com.jamesm92.nomadportal.ui.theme.NomadAccent2
+import com.jamesm92.nomadportal.ui.theme.NomadError
 import com.jamesm92.nomadportal.ui.theme.NomadMono
 import com.jamesm92.nomadportal.ui.theme.NomadTextDim
 import kotlinx.coroutines.launch
@@ -64,6 +80,13 @@ import kotlinx.coroutines.launch
  * effect: shell history recall via the Up arrow and live tab-completion
  * don't work; running a command and reading its output does.
  *
+ * **Recent connections**: [historyRepository] remembers every distinct
+ * destination this device has attempted (success or failure, with a
+ * real error message on failure), each shown with a real deterministic
+ * [Identicon] and an optional user-set nickname — purely local
+ * bookkeeping, never announced anywhere. See [RnshHistoryRepository]'s
+ * own doc comment.
+ *
  * **ANSI rendering is deliberately partial**: SGR color/bold codes
  * (`\x1b[...m`) are parsed into real colored/styled text spans; every
  * other escape sequence (cursor positioning, clear-screen, etc.) is
@@ -76,10 +99,15 @@ import kotlinx.coroutines.launch
  * for the reasoning if this ever needs revisiting.
  */
 @Composable
-fun RnshTerminalScreen(repository: RnshRepository, onBack: () -> Unit) {
+fun RnshTerminalScreen(
+    repository: RnshRepository,
+    historyRepository: RnshHistoryRepository,
+    onBack: () -> Unit,
+) {
     val status by repository.status().collectAsState(
         initial = RnshStatus(RnshConnectionState.IDLE, null, null),
     )
+    val history by historyRepository.history().collectAsState(initial = emptyList())
     val scope = rememberCoroutineScope()
     var destinationHash by remember { mutableStateOf("") }
     var connectError by remember { mutableStateOf<String?>(null) }
@@ -87,6 +115,31 @@ fun RnshTerminalScreen(repository: RnshRepository, onBack: () -> Unit) {
     var terminalStyle by remember { mutableStateOf(TermStyleState()) }
     var terminalBuffer by remember { mutableStateOf(AnnotatedString("")) }
     val scrollState = rememberScrollState()
+    // The destination the *current* connect attempt is for, and a guard
+    // so a real terminal-state transition (CONNECTED/FAILED) only gets
+    // recorded into history once per attempt, not on every subsequent
+    // status poll tick while sitting in that same terminal state.
+    var currentAttemptHash by remember { mutableStateOf<String?>(null) }
+    var recordedOutcomeFor by remember { mutableStateOf<String?>(null) }
+    var renamingHash by remember { mutableStateOf<String?>(null) }
+    var renameDraft by remember { mutableStateOf("") }
+
+    LaunchedEffect(status.state, status.error, currentAttemptHash) {
+        val hash = currentAttemptHash ?: return@LaunchedEffect
+        val key = "$hash:${status.state}"
+        if (recordedOutcomeFor == key) return@LaunchedEffect
+        when (status.state) {
+            RnshConnectionState.CONNECTED -> {
+                recordedOutcomeFor = key
+                historyRepository.recordAttempt(hash, RnshHistoryOutcome.SUCCESS, null)
+            }
+            RnshConnectionState.FAILED -> {
+                recordedOutcomeFor = key
+                historyRepository.recordAttempt(hash, RnshHistoryOutcome.FAILED, status.error)
+            }
+            else -> Unit
+        }
+    }
 
     // Collects new output chunks only while a session is actually
     // running — outputChunks() polls Python regardless, but there's
@@ -165,12 +218,50 @@ fun RnshTerminalScreen(repository: RnshRepository, onBack: () -> Unit) {
                     style = MaterialTheme.typography.labelSmall,
                     color = NomadTextDim,
                 )
+
+                if (history.isNotEmpty()) {
+                    Text(
+                        "Recent connections",
+                        style = MaterialTheme.typography.labelMedium,
+                        color = NomadTextDim,
+                        modifier = Modifier.padding(top = 12.dp, bottom = 2.dp),
+                    )
+                    Column {
+                        history.forEach { entry ->
+                            RnshHistoryRow(
+                                entry = entry,
+                                isRenaming = renamingHash == entry.destinationHash,
+                                renameDraft = renameDraft,
+                                onRenameDraftChange = { renameDraft = it },
+                                onTap = {
+                                    destinationHash = entry.destinationHash
+                                    connectError = null
+                                },
+                                onStartRename = {
+                                    renamingHash = entry.destinationHash
+                                    renameDraft = entry.nickname ?: ""
+                                },
+                                onConfirmRename = {
+                                    scope.launch {
+                                        historyRepository.setNickname(entry.destinationHash, renameDraft)
+                                    }
+                                    renamingHash = null
+                                },
+                                onCancelRename = { renamingHash = null },
+                                onDelete = {
+                                    scope.launch { historyRepository.remove(entry.destinationHash) }
+                                },
+                            )
+                        }
+                    }
+                }
+
                 OutlinedTextField(
                     value = destinationHash,
                     onValueChange = { destinationHash = it.trim() },
                     singleLine = true,
                     label = { Text("Destination hash") },
-                    modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
+                    modifier = Modifier.fillMaxWidth().padding(top = 12.dp),
                 )
                 connectError?.let {
                     Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
@@ -203,6 +294,8 @@ fun RnshTerminalScreen(repository: RnshRepository, onBack: () -> Unit) {
                         connectError = null
                         terminalBuffer = AnnotatedString("")
                         terminalStyle = TermStyleState()
+                        currentAttemptHash = trimmed
+                        recordedOutcomeFor = null
                         scope.launch {
                             try {
                                 repository.connect(trimmed)
@@ -261,6 +354,113 @@ fun RnshTerminalScreen(repository: RnshRepository, onBack: () -> Unit) {
                 }
             }
         }
+    }
+}
+
+/**
+ * One row in [RnshTerminalScreen]'s "Recent connections" list — a real
+ * [Identicon] (deterministic from the raw destination-hash bytes, so
+ * the same destination always renders the same dot pattern), the
+ * nickname (or a truncated hash if none is set), and a small outcome
+ * indicator (a colored dot + relative time, [NomadAccent2] green for a
+ * last-successful connect, [NomadError] red with the failure reason for
+ * a last-failed one — same colored-dot convention as
+ * [com.jamesm92.nomadportal.ui.browser.NodeListScreen]'s own
+ * `FetchStatusDot`). Tapping the row (outside the trailing icon
+ * buttons) fills [RnshTerminalScreen]'s destination-hash field with
+ * this entry's hash — it does not auto-connect, so a stale/renamed
+ * entry can still be reviewed before tapping Connect.
+ */
+@Composable
+private fun RnshHistoryRow(
+    entry: RnshHistoryEntry,
+    isRenaming: Boolean,
+    renameDraft: String,
+    onRenameDraftChange: (String) -> Unit,
+    onTap: () -> Unit,
+    onStartRename: () -> Unit,
+    onConfirmRename: () -> Unit,
+    onCancelRename: () -> Unit,
+    onDelete: () -> Unit,
+) {
+    Row(
+        modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        Identicon(hash = entry.destinationHash.hexToByteArray(), size = 32.dp)
+
+        if (isRenaming) {
+            OutlinedTextField(
+                value = renameDraft,
+                onValueChange = onRenameDraftChange,
+                singleLine = true,
+                placeholder = { Text("Nickname") },
+                modifier = Modifier.weight(1f),
+            )
+            IconButton(onClick = onConfirmRename) {
+                Icon(Icons.Filled.Check, contentDescription = "Save nickname")
+            }
+            IconButton(onClick = onCancelRename) {
+                Icon(Icons.Filled.Close, contentDescription = "Cancel")
+            }
+        } else {
+            Column(
+                modifier = Modifier.weight(1f).clickable(onClick = onTap),
+            ) {
+                Text(
+                    text = entry.nickname
+                        ?: "${entry.destinationHash.take(8)}…${entry.destinationHash.takeLast(4)}",
+                    style = MaterialTheme.typography.bodyMedium,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                    val outcomeColor = if (entry.lastOutcome == RnshHistoryOutcome.SUCCESS) NomadAccent2 else NomadError
+                    Box(
+                        modifier = Modifier
+                            .size(8.dp)
+                            .background(color = outcomeColor, shape = CircleShape),
+                    )
+                    Text(
+                        text = buildString {
+                            append(formatRelativeTime(entry.lastAttemptAtMillis))
+                            if (entry.lastOutcome == RnshHistoryOutcome.FAILED && entry.lastError != null) {
+                                append(" — ")
+                                append(entry.lastError)
+                            }
+                        },
+                        style = MaterialTheme.typography.labelSmall,
+                        color = NomadTextDim,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
+            }
+            IconButton(onClick = onStartRename) {
+                Icon(Icons.Filled.Edit, contentDescription = "Rename", modifier = Modifier.size(18.dp))
+            }
+            IconButton(onClick = onDelete) {
+                Icon(Icons.Filled.Delete, contentDescription = "Remove from history", modifier = Modifier.size(18.dp))
+            }
+        }
+    }
+}
+
+/** Same relative-time bucketing this app's other screens each keep
+ * their own local copy of (see SettingsScreen's own
+ * `formatRelativeAnnounceTime` doc comment for why: each has its own
+ * "never" copy tailored to what it's describing, so sharing one isn't
+ * worth it) — this one has no "never" case since a history row always
+ * has a real [RnshHistoryEntry.lastAttemptAtMillis]. */
+private fun formatRelativeTime(millis: Long): String {
+    val diffSeconds = ((System.currentTimeMillis() - millis) / 1000).coerceAtLeast(0)
+    return when {
+        diffSeconds < 60 -> "just now"
+        diffSeconds < 3600 -> "${diffSeconds / 60}m ago"
+        diffSeconds < 86_400 -> "${diffSeconds / 3600}h ago"
+        diffSeconds < 2_592_000 -> "${diffSeconds / 86_400}d ago"
+        else -> "${diffSeconds / 2_592_000}mo ago"
     }
 }
 

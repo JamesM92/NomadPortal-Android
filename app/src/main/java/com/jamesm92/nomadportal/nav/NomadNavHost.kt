@@ -33,6 +33,7 @@ import com.jamesm92.nomadportal.data.calling.CallRepository
 import com.jamesm92.nomadportal.data.calling.CallState
 import com.jamesm92.nomadportal.data.hosting.SiteFileRepository
 import com.jamesm92.nomadportal.data.messaging.MessagingRepository
+import com.jamesm92.nomadportal.data.rnsh.RnshHistoryRepository
 import com.jamesm92.nomadportal.data.rnsh.RnshRepository
 import com.jamesm92.nomadportal.ui.browser.BrowserScreen
 import com.jamesm92.nomadportal.ui.browser.NodeListScreen
@@ -102,6 +103,7 @@ fun NomadNavHost(
     siteFileRepository: SiteFileRepository,
     callRepository: CallRepository,
     rnshRepository: RnshRepository,
+    rnshHistoryRepository: RnshHistoryRepository,
     navController: NavHostController = rememberNavController(),
 ) {
     // Overlaid on top of everything below, including the bottom nav bar
@@ -175,6 +177,7 @@ fun NomadNavHost(
         composable(Routes.RNSH_TERMINAL) {
             RnshTerminalScreen(
                 repository = rnshRepository,
+                historyRepository = rnshHistoryRepository,
                 onBack = { navController.popBackStack() },
             )
         }

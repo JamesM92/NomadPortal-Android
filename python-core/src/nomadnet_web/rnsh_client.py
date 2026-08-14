@@ -249,11 +249,20 @@ class RnshSession:
             self._fail("Destination hash is the wrong length")
             return
 
-        deadline = time.time() + CONNECT_TIMEOUT_S
+        # Each phase (path discovery, then link establishment) gets its
+        # own full CONNECT_TIMEOUT_S budget on its own clock — a single
+        # shared deadline across both was a real bug found via an
+        # on-device test against a real rnsh listener: path discovery
+        # alone can eat most of a 20s budget on a real mesh, silently
+        # starving the link-establishment wait that follows it and
+        # producing a misleading "could not establish a link" failure
+        # for what was actually just "ran out of time," not a real link
+        # problem.
+        path_deadline = time.time() + CONNECT_TIMEOUT_S
         if not RNS.Transport.has_path(dest_hash):
             RNS.Transport.request_path(dest_hash)
             while not RNS.Transport.has_path(dest_hash):
-                if time.time() > deadline:
+                if time.time() > path_deadline:
                     self._fail("No path to that destination — it may not have announced recently")
                     return
                 time.sleep(0.25)
@@ -273,11 +282,12 @@ class RnshSession:
             return
         link.set_link_closed_callback(self._on_link_closed)
 
+        link_deadline = time.time() + CONNECT_TIMEOUT_S
         while link.status != RNS.Link.ACTIVE:
             if link.status == RNS.Link.CLOSED:
                 self._fail("Link closed before it became active")
                 return
-            if time.time() > deadline:
+            if time.time() > link_deadline:
                 self._fail("Could not establish a link to that destination")
                 return
             time.sleep(0.1)
@@ -319,8 +329,23 @@ class RnshSession:
 
     def _on_link_closed(self, link) -> None:
         with self._lock:
-            if self._state not in (RnshSession.STATE_FAILED,):
-                self._state = RnshSession.STATE_CLOSED
+            if self._state == RnshSession.STATE_FAILED:
+                return
+            if self._state in (RnshSession.STATE_CONNECTING, RnshSession.STATE_CONNECTED):
+                # Neither a clean exit (CommandExited, handled in
+                # _on_message, already moved us to CLOSED before this
+                # callback could fire) nor a user-initiated disconnect()
+                # (which also already sets CLOSED itself before tearing
+                # the link down) got here first — so this is a real,
+                # unsolicited close. Confirmed on-device against a real
+                # rnsh listener over a real RNode LoRa interface (~1kbps):
+                # RNS's own reliable Channel gave up after exceeding its
+                # retry count on a lossy/slow link and tore the Link down
+                # out from under us. Record an honest reason rather than
+                # silently looking identical to "never connected yet" or
+                # "cleanly disconnected."
+                self._error = "Connection lost (link closed unexpectedly)"
+            self._state = RnshSession.STATE_CLOSED
 
     def _fail(self, reason: str) -> None:
         log.warning("rnsh session to %s failed: %s", self._destination_hash_hex[:16], reason)

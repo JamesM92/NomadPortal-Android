@@ -18,7 +18,9 @@ import com.jamesm92.nomadportal.data.hosting.SiteFileRepository
 import com.jamesm92.nomadportal.data.messaging.MdiIconRepository
 import com.jamesm92.nomadportal.data.messaging.MessagingRepository
 import com.jamesm92.nomadportal.data.messaging.RealMessagingRepository
+import com.jamesm92.nomadportal.data.rnsh.RealRnshHistoryRepository
 import com.jamesm92.nomadportal.data.rnsh.RealRnshRepository
+import com.jamesm92.nomadportal.data.rnsh.RnshHistoryRepository
 import com.jamesm92.nomadportal.data.rnsh.RnshRepository
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -53,6 +55,8 @@ class NomadPortalApp : Application() {
     lateinit var callAudioEngine: CallAudioEngine
         private set
     lateinit var rnshRepository: RnshRepository
+        private set
+    lateinit var rnshHistoryRepository: RnshHistoryRepository
         private set
 
     override fun onCreate() {
@@ -183,5 +187,9 @@ class NomadPortalApp : Application() {
         // a "not ready yet" failure rather than erroring while
         // _messaging is still None.
         rnshRepository = RealRnshRepository()
+        // Purely local Kotlin-side "recent destinations" bookkeeping —
+        // see RnshHistoryRepository's own doc comment. Independent of
+        // orchestrator readiness (plain DataStore, no Chaquopy involved).
+        rnshHistoryRepository = RealRnshHistoryRepository(this)
     }
 }
