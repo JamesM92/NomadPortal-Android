@@ -18,6 +18,8 @@ import com.jamesm92.nomadportal.data.hosting.SiteFileRepository
 import com.jamesm92.nomadportal.data.messaging.MdiIconRepository
 import com.jamesm92.nomadportal.data.messaging.MessagingRepository
 import com.jamesm92.nomadportal.data.messaging.RealMessagingRepository
+import com.jamesm92.nomadportal.data.rnsh.RealRnshRepository
+import com.jamesm92.nomadportal.data.rnsh.RnshRepository
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -49,6 +51,8 @@ class NomadPortalApp : Application() {
     lateinit var callRepository: CallRepository
         private set
     lateinit var callAudioEngine: CallAudioEngine
+        private set
+    lateinit var rnshRepository: RnshRepository
         private set
 
     override fun onCreate() {
@@ -172,5 +176,12 @@ class NomadPortalApp : Application() {
         // state — see CallAudioEngine's own doc comment. No further
         // wiring needed; constructing it is enough.
         callAudioEngine = CallAudioEngine(this, callRepository, appScope)
+        // Client-only remote shell over Reticulum (rnsh) — see
+        // RnshRepository's own doc comment for the interop/scope
+        // decisions. Same safe-before-orchestrator.start()-finishes
+        // reasoning as the repositories above; rnsh_connect degrades to
+        // a "not ready yet" failure rather than erroring while
+        // _messaging is still None.
+        rnshRepository = RealRnshRepository()
     }
 }

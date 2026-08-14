@@ -157,6 +157,7 @@ fun SettingsScreen(
     messagingRepository: MessagingRepository,
     tcpConnectionsRepository: TcpConnectionsRepository,
     onManageHostedPages: () -> Unit,
+    onOpenRnshTerminal: () -> Unit,
 ) {
     val context = LocalContext.current
     val focusManager = LocalFocusManager.current
@@ -612,6 +613,41 @@ fun SettingsScreen(
                         // considered for.
                     }
                 }
+
+                item {
+                    // Per explicit request — a real client for rnsh
+                    // (github.com/acehoss/rnsh, MIT), tucked away here
+                    // rather than given its own bottom-nav real estate,
+                    // since it's a power-user feature most users will
+                    // never touch. Client-only, deliberately: this
+                    // device only ever connects OUT to a remote rnsh
+                    // listener someone else runs and controls — see
+                    // RnshRepository's own doc comment for the full
+                    // reasoning (no listener/server exists here, and
+                    // none should ever be added).
+                    CollapsibleSection(
+                        title = "Advanced",
+                        expanded = SettingsSection.ADVANCED in expandedSections,
+                        onToggleExpanded = { toggleSection(SettingsSection.ADVANCED) },
+                    ) {
+                        Text(
+                            text = "Remote shell (rnsh)",
+                            style = MaterialTheme.typography.bodyLarge,
+                            modifier = Modifier.padding(start = 16.dp, end = 16.dp, top = 4.dp),
+                        )
+                        Text(
+                            text = "Connect out to a remote rnsh listener elsewhere on the " +
+                                "mesh. This device never accepts incoming shell sessions.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = NomadTextDim,
+                            modifier = Modifier.padding(start = 16.dp, end = 16.dp, top = 2.dp, bottom = 4.dp),
+                        )
+                        TextButton(
+                            onClick = onOpenRnshTerminal,
+                            modifier = Modifier.padding(start = 8.dp),
+                        ) { Text("Open remote shell") }
+                    }
+                }
             }
             // Custom-drawn, same as BrowserScreen's page viewer — this
             // page is long enough to benefit from the same "how much more
@@ -628,7 +664,7 @@ fun SettingsScreen(
  * single scrollable page — see that function's own doc comment for why
  * this isn't an accordion (multiple sections can be open at once). */
 private enum class SettingsSection {
-    TCP, BLUETOOTH, RNODE, LAN, HOSTING, ANNOUNCE, PRIVACY, ADDRESSES, APPEARANCE
+    TCP, BLUETOOTH, RNODE, LAN, HOSTING, ANNOUNCE, PRIVACY, ADDRESSES, APPEARANCE, ADVANCED
 }
 
 /**

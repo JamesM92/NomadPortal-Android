@@ -33,6 +33,7 @@ import com.jamesm92.nomadportal.data.calling.CallRepository
 import com.jamesm92.nomadportal.data.calling.CallState
 import com.jamesm92.nomadportal.data.hosting.SiteFileRepository
 import com.jamesm92.nomadportal.data.messaging.MessagingRepository
+import com.jamesm92.nomadportal.data.rnsh.RnshRepository
 import com.jamesm92.nomadportal.ui.browser.BrowserScreen
 import com.jamesm92.nomadportal.ui.browser.NodeListScreen
 import com.jamesm92.nomadportal.ui.calling.CallOverlay
@@ -45,6 +46,7 @@ import com.jamesm92.nomadportal.ui.messages.ConversationScreen
 import com.jamesm92.nomadportal.ui.network.NetworkScreen
 import com.jamesm92.nomadportal.ui.onboarding.OnboardingScreen
 import com.jamesm92.nomadportal.ui.settings.SettingsScreen
+import com.jamesm92.nomadportal.ui.terminal.RnshTerminalScreen
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 
@@ -80,6 +82,9 @@ private object Routes {
     // otherwise parse as extra route segments.
     const val SITE_PAGE_EDITOR = "site_editor/{encodedPath}"
     fun sitePageEditor(path: String) = "site_editor/${Uri.encode(path)}"
+    // Advanced-section-only, reached from Settings — see
+    // RnshRepository's own doc comment for the client-only scope.
+    const val RNSH_TERMINAL = "rnsh_terminal"
     // Deliberately absent from TOP_LEVEL_ROUTES -- renders without the
     // bottom nav bar, same as SITE_FILES/CONVERSATION. See NomadNavHost's
     // own start-destination gating for why this isn't just "the first
@@ -96,6 +101,7 @@ fun NomadNavHost(
     tcpConnectionsRepository: TcpConnectionsRepository,
     siteFileRepository: SiteFileRepository,
     callRepository: CallRepository,
+    rnshRepository: RnshRepository,
     navController: NavHostController = rememberNavController(),
 ) {
     // Overlaid on top of everything below, including the bottom nav bar
@@ -163,6 +169,13 @@ fun NomadNavHost(
                 messagingRepository = messagingRepository,
                 tcpConnectionsRepository = tcpConnectionsRepository,
                 onManageHostedPages = { navController.navigate(Routes.SITE_FILES) },
+                onOpenRnshTerminal = { navController.navigate(Routes.RNSH_TERMINAL) },
+            )
+        }
+        composable(Routes.RNSH_TERMINAL) {
+            RnshTerminalScreen(
+                repository = rnshRepository,
+                onBack = { navController.popBackStack() },
             )
         }
         composable(Routes.MESSAGES) {

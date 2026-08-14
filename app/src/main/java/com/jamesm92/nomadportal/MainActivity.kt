@@ -36,6 +36,7 @@ class MainActivity : ComponentActivity() {
                         tcpConnectionsRepository = app.tcpConnectionsRepository,
                         siteFileRepository = app.siteFileRepository,
                         callRepository = app.callRepository,
+                        rnshRepository = app.rnshRepository,
                     )
                 }
             }

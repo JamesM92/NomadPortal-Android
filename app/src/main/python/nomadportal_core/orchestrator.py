@@ -131,6 +131,10 @@ _lxmf_tracker = None
 _call_tracker = None
 _call_manager = None
 _prop_sync = None
+# The one active (or connecting, or just-ended) rnsh remote-shell
+# session — see rnsh_connect()'s own doc comment for the real
+# single-session-at-a-time model this mirrors from call_manager.py.
+_rnsh_session = None
 _active_interfaces: dict = {}  # toggle name -> RNS.Interface currently attached
 _started = False
 _base_dir: str = ""
@@ -1771,6 +1775,108 @@ def get_announce_interfaces_json() -> str:
             result[h] = key
 
     return json.dumps(result)
+
+
+# ---------------------------------------------------------------------------
+# rnsh (remote shell over Reticulum) bridge — backs RnshRepository.kt's
+# real implementation. Client (initiator) only, deliberately — see
+# nomadnet_web.rnsh_client's own top doc comment and the
+# nomadportal-android-rnsh-decision memory for the full reasoning. This
+# app never runs an rnsh *listener* (never accepts incoming shell
+# sessions), only ever connects OUT to one someone else already runs.
+# ---------------------------------------------------------------------------
+
+def rnsh_connect(destination_hash_hex: str) -> str:
+    """Starts a new rnsh client session to [destination_hash_hex],
+    tearing down any prior session first (single-session-at-a-time,
+    same model as call_manager.py's own CallManager — this app never
+    holds two remote shells open at once). Returns immediately
+    (`{"success": true}`) once the session has been *started*, not once
+    it's actually connected — real connection progress is read via
+    rnsh_status_json(), polled from Kotlin, same "no push mechanism"
+    convention every other real-time-ish status in this app already
+    follows.
+
+    `{"success": false, "message": ...}` only for preconditions this
+    function itself can check synchronously (no messaging identity
+    ready yet) — a bad destination hash or unreachable listener still
+    starts a session that fails asynchronously, surfaced the normal way
+    through rnsh_status_json()'s own "failed" state, not here."""
+    global _rnsh_session
+    import json
+    if _messaging is None:
+        return json.dumps({"success": False, "message": "Not ready yet — try again shortly"})
+
+    identity = None
+    try:
+        for user_sub, data in _messaging.active_routers():
+            if user_sub == "":
+                identity = data.get("identity")
+                break
+    except Exception:
+        identity = None
+    if identity is None:
+        return json.dumps({"success": False, "message": "No delivery identity registered yet"})
+
+    if _rnsh_session is not None:
+        try:
+            _rnsh_session.disconnect()
+        except Exception:
+            pass
+
+    from nomadnet_web.rnsh_client import RnshSession
+    _rnsh_session = RnshSession(identity=identity, destination_hash_hex=destination_hash_hex)
+    _rnsh_session.start()
+    return json.dumps({"success": True, "message": "Connecting…"})
+
+
+def rnsh_status_json() -> str:
+    """{"state": "idle"|"connecting"|"connected"|"closed"|"failed",
+    "error": nullable str, "exit_code": nullable int} — "idle" means no
+    session has ever been started (or the app just launched); every
+    other state comes straight from the active RnshSession's own real
+    state machine, see that class's own doc comment."""
+    import json
+    if _rnsh_session is None:
+        return json.dumps({"state": "idle", "error": None, "exit_code": None})
+    return json.dumps(_rnsh_session.status())
+
+
+def rnsh_read_output_json() -> str:
+    """{"data_b64": "..."} — base64, not raw bytes, matching this
+    codebase's own "always JSON string across the Chaquopy bridge"
+    convention (see the nomadportal-android-conventions skill) rather
+    than relying on Chaquopy's raw-bytes-return marshalling, which this
+    app has real prior history of getting wrong (a real Chaquopy
+    ByteArray-to-bytes bug found during the voice-call work). Empty
+    string when there's no active session or nothing new to report —
+    never an error, just "nothing to show yet"."""
+    import base64
+    import json
+    if _rnsh_session is None:
+        return json.dumps({"data_b64": ""})
+    data = _rnsh_session.read_output()
+    return json.dumps({"data_b64": base64.b64encode(data).decode("ascii") if data else ""})
+
+
+def rnsh_send_input(data: bytes) -> None:
+    """[data] is a Kotlin `ByteArray` — Chaquopy bridges that to a
+    Python `bytes` object automatically on the way *in* (the direction
+    this app already relies on elsewhere, e.g. send_message's own
+    attachment_data param — only the *return* direction needed the
+    base64 workaround above)."""
+    if _rnsh_session is not None:
+        _rnsh_session.send_input(bytes(data))
+
+
+def rnsh_resize(rows: int, cols: int) -> None:
+    if _rnsh_session is not None:
+        _rnsh_session.resize(rows, cols)
+
+
+def rnsh_disconnect() -> None:
+    if _rnsh_session is not None:
+        _rnsh_session.disconnect()
 
 
 def mark_conversation_unread(contact_hash: str) -> None:
