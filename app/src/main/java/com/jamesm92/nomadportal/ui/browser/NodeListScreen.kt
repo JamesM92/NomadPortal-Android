@@ -43,14 +43,17 @@ import com.jamesm92.nomadportal.data.browsing.NodeInfo
 import com.jamesm92.nomadportal.panicwipe.PanicWipe
 import com.jamesm92.nomadportal.ui.components.AddByAddressDialog
 import com.jamesm92.nomadportal.ui.components.AdaptiveTopAppBar
+import com.jamesm92.nomadportal.ui.components.Identicon
 import com.jamesm92.nomadportal.ui.components.PanicWipeLogo
 import com.jamesm92.nomadportal.ui.components.SearchField
 import com.jamesm92.nomadportal.ui.components.SortDropdown
 import com.jamesm92.nomadportal.ui.components.SortOption
 import com.jamesm92.nomadportal.ui.components.dismissKeyboardOnTap
+import com.jamesm92.nomadportal.ui.components.hexToByteArray
 import com.jamesm92.nomadportal.ui.components.rememberStableOrder
 import com.jamesm92.nomadportal.ui.theme.NomadAccent2
 import com.jamesm92.nomadportal.ui.theme.NomadError
+import com.jamesm92.nomadportal.ui.theme.NomadPortalPurple
 import com.jamesm92.nomadportal.ui.theme.NomadTextDim
 import com.jamesm92.nomadportal.ui.theme.NomadWarn
 import kotlinx.coroutines.launch
@@ -341,6 +344,18 @@ internal fun NodeRow(node: NodeInfo, onClick: () -> Unit, onToggleFavorite: () -
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(12.dp),
     ) {
+        // First real per-node avatar this screen has ever had — a
+        // deterministic Identicon from the node's own destination hash,
+        // same component Contacts and rnsh destinations already use
+        // (see Identicon.kt's own `ringColor` doc comment for the full
+        // 3-kind scheme). NomadPortalPurple for Sites specifically —
+        // this app's own hosting feature is exactly what a "site" is,
+        // so its brand color is a real, apt fit, not an arbitrary pick.
+        Identicon(
+            hash = remember(node.hash) { node.hash.hexToByteArray() },
+            size = 32.dp,
+            ringColor = NomadPortalPurple,
+        )
         FetchStatusDot(node.lastFetchOk, node.everFetchOk)
         Column(modifier = Modifier.weight(1f)) {
             // bodyMedium/bodySmall (real type-scale roles, not fractions

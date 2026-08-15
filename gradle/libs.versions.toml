@@ -39,6 +39,14 @@ cameraX = "1.6.1"
 # Central's own listing (central.sonatype.com/artifact/com.google.zxing/core) —
 # 3.5.4 is the latest release as of this pin.
 zxingCore = "3.5.4"
+# rnsh's real device-credential gate (BiometricPrompt with a
+# DEVICE_CREDENTIAL fallback) — verified against Google Maven's own
+# metadata (dl.google.com/android/maven2/androidx/biometric/biometric/
+# maven-metadata.xml): 1.1.0 is the latest *stable* release (the library
+# jumps straight from there to 1.4.0-alpha builds, no intervening stable
+# 1.2/1.3), matching this project's own "not the newest alpha/beta/rc"
+# pinning convention already used for cameraX/zxingCore above.
+androidxBiometric = "1.1.0"
 
 [libraries]
 androidx-core-ktx = { group = "androidx.core", name = "core-ktx", version.ref = "coreKtx" }
@@ -62,6 +70,7 @@ androidx-camera-camera2 = { group = "androidx.camera", name = "camera-camera2", 
 androidx-camera-lifecycle = { group = "androidx.camera", name = "camera-lifecycle", version.ref = "cameraX" }
 androidx-camera-view = { group = "androidx.camera", name = "camera-view", version.ref = "cameraX" }
 zxing-core = { group = "com.google.zxing", name = "core", version.ref = "zxingCore" }
+androidx-biometric = { group = "androidx.biometric", name = "biometric", version.ref = "androidxBiometric" }
 junit = { group = "junit", name = "junit", version.ref = "junit" }
 androidx-junit = { group = "androidx.test.ext", name = "junit", version.ref = "androidxJunit" }
 androidx-espresso-core = { group = "androidx.test.espresso", name = "espresso-core", version.ref = "espressoCore" }

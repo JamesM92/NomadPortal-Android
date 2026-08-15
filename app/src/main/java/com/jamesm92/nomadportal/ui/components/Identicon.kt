@@ -1,7 +1,9 @@
 package com.jamesm92.nomadportal.ui.components
 
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.CircleShape
@@ -12,6 +14,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.dp
 import com.jamesm92.nomadportal.ui.theme.NomadBg3
 
 /**
@@ -38,11 +41,26 @@ import com.jamesm92.nomadportal.ui.theme.NomadBg3
  * `MaterialTheme.colorScheme.surface` — keeps the surrounding chrome
  * consistent with the rest of this app while the dot pattern itself
  * stays genuinely Columba-style.
+ *
+ * [ringColor] (added after this component gained a third real caller —
+ * Contacts, Sites/Nodes, and rnsh destinations all render an Identicon
+ * now, with no other way to tell at a glance which *kind* of thing
+ * you're looking at) draws a thin colored stroke around the circle when
+ * non-null — a real, distinct app color per kind, not left to the
+ * hash-derived dot colors to carry any of that meaning (those vary
+ * unpredictably per hash and were never meant to encode "kind" at all).
+ * `null` (the default) draws no ring, the original plain look, so any
+ * caller that doesn't care about kind-differentiation is unaffected.
  */
 @Composable
-fun Identicon(hash: ByteArray, size: Dp, modifier: Modifier = Modifier) {
+fun Identicon(hash: ByteArray, size: Dp, modifier: Modifier = Modifier, ringColor: Color? = null) {
+    val ringModifier = if (ringColor != null) {
+        Modifier.border(BorderStroke(1.5.dp, ringColor), CircleShape)
+    } else {
+        Modifier
+    }
     if (hash.size < 6) {
-        Box(modifier = modifier.size(size).clip(CircleShape).background(Color.Gray))
+        Box(modifier = modifier.size(size).clip(CircleShape).background(Color.Gray).then(ringModifier))
         return
     }
 
@@ -61,7 +79,7 @@ fun Identicon(hash: ByteArray, size: Dp, modifier: Modifier = Modifier) {
         )
     }
 
-    Box(modifier = modifier.size(size).clip(CircleShape).background(NomadBg3)) {
+    Box(modifier = modifier.size(size).clip(CircleShape).background(NomadBg3).then(ringModifier)) {
         Canvas(modifier = Modifier.size(size)) {
             val cellSize = this.size.width / 5f
             for (row in 0 until 5) {

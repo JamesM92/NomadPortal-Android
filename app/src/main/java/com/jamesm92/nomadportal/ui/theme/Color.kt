@@ -27,3 +27,15 @@ val NomadSentBubbleBorder = Color(0xFF2A5570)
 // 0xC8, the others lower) so it reads as part of the same palette family
 // rather than a jarring one-off accent.
 val NomadPortalPurple = Color(0xFF9B6BC8)
+
+// Identicon "kind" ring color — Contacts specifically (see Identicon.kt's
+// own `ringColor` doc comment for the full 3-kind scheme: Sites reuse
+// NomadPortalPurple, rnsh reuses NomadAccent, both already-established
+// tokens with a real thematic fit; Contacts needed a genuinely new one
+// since every other existing token already carries a real, different
+// semantic elsewhere in this app — NomadAccent2 means "online/success"
+// status, NomadWarn/NomadError mean warning/error status, and reusing
+// either for "this is a contact" would collide with those meanings. A
+// soft cyan/teal, distinct in hue from every token above it, same muted
+// brightness range.
+val NomadIdenticonRingContact = Color(0xFF5BC8C8)

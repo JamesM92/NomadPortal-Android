@@ -20,6 +20,7 @@ import androidx.compose.ui.unit.dp
 import com.jamesm92.nomadportal.data.messaging.Contact
 import com.jamesm92.nomadportal.data.messaging.ContactIcon
 import com.jamesm92.nomadportal.data.messaging.materialIconFor
+import com.jamesm92.nomadportal.ui.theme.NomadIdenticonRingContact
 
 /**
  * Renders a [Contact]'s appearance (porting-notes.md §4: LXMF's `0x04`
@@ -86,7 +87,12 @@ fun ContactAvatar(contact: Contact, modifier: Modifier = Modifier) {
                 // only handles raster formats) falls back to the same
                 // Identicon treatment as ContactIcon.None below, rather
                 // than rendering nothing.
-                Identicon(hash = remember(contact.lxmfHash) { contact.lxmfHash.hexToByteArray() }, size = 40.dp, modifier = modifier)
+                Identicon(
+                    hash = remember(contact.lxmfHash) { contact.lxmfHash.hexToByteArray() },
+                    size = 40.dp,
+                    modifier = modifier,
+                    ringColor = NomadIdenticonRingContact,
+                )
             }
         }
 

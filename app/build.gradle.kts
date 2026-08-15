@@ -165,6 +165,10 @@ dependencies {
     implementation(libs.androidx.camera.lifecycle)
     implementation(libs.androidx.camera.view)
     implementation(libs.zxing.core)
+    // rnsh's real device-credential gate — see MainActivity's own
+    // FragmentActivity comment for why the base Activity class had to
+    // change for this.
+    implementation(libs.androidx.biometric)
 
     testImplementation(libs.junit)
 
