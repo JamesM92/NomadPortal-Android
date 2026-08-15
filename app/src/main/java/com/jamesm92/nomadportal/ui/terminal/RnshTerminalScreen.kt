@@ -4,6 +4,7 @@ import android.view.WindowManager
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -38,6 +39,7 @@ import androidx.compose.material3.LocalTextStyle
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -90,10 +92,12 @@ import com.jamesm92.nomadportal.data.rnsh.RnshHistoryOutcome
 import com.jamesm92.nomadportal.data.rnsh.RnshHistoryRepository
 import com.jamesm92.nomadportal.data.rnsh.RnshRepository
 import com.jamesm92.nomadportal.data.rnsh.RnshStatus
+import com.jamesm92.nomadportal.panicwipe.PanicWipe
 import com.jamesm92.nomadportal.security.DeviceCredentialGate
 import com.jamesm92.nomadportal.security.DeviceCredentialResult
 import com.jamesm92.nomadportal.ui.components.AdaptiveTopAppBar
 import com.jamesm92.nomadportal.ui.components.Identicon
+import com.jamesm92.nomadportal.ui.components.PanicWipeLogo
 import com.jamesm92.nomadportal.ui.components.hexToByteArray
 import com.jamesm92.nomadportal.ui.theme.NomadAccent
 import com.jamesm92.nomadportal.ui.theme.NomadAccent2
@@ -243,6 +247,13 @@ fun RnshTerminalScreen(
     // hosted (NomadNavHost, inside MainActivity's setContent), same
     // assumption every other Activity-context cast in this codebase makes.
     val hostActivity = LocalContext.current as? FragmentActivity
+    // Plain Context (not the FragmentActivity-typed hostActivity above) —
+    // PanicWipe.perform()/restartApp() just need a real Context, matching
+    // every other screen's own `val context = LocalContext.current` that
+    // hosts the same triple-tap-the-logo kill switch (ConversationList/
+    // BrowserScreen/SettingsScreen). This screen was missing it entirely
+    // until a direct on-device report.
+    val context = LocalContext.current
     var destinationHash by remember { mutableStateOf("") }
     var connectError by remember { mutableStateOf<String?>(null) }
     var lineInputValue by remember { mutableStateOf(TextFieldValue("")) }
@@ -725,6 +736,22 @@ fun RnshTerminalScreen(
                             Icon(Icons.Filled.Close, contentDescription = "Disconnect")
                         }
                     }
+                    // The triple-tap-the-logo panic wipe needs to be
+                    // reachable from anywhere in the app (that's the
+                    // whole point of it being a gesture, not a menu item
+                    // buried in Settings) — every other top-level screen
+                    // already carries it; this one was missed when the
+                    // screen was first built, found via direct on-device
+                    // report.
+                    PanicWipeLogo(
+                        modifier = Modifier.padding(end = 8.dp),
+                        onTripleTap = {
+                            scope.launch {
+                                PanicWipe.perform(context)
+                                PanicWipe.restartApp(context)
+                            }
+                        },
+                    )
                 },
             )
         },
@@ -1075,14 +1102,21 @@ fun RnshTerminalScreen(
                         .background(NomadBg2)
                         .padding(horizontal = 8.dp, vertical = 4.dp),
                 ) {
-                    // Tighter than the button-row default (was 8dp/4dp) —
-                    // per explicit direction, shrunk specifically so all
-                    // six controls (the three modifiers, Tab, and Up/
-                    // Down) fit on one row instead of the two they used
-                    // to need. labelSmall (not the TextButton default)
-                    // for the same reason.
-                    val keyButtonPadding = PaddingValues(horizontal = 6.dp, vertical = 2.dp)
+                    // Tighter than the button-row default (was 8dp/4dp,
+                    // then 6dp/2dp) — per explicit direction, shrunk
+                    // specifically so all six controls (the three
+                    // modifiers, Tab, and Up/Down) fit on one real row.
+                    // labelSmall for Ctrl/Shift/Alt/Tab (was the
+                    // TextButton default). The arrow glyphs get their
+                    // own, deliberately *larger* style (per explicit
+                    // direction — a lone Unicode arrow at labelSmall
+                    // read as too small/hard to tap precisely) and
+                    // correspondingly tighter horizontal padding to
+                    // compensate for the room that costs.
+                    val keyButtonPadding = PaddingValues(horizontal = 3.dp, vertical = 4.dp)
+                    val arrowButtonPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp)
                     val keyButtonTextStyle = MaterialTheme.typography.labelSmall
+                    val arrowButtonTextStyle = MaterialTheme.typography.titleMedium
                     CompositionLocalProvider(LocalMinimumInteractiveComponentSize provides 0.dp) {
                         // One row for every key-row control — merged per
                         // explicit direction (Up/Down used to sit in
@@ -1113,7 +1147,22 @@ fun RnshTerminalScreen(
                         // was judged too narrow to keep, and a touch
                         // field's own native tap-to-place-cursor / long-
                         // press-to-select already covers positioning.
-                        Row(horizontalArrangement = Arrangement.spacedBy(2.dp)) {
+                        // horizontalScroll is a safety net, not the
+                        // primary fix — on a real, on-device-confirmed
+                        // narrow layout (320dp), even after the KeyRowButton
+                        // rewrite + this tight padding, 6 controls sit
+                        // right at the edge of the available width. Rather
+                        // than risk a repeat of the exact bug that
+                        // motivated KeyRowButton in the first place (a
+                        // button silently collapsing to zero size when it
+                        // doesn't fit), this guarantees every control stays
+                        // genuinely reachable on any screen width — a
+                        // no-op visually on any screen wide enough that it
+                        // never needs to actually scroll.
+                        Row(
+                            horizontalArrangement = Arrangement.spacedBy(2.dp),
+                            modifier = Modifier.horizontalScroll(rememberScrollState()),
+                        ) {
                             ModifierToggleButton(
                                 "Ctrl", active = ctrlActive, contentPadding = keyButtonPadding,
                                 textStyle = keyButtonTextStyle,
@@ -1129,7 +1178,7 @@ fun RnshTerminalScreen(
                                 textStyle = keyButtonTextStyle,
                                 onClick = { altActive = !altActive },
                             )
-                            TextButton(
+                            KeyRowButton(
                                 contentPadding = keyButtonPadding,
                                 onClick = {
                                     // Shift+Tab is a real, distinct
@@ -1142,14 +1191,14 @@ fun RnshTerminalScreen(
                                     else sendControl(0x09)
                                 },
                             ) { Text("Tab", style = keyButtonTextStyle) }
-                            TextButton(
-                                contentPadding = keyButtonPadding,
+                            KeyRowButton(
+                                contentPadding = arrowButtonPadding,
                                 onClick = { requestHistoryRecall('A') },
-                            ) { Text("↑", style = keyButtonTextStyle) }
-                            TextButton(
-                                contentPadding = keyButtonPadding,
+                            ) { Text("↑", style = arrowButtonTextStyle) }
+                            KeyRowButton(
+                                contentPadding = arrowButtonPadding,
                                 onClick = { requestHistoryRecall('B') },
-                            ) { Text("↓", style = keyButtonTextStyle) }
+                            ) { Text("↓", style = arrowButtonTextStyle) }
                         }
                     }
                 }
@@ -1218,13 +1267,49 @@ private fun ModifierToggleButton(
     textStyle: TextStyle = LocalTextStyle.current,
     onClick: () -> Unit,
 ) {
-    TextButton(onClick = onClick, contentPadding = contentPadding) {
+    KeyRowButton(onClick = onClick, contentPadding = contentPadding) {
         Text(
             label,
             style = textStyle,
             color = if (active) NomadAccent else NomadTextDim,
             fontWeight = if (active) FontWeight.Bold else FontWeight.Normal,
         )
+    }
+}
+
+/**
+ * A real, on-device-confirmed bug this exists to fix: `TextButton`/
+ * `Button` enforce Material3's own `ButtonDefaults.MinWidth`/`MinHeight`
+ * (58dp/40dp) via an internal `defaultMinSize` — a hardcoded floor that
+ * `contentPadding` and `LocalMinimumInteractiveComponentSize` (already
+ * overridden to 0.dp around this whole key row) do *nothing* to shrink,
+ * since neither of those touches Button's own internal min-size
+ * constraint. Confirmed directly via a uiautomator dump on a real
+ * device: with 6 short-label buttons in one row, `contentPadding` alone
+ * measured every `TextButton` at ~58dp regardless of its actual text
+ * ("Ctrl"/"Shift"/"Alt"/"Tab" all measured identically), leaving no room
+ * for the last one — its real underlying `Button` node collapsed to
+ * `[0,0][0,0]`, silently untappable rather than visibly broken. `Surface`
+ * with a real `onClick` has no such hardcoded floor and *does* respect
+ * `LocalMinimumInteractiveComponentSize`, so this is what actually lets
+ * the key row's buttons shrink to their real content size.
+ */
+@Composable
+private fun KeyRowButton(
+    onClick: () -> Unit,
+    contentPadding: PaddingValues,
+    modifier: Modifier = Modifier,
+    content: @Composable () -> Unit,
+) {
+    Surface(
+        onClick = onClick,
+        modifier = modifier,
+        shape = MaterialTheme.shapes.extraSmall,
+        color = Color.Transparent,
+    ) {
+        Box(modifier = Modifier.padding(contentPadding), contentAlignment = Alignment.Center) {
+            content()
+        }
     }
 }
 
