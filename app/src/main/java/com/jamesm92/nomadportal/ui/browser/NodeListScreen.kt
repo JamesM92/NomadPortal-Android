@@ -351,9 +351,15 @@ internal fun NodeRow(node: NodeInfo, onClick: () -> Unit, onToggleFavorite: () -
         // 3-kind scheme). NomadPortalPurple for Sites specifically —
         // this app's own hosting feature is exactly what a "site" is,
         // so its brand color is a real, apt fit, not an arbitrary pick.
+        // 40dp, matching ContactAvatar's own fixed size exactly — this
+        // row and ConversationRow both render side by side in the
+        // Network tab's Announces browser (Sites vs. Users), so a
+        // mismatched size (this used to be 32dp) was a real, visible
+        // inconsistency there, not just a cosmetic nitpick specific to
+        // this screen alone.
         Identicon(
             hash = remember(node.hash) { node.hash.hexToByteArray() },
-            size = 32.dp,
+            size = 40.dp,
             ringColor = NomadPortalPurple,
         )
         FetchStatusDot(node.lastFetchOk, node.everFetchOk)

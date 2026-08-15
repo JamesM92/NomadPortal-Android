@@ -1,5 +1,6 @@
 package com.jamesm92.nomadportal.ui.terminal
 
+import android.view.WindowManager
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -33,6 +34,7 @@ import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LocalMinimumInteractiveComponentSize
+import androidx.compose.material3.LocalTextStyle
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
@@ -40,12 +42,14 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -61,6 +65,7 @@ import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.SpanStyle
@@ -68,11 +73,17 @@ import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.input.TextFieldValue
+import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.withStyle
+import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import androidx.fragment.app.FragmentActivity
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.ProcessLifecycleOwner
 import com.jamesm92.nomadportal.data.rnsh.RnshConnectionState
 import com.jamesm92.nomadportal.data.rnsh.RnshHistoryEntry
 import com.jamesm92.nomadportal.data.rnsh.RnshHistoryOutcome
@@ -91,6 +102,8 @@ import com.jamesm92.nomadportal.ui.theme.NomadError
 import com.jamesm92.nomadportal.ui.theme.NomadMono
 import com.jamesm92.nomadportal.ui.theme.NomadTextDim
 import com.jamesm92.nomadportal.ui.theme.NomadWarn
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
 /**
@@ -193,6 +206,25 @@ import kotlinx.coroutines.launch
  * title-setting) looks right. A real, honest scope boundary, not an
  * oversight — see this file's own git history for the reasoning if this
  * ever needs revisiting.
+ *
+ * **Security/usability additions past the initial device-credential
+ * gate**: [WindowManager.LayoutParams.FLAG_SECURE] hides this whole
+ * screen (destination hashes, nicknames, live session content) from the
+ * Recents task-switcher thumbnail and screenshots/screen-recording;
+ * `FLAG_KEEP_SCREEN_ON` is armed only while CONNECTED so watching a
+ * longer-running remote command doesn't have the screen dim mid-output;
+ * a real backgrounding of the *whole app* (via `ProcessLifecycleOwner`,
+ * not this screen's own lifecycle — deliberately doesn't fire for a
+ * rotation or ordinary in-app navigation) auto-disconnects a live
+ * session after a short grace period, since the device-credential gate
+ * only guards the moment of connecting, not an already-open session left
+ * on an unlocked, unattended phone. Real PTY dimensions are now actually
+ * sent (`RnshRepository.resize()` existed end-to-end already but was
+ * never called from here) via a `TextMeasurer`-based estimate of rows/
+ * cols from the measured output area, recomputed on rotation/resize. A
+ * "Retry" action sits next to a failed attempt's error message
+ * (reconnects to `currentAttemptHash`, one tap instead of a trip back to
+ * the matching history row).
  */
 @Composable
 fun RnshTerminalScreen(
@@ -253,6 +285,20 @@ fun RnshTerminalScreen(
     var awaitingHistoryRecall by remember { mutableStateOf(false) }
     var historyRecallRawBuffer by remember { mutableStateOf("") }
     var historyRecallStartedAtMillis by remember { mutableStateOf(0L) }
+    // Real PTY dimensions, sent via rnsh's own WindowSize message
+    // (RnshRepository.resize() already existed end-to-end — Kotlin →
+    // orchestrator.rnsh_resize → RnshSession.resize() — but was never
+    // actually called from this screen, so the remote never learned the
+    // real terminal size). terminalContainerSize is the measured pixel
+    // size of the scrollable output area (set via onSizeChanged below);
+    // textMeasurer converts that into rows/cols using the same
+    // terminalTextStyle the output itself renders with, so the computed
+    // size matches what's actually visible. lastSentTerminalSize dedupes
+    // so a resize is only sent when the computed rows/cols actually
+    // change, not on every recomposition.
+    val textMeasurer = rememberTextMeasurer()
+    var terminalContainerSize by remember { mutableStateOf(IntSize.Zero) }
+    var lastSentTerminalSize by remember { mutableStateOf<Pair<Int, Int>?>(null) }
 
     // Every real connect attempt is gated behind the device's own screen
     // lock (DeviceCredentialGate — see its own doc comment for why this
@@ -298,12 +344,47 @@ fun RnshTerminalScreen(
             terminalStyle = TermStyleState()
             currentAttemptHash = trimmed
             recordedOutcomeFor = null
+            // A new session always starts at rnsh's own default PTY size
+            // until told otherwise — resend the real dimensions once
+            // CONNECTED fires even if they're numerically identical to
+            // what a *previous* session on this same screen instance was
+            // last told (the remote's own state reset with the new
+            // session, this screen's lastSentTerminalSize dedupe cache
+            // didn't).
+            lastSentTerminalSize = null
             try {
                 repository.connect(trimmed)
             } catch (e: Exception) {
                 connectError = e.message ?: "Could not start connecting"
             }
         }
+    }
+
+    // Shared by the top-bar Disconnect button and the real-app-
+    // backgrounding auto-disconnect below — both need the exact same
+    // "return to a clean selection page" behavior. See the Disconnect
+    // button's own former inline comment (now consolidated here) for the
+    // on-device-reported bug this also keeps fixed: terminalBuffer/
+    // lineInputValue/currentAttemptHash are all `remember`ed at this
+    // composable's own scope, so nothing resets them just because
+    // status.state moves away from CONNECTED — without this, the setup
+    // section reappeared visually stacked on top of the still-fully-
+    // present prior session's transcript instead of a clean return to
+    // it. disconnect() itself never touches self._error on a clean
+    // user-initiated disconnect (see rnsh_client.py's own disconnect()),
+    // so status.error/exitCode stay null too — nothing left over
+    // anywhere once this runs.
+    fun disconnectAndClearSession() {
+        scope.launch { repository.disconnect() }
+        terminalBuffer = AnnotatedString("")
+        terminalStyle = TermStyleState()
+        lineInputValue = TextFieldValue("")
+        currentAttemptHash = null
+        recordedOutcomeFor = null
+        destinationHash = ""
+        connectError = null
+        awaitingHistoryRecall = false
+        historyRecallRawBuffer = ""
     }
 
     LaunchedEffect(status.state, status.error, currentAttemptHash) {
@@ -456,6 +537,90 @@ fun RnshTerminalScreen(
         }
     }
 
+    // Real screen-capture protection for the whole screen, not just while
+    // CONNECTED — destination hashes and nicknames in "Recent
+    // connections" are also real information about what remote machines
+    // this device can reach. FLAG_SECURE blocks this screen's content
+    // from appearing in the Recents task-switcher thumbnail and from
+    // being captured by a screenshot/screen-recording — the same flag
+    // banking/password-manager apps use, appropriate given this screen
+    // offers real remote shell access. Added on composition enter,
+    // cleared on exit so it doesn't leak onto the rest of the app.
+    DisposableEffect(hostActivity) {
+        val window = hostActivity?.window
+        window?.addFlags(WindowManager.LayoutParams.FLAG_SECURE)
+        onDispose {
+            window?.clearFlags(WindowManager.LayoutParams.FLAG_SECURE)
+        }
+    }
+
+    // Keeps the screen on only while a session is actually live —
+    // watching a longer-running remote command shouldn't have the screen
+    // dim/lock mid-output. Deliberately scoped to CONNECTED specifically
+    // (unlike FLAG_SECURE above, which covers the whole screen) — no
+    // similar need while just sitting on the idle/selection view. Keyed
+    // on status.state so DisposableEffect's own re-run-on-key-change
+    // behavior clears the flag the moment the state moves away from
+    // CONNECTED (disconnect, link drop, etc.) without a separate
+    // explicit clear call anywhere else.
+    DisposableEffect(status.state, hostActivity) {
+        val window = hostActivity?.window
+        if (status.state == RnshConnectionState.CONNECTED) {
+            window?.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        }
+        onDispose {
+            window?.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        }
+    }
+
+    // Real security gap this closes: DeviceCredentialGate only guards the
+    // *moment* of connecting — once authenticated, a live session with
+    // real shell access to another machine would otherwise just stay
+    // open indefinitely, including while the app sits backgrounded on an
+    // unlocked (or later-unlocked) phone. Disconnects (via the same
+    // disconnectAndClearSession() the top-bar Close icon uses) a grace
+    // period after the app genuinely leaves the foreground.
+    //
+    // ProcessLifecycleOwner (not this screen's own LocalLifecycleOwner)
+    // deliberately — it tracks the whole *process's* foreground state,
+    // not this one Activity/NavBackStackEntry's, so it does NOT fire
+    // ON_STOP for a mere screen rotation (MainActivity declares no
+    // android:configChanges, so a rotation would otherwise fully
+    // destroy/recreate the Activity) or for ordinary in-app navigation
+    // to a different screen — only for a real "the user left the app"
+    // transition (home button, task switch, screen off). The grace
+    // period (not an instant disconnect on ON_STOP) tolerates a brief
+    // real app-switch without being overly aggressive; ON_START cancels
+    // the pending disconnect if the user returns before it fires.
+    val latestStatus by rememberUpdatedState(status)
+    DisposableEffect(Unit) {
+        var backgroundDisconnectJob: Job? = null
+        val observer = LifecycleEventObserver { _, event ->
+            when (event) {
+                Lifecycle.Event.ON_STOP -> {
+                    if (latestStatus.state == RnshConnectionState.CONNECTING ||
+                        latestStatus.state == RnshConnectionState.CONNECTED
+                    ) {
+                        backgroundDisconnectJob = scope.launch {
+                            delay(BACKGROUND_DISCONNECT_GRACE_MS)
+                            disconnectAndClearSession()
+                        }
+                    }
+                }
+                Lifecycle.Event.ON_START -> {
+                    backgroundDisconnectJob?.cancel()
+                    backgroundDisconnectJob = null
+                }
+                else -> Unit
+            }
+        }
+        ProcessLifecycleOwner.get().lifecycle.addObserver(observer)
+        onDispose {
+            ProcessLifecycleOwner.get().lifecycle.removeObserver(observer)
+            backgroundDisconnectJob?.cancel()
+        }
+    }
+
     fun sendLine(extra: String = "") {
         val toSend = (lineInputValue.text + extra).toByteArray(Charsets.UTF_8)
         if (toSend.isEmpty()) return
@@ -556,39 +721,7 @@ fun RnshTerminalScreen(
                 },
                 actions = {
                     if (status.state == RnshConnectionState.CONNECTING || status.state == RnshConnectionState.CONNECTED) {
-                        IconButton(onClick = {
-                            scope.launch { repository.disconnect() }
-                            // Real, on-device-reported bug this fixes:
-                            // terminalBuffer/lineInputValue/
-                            // currentAttemptHash are all `remember`ed at
-                            // this composable's own scope, so they don't
-                            // reset just because status.state moves away
-                            // from CONNECTED — this same screen instance
-                            // stays alive (no navigation happens on
-                            // Disconnect). Without clearing them here, the
-                            // setup section (hash field + recent
-                            // connections) reappeared visually stacked on
-                            // top of the still-fully-present last-session
-                            // transcript below it, rather than that
-                            // transcript actually going away — looked like
-                            // the "selection page" was just being added on
-                            // top of the old session, not a clean return
-                            // to it. disconnect() itself never touches
-                            // self._error on a clean user-initiated
-                            // disconnect (see rnsh_client.py's own
-                            // `disconnect()`), so status.error/exitCode
-                            // stay null here too — nothing left over
-                            // anywhere once this fires.
-                            terminalBuffer = AnnotatedString("")
-                            terminalStyle = TermStyleState()
-                            lineInputValue = TextFieldValue("")
-                            currentAttemptHash = null
-                            recordedOutcomeFor = null
-                            destinationHash = ""
-                            connectError = null
-                            awaitingHistoryRecall = false
-                            historyRecallRawBuffer = ""
-                        }) {
+                        IconButton(onClick = { disconnectAndClearSession() }) {
                             Icon(Icons.Filled.Close, contentDescription = "Disconnect")
                         }
                     }
@@ -640,13 +773,29 @@ fun RnshTerminalScreen(
                 connectError?.let {
                     Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
                 }
-                status.error?.let {
-                    Text(
-                        "Last attempt failed: $it",
-                        color = MaterialTheme.colorScheme.error,
-                        style = MaterialTheme.typography.bodySmall,
+                status.error?.let { err ->
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
                         modifier = Modifier.padding(top = 4.dp),
-                    )
+                    ) {
+                        Text(
+                            "Last attempt failed: $err",
+                            color = MaterialTheme.colorScheme.error,
+                            style = MaterialTheme.typography.bodySmall,
+                            modifier = Modifier.weight(1f),
+                        )
+                        // Reconnects to the same destination that just
+                        // failed, one tap — currentAttemptHash still
+                        // holds it (only disconnectAndClearSession()/a
+                        // new attemptConnect() clear it), the same real
+                        // path as tapping the matching history row below,
+                        // just without the extra trip back down to it.
+                        currentAttemptHash?.let { retryHash ->
+                            TextButton(onClick = { attemptConnect(retryHash) }) {
+                                Text("Retry")
+                            }
+                        }
+                    }
                 }
                 status.exitCode?.let {
                     Text(
@@ -702,12 +851,66 @@ fun RnshTerminalScreen(
                 fontFamily = NomadMono,
                 color = Color(0xFFD3D7CF),
             )
+
+            // Sends the real terminal size (rnsh's own WindowSize
+            // message) once CONNECTED and again whenever the measured
+            // output area actually changes (rotation, split-screen/
+            // foldable resize) — see terminalContainerSize's own doc
+            // comment at this screen's top for why this exists at all
+            // (the plumbing already existed, it was just never called).
+            // "M" is a representative single character under NomadMono
+            // (a fixed-width font), so its measured size is a reasonable
+            // per-cell width/height to divide the container by — not
+            // pixel-perfect (Compose text metrics vs. what a real
+            // monospace grid a native terminal emulator computes can
+            // differ slightly), but close enough for line-wrapping/
+            // dimension-aware remote programs to behave sensibly, which
+            // is all rnsh's WindowSize message is for.
+            LaunchedEffect(status.state, terminalContainerSize, terminalTextStyle) {
+                if (status.state != RnshConnectionState.CONNECTED) return@LaunchedEffect
+                if (terminalContainerSize.width <= 0 || terminalContainerSize.height <= 0) return@LaunchedEffect
+                val charSize = textMeasurer.measure(text = "M", style = terminalTextStyle).size
+                if (charSize.width <= 0 || charSize.height <= 0) return@LaunchedEffect
+                val cols = (terminalContainerSize.width / charSize.width).coerceAtLeast(1)
+                val rows = (terminalContainerSize.height / charSize.height).coerceAtLeast(1)
+                val newSize = rows to cols
+                if (lastSentTerminalSize == newSize) return@LaunchedEffect
+                // Real, on-device-confirmed race this debounce fixes:
+                // RNS.Channel.send() can genuinely throw "Link is not
+                // ready" for a brief window right after status.state
+                // first reports CONNECTED (the same class of race this
+                // file's own ConnectionStatusDot doc comment already
+                // documents for sendInput) — the soft keyboard sliding in
+                // right as a session connects also changes
+                // terminalContainerSize several times in quick
+                // succession, so without this, each of those triggered
+                // its own immediate, doomed resize attempt (5 failures
+                // logged in ~1.4s on a real device before this fix).
+                // LaunchedEffect cancels and restarts on every key
+                // change, so this delay naturally coalesces that burst
+                // into one later, more-likely-to-land attempt.
+                delay(RESIZE_SEND_DEBOUNCE_MS)
+                try {
+                    repository.resize(rows, cols)
+                    lastSentTerminalSize = newSize
+                } catch (e: Exception) {
+                    // Deliberately NOT marking newSize as sent — a later
+                    // container-size change (rotation, IME finishing its
+                    // own settle) or a fresh connect attempt will retry
+                    // naturally. Best-effort otherwise, same non-rethrow
+                    // reasoning as sendLine/sendRaw — the remote just
+                    // keeps whatever dimensions it last knew about (or
+                    // its own PTY default) until one lands.
+                }
+            }
+
             Column(
                 modifier = Modifier
                     .weight(1f)
                     .fillMaxWidth()
                     .padding(vertical = 8.dp)
-                    .verticalScroll(scrollState),
+                    .verticalScroll(scrollState)
+                    .onSizeChanged { terminalContainerSize = it },
             ) {
                 if (status.state == RnshConnectionState.CONNECTED) {
                     // The editable area is "everything from the most
@@ -872,33 +1075,58 @@ fun RnshTerminalScreen(
                         .background(NomadBg2)
                         .padding(horizontal = 8.dp, vertical = 4.dp),
                 ) {
-                    val keyButtonPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp)
+                    // Tighter than the button-row default (was 8dp/4dp) —
+                    // per explicit direction, shrunk specifically so all
+                    // six controls (the three modifiers, Tab, and Up/
+                    // Down) fit on one row instead of the two they used
+                    // to need. labelSmall (not the TextButton default)
+                    // for the same reason.
+                    val keyButtonPadding = PaddingValues(horizontal = 6.dp, vertical = 2.dp)
+                    val keyButtonTextStyle = MaterialTheme.typography.labelSmall
                     CompositionLocalProvider(LocalMinimumInteractiveComponentSize provides 0.dp) {
-                        // Row 1: the three modifiers (real persistent
-                        // toggles — tap to arm, tap again to release;
-                        // they do NOT auto-release after one keystroke,
-                        // per explicit direction) plus Tab. No dedicated
-                        // Esc button — a bare, standalone Esc byte is
-                        // essentially a no-op at an ordinary shell prompt
-                        // (its real use is always as a *prefix* before
-                        // another key, e.g. readline emacs-mode's
-                        // "Esc f" = Alt+F, which the Alt toggle above
-                        // already sends); Esc matters far more inside
-                        // full-screen programs like vim, already out of
-                        // scope for this screen (no cursor-addressable
-                        // rendering — see this file's own top doc
-                        // comment).
+                        // One row for every key-row control — merged per
+                        // explicit direction (Up/Down used to sit in
+                        // their own row below this one). The three
+                        // modifiers are real persistent toggles (tap to
+                        // arm, tap again to release; they do NOT auto-
+                        // release after one keystroke, per explicit
+                        // direction). No dedicated Esc button — a bare,
+                        // standalone Esc byte is essentially a no-op at
+                        // an ordinary shell prompt (its real use is
+                        // always as a *prefix* before another key, e.g.
+                        // readline emacs-mode's "Esc f" = Alt+F, which
+                        // the Alt toggle already sends); Esc matters far
+                        // more inside full-screen programs like vim,
+                        // already out of scope for this screen (no
+                        // cursor-addressable rendering — see this file's
+                        // own top doc comment). Up/Down are reinterpreted
+                        // rather than forwarded as raw bytes, see
+                        // requestHistoryRecall's own doc comment — sends
+                        // the *real* arrow CSI sequence, driving the
+                        // remote shell's own genuine history, but the
+                        // redraw that comes back is intercepted and
+                        // routed into lineInputValue as real editable/
+                        // backspaceable text instead of the read-only
+                        // scrollback. No Left/Right — cut per explicit
+                        // direction: their only real value (nudging the
+                        // cursor one character after an imprecise tap)
+                        // was judged too narrow to keep, and a touch
+                        // field's own native tap-to-place-cursor / long-
+                        // press-to-select already covers positioning.
                         Row(horizontalArrangement = Arrangement.spacedBy(2.dp)) {
                             ModifierToggleButton(
                                 "Ctrl", active = ctrlActive, contentPadding = keyButtonPadding,
+                                textStyle = keyButtonTextStyle,
                                 onClick = { ctrlActive = !ctrlActive },
                             )
                             ModifierToggleButton(
                                 "Shift", active = shiftActive, contentPadding = keyButtonPadding,
+                                textStyle = keyButtonTextStyle,
                                 onClick = { shiftActive = !shiftActive },
                             )
                             ModifierToggleButton(
                                 "Alt", active = altActive, contentPadding = keyButtonPadding,
+                                textStyle = keyButtonTextStyle,
                                 onClick = { altActive = !altActive },
                             )
                             TextButton(
@@ -913,33 +1141,15 @@ fun RnshTerminalScreen(
                                     if (shiftActive) sendRaw(byteArrayOf(0x1B, '['.code.toByte(), 'Z'.code.toByte()))
                                     else sendControl(0x09)
                                 },
-                            ) { Text("Tab") }
-                        }
-                        // Row 2: Up/Down only — reinterpreted rather than
-                        // forwarded as raw bytes, see
-                        // requestHistoryRecall's own doc comment. Sends
-                        // the *real* arrow CSI sequence, driving the
-                        // remote shell's own genuine history, but the
-                        // redraw that comes back is intercepted and
-                        // routed into lineInputValue as real editable/
-                        // backspaceable text instead of the read-only
-                        // scrollback — the original append-only-
-                        // corruption bug this redesign fixes. No Left/
-                        // Right — cut per explicit direction: their only
-                        // real value (nudging the cursor one character
-                        // after an imprecise tap) was judged too narrow
-                        // to keep, and a touch field's own native tap-
-                        // to-place-cursor / long-press-to-select already
-                        // covers cursor positioning otherwise.
-                        Row(horizontalArrangement = Arrangement.spacedBy(2.dp)) {
+                            ) { Text("Tab", style = keyButtonTextStyle) }
                             TextButton(
                                 contentPadding = keyButtonPadding,
                                 onClick = { requestHistoryRecall('A') },
-                            ) { Text("↑") }
+                            ) { Text("↑", style = keyButtonTextStyle) }
                             TextButton(
                                 contentPadding = keyButtonPadding,
                                 onClick = { requestHistoryRecall('B') },
-                            ) { Text("↓") }
+                            ) { Text("↓", style = keyButtonTextStyle) }
                         }
                     }
                 }
@@ -1005,11 +1215,13 @@ private fun ModifierToggleButton(
     label: String,
     active: Boolean,
     contentPadding: PaddingValues = ButtonDefaults.TextButtonContentPadding,
+    textStyle: TextStyle = LocalTextStyle.current,
     onClick: () -> Unit,
 ) {
     TextButton(onClick = onClick, contentPadding = contentPadding) {
         Text(
             label,
+            style = textStyle,
             color = if (active) NomadAccent else NomadTextDim,
             fontWeight = if (active) FontWeight.Bold else FontWeight.Normal,
         )
@@ -1211,6 +1423,22 @@ private val ANSI_BRIGHT = listOf(
 )
 
 private const val MAX_BUFFER_CHARS = 200_000
+
+// How long a CONNECTING/CONNECTED session survives after the whole app
+// genuinely leaves the foreground (ProcessLifecycleOwner's ON_STOP —
+// see that DisposableEffect's own doc comment) before being auto-
+// disconnected. Long enough to tolerate a brief, real app-switch (e.g.
+// jumping to Files to grab something) without being disruptive; short
+// enough that an unlocked-and-abandoned phone doesn't leave a real
+// remote shell session open for long.
+private const val BACKGROUND_DISCONNECT_GRACE_MS = 5_000L
+
+// See the resize LaunchedEffect's own doc comment — coalesces the burst
+// of container-size changes that happen right as a session connects
+// (soft keyboard animating in) into one later, more-likely-to-land
+// resize attempt, dodging a real "Link is not ready" race confirmed on
+// a live device.
+private const val RESIZE_SEND_DEBOUNCE_MS = 600L
 
 /**
  * Parses [raw] (already UTF-8-decoded) into styled text given the

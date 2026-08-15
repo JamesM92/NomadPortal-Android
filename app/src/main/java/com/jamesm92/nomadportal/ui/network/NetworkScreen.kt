@@ -35,6 +35,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
@@ -714,8 +715,24 @@ private fun AnnounceTechnicalInfoDialog(
 
 @Composable
 private fun InfoRow(label: String, value: String) {
-    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+    // value gets Modifier.weight(1f) — real, on-device-reported bug this
+    // fixes: without it, a long value (the real 32-hex-char Address
+    // field is the one that actually hits this) had no defined width to
+    // wrap against, so it wrapped unevenly/cramped rather than using the
+    // row's true remaining space (row width minus the label's own
+    // intrinsic width) the way weight correctly computes. textAlign.End
+    // keeps the same "label ... value" reading order once it wraps to
+    // more than one line. Short values (the common case — "Yes"/"No"/
+    // "TCP"/etc.) are unaffected: weight(1f) just gives them more room
+    // than they need, right-aligned same as before.
+    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
         Text(text = label, style = MaterialTheme.typography.bodySmall, color = NomadTextDim)
-        Text(text = value, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurface)
+        Text(
+            text = value,
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurface,
+            textAlign = TextAlign.End,
+            modifier = Modifier.weight(1f),
+        )
     }
 }

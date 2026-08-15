@@ -51,6 +51,16 @@ androidxBiometric = "1.1.0"
 [libraries]
 androidx-core-ktx = { group = "androidx.core", name = "core-ktx", version.ref = "coreKtx" }
 androidx-lifecycle-runtime-ktx = { group = "androidx.lifecycle", name = "lifecycle-runtime-ktx", version.ref = "lifecycleRuntimeKtx" }
+# ProcessLifecycleOwner (rnsh's real background-auto-disconnect signal —
+# see RnshTerminalScreen's own doc comment) — androidx.lifecycle:
+# lifecycle-process was already on the resolved dependency graph
+# transitively (confirmed via `./gradlew :app:dependencies`) but only as
+# a version *constraint*, not an actual compile-time dependency; needed
+# as an explicit one to actually reference ProcessLifecycleOwner from
+# Kotlin. Same lifecycleRuntimeKtx version ref — this artifact is
+# version-aligned with lifecycle-runtime-ktx in the same androidx.
+# lifecycle release train.
+androidx-lifecycle-process = { group = "androidx.lifecycle", name = "lifecycle-process", version.ref = "lifecycleRuntimeKtx" }
 androidx-activity-compose = { group = "androidx.activity", name = "activity-compose", version.ref = "activityCompose" }
 androidx-compose-bom = { group = "androidx.compose", name = "compose-bom", version.ref = "composeBom" }
 androidx-ui = { group = "androidx.compose.ui", name = "ui" }
