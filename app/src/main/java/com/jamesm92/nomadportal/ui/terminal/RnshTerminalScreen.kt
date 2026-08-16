@@ -78,6 +78,7 @@ import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.text.rememberTextMeasurer
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.IntSize
@@ -98,6 +99,7 @@ import com.jamesm92.nomadportal.security.DeviceCredentialResult
 import com.jamesm92.nomadportal.ui.components.AdaptiveTopAppBar
 import com.jamesm92.nomadportal.ui.components.Identicon
 import com.jamesm92.nomadportal.ui.components.PanicWipeLogo
+import com.jamesm92.nomadportal.ui.components.dismissKeyboardOnTap
 import com.jamesm92.nomadportal.ui.components.hexToByteArray
 import com.jamesm92.nomadportal.ui.theme.NomadAccent
 import com.jamesm92.nomadportal.ui.theme.NomadAccent2
@@ -168,21 +170,22 @@ import kotlinx.coroutines.launch
  * anything typed normally — see [modifiedCharBytes]/[ctrlByteFor]'s own
  * doc comments for the exact byte-level details.
  *
- * **Up/Down are reinterpreted, not forwarded as raw bytes** — a naive
- * first attempt just sent real arrow-key CSI sequences straight
- * through, which broke on-device: the remote's own history-recall
- * redraw landed in this screen's append-only, read-only output buffer
- * indistinguishable from ordinary output, with no way to remove it
- * (not even backspace, since that text was never actually in the
- * editable field). Up/Down still send the *real* arrow CSI sequence
- * (`ESC [ A`/`ESC [ B`) — driving the remote's own genuine readline
- * history, not a fake local-only list — but the outputChunks collector
- * now intercepts the resulting redraw and routes it into
- * [TextFieldValue] `lineInputValue` as real, editable, backspaceable
- * text instead of the scrollback (see that collector's and
- * [requestHistoryRecall]'s own doc comments for the real, honestly-
- * scoped `\r`-based redraw-detection heuristic and its limits). No
- * Left/Right buttons — cut per explicit direction (their only real
+ * **Up/Down recall from a real local-only history**, not the remote
+ * shell's own readline history — a real, deliberate pivot after the
+ * original remote-driven design (real arrow-key CSI bytes sent to the
+ * remote, its own redraw response parsed and routed into
+ * [lineInputValue][TextFieldValue]) went through several genuine,
+ * confirmed fix attempts (a stuck-forever flag, buffer-reset races,
+ * concurrent-press concatenation, unhandled backspace bytes) without
+ * ever becoming reliable — each fix addressed one real bug while the
+ * underlying problem (correctly interpreting an adaptive, cursor-
+ * position-based redisplay protocol with no real cursor-addressable
+ * buffer to apply it to) kept surfacing new ones. [recallLocalHistory]
+ * just remembers what *this app* has actually sent this session —
+ * instant, no network round trip, no byte-parsing, always editable by
+ * construction. Real, honest scope reduction: doesn't include commands
+ * run some other way (a different SSH session to the same box, etc.).
+ * No Left/Right buttons — cut per explicit direction (their only real
  * value, nudging the cursor after an imprecise tap, was judged too
  * narrow given a touch field's own native tap-to-place-cursor already
  * covers positioning).
@@ -230,6 +233,25 @@ import kotlinx.coroutines.launch
  * (reconnects to `currentAttemptHash`, one tap instead of a trip back to
  * the matching history row).
  */
+// Real, explicit direction: the visible transcript must survive
+// navigating away (Back, which deliberately does NOT end the session —
+// see disconnectAndClearSession's own doc comment) and back — a plain
+// `remember { mutableStateOf(...) }` inside the composable can't do
+// that, since leaving and returning destroys and recreates the whole
+// composable instance (fresh `remember` defaults). A process-lifetime
+// singleton `MutableState`, read/written directly (not wrapped in a
+// second `remember`) so every RnshTerminalScreen instance shares the
+// exact same state object, is what actually makes the real, still-live
+// session's transcript still be there when you come back to look at
+// it — matching what a real terminal app does. Explicitly reset on a
+// genuinely new connect attempt and on disconnect (see both call
+// sites), so this is "survives navigation," not "leaks into unrelated
+// sessions."
+private object RnshTranscriptHolder {
+    val bufferState = mutableStateOf<AnnotatedString>(AnnotatedString(""))
+    val styleState = mutableStateOf(TermStyleState())
+}
+
 @Composable
 fun RnshTerminalScreen(
     repository: RnshRepository,
@@ -256,9 +278,28 @@ fun RnshTerminalScreen(
     val context = LocalContext.current
     var destinationHash by remember { mutableStateOf("") }
     var connectError by remember { mutableStateOf<String?>(null) }
+    // Real, explicit direction: Back must NOT end an active session (it
+    // stays alive in the background — same as always), but *returning*
+    // to view one already in progress needs fresh authentication first,
+    // the same real bar as starting one. sessionUnlocked is local to
+    // this composable instance (a plain `remember`, not persisted) —
+    // navigating away and back always creates a fresh instance with
+    // this back at its default `false`, so re-authentication is
+    // required on every return, not just once ever. Set true the moment
+    // attemptConnect()'s own gate succeeds (a fresh connect from this
+    // same instance is already authenticated, no second prompt needed);
+    // the LaunchedEffect below is what actually triggers a fresh prompt
+    // when this instance mounts onto a session that was already
+    // CONNECTED/CONNECTING from *before* it existed.
+    var sessionUnlocked by remember { mutableStateOf(false) }
+    var unlockError by remember { mutableStateOf<String?>(null) }
     var lineInputValue by remember { mutableStateOf(TextFieldValue("")) }
-    var terminalStyle by remember { mutableStateOf(TermStyleState()) }
-    var terminalBuffer by remember { mutableStateOf(AnnotatedString("")) }
+    // Deliberately NOT `remember` — see RnshTranscriptHolder's own doc
+    // comment just above this composable for why these need to be a
+    // process-lifetime singleton instead of per-composable-instance
+    // state.
+    var terminalStyle by RnshTranscriptHolder.styleState
+    var terminalBuffer by RnshTranscriptHolder.bufferState
     val scrollState = rememberScrollState()
     // The destination the *current* connect attempt is for, and a guard
     // so a real terminal-state transition (CONNECTED/FAILED) only gets
@@ -283,19 +324,29 @@ fun RnshTerminalScreen(
     var ctrlActive by remember { mutableStateOf(false) }
     var shiftActive by remember { mutableStateOf(false) }
     var altActive by remember { mutableStateOf(false) }
-    // Up/Down recall from the *real* remote shell history (its own
-    // readline, via real xterm arrow-key CSI sequences — see
-    // requestHistoryRecall's own doc comment), not a fake local-only
-    // list — but the redraw the remote sends back in response is
-    // intercepted (in the outputChunks collector below) and routed into
-    // lineInputValue instead of the read-only terminalBuffer, so the
-    // recalled command becomes real, editable, backspaceable text, per
-    // explicit direction, rather than getting stuck append-only in the
-    // scrollback the way a naive byte-forward implementation left it
-    // (the original, on-device-confirmed bug this whole redesign fixes).
-    var awaitingHistoryRecall by remember { mutableStateOf(false) }
-    var historyRecallRawBuffer by remember { mutableStateOf("") }
-    var historyRecallStartedAtMillis by remember { mutableStateOf(0L) }
+    // Up/Down history is local-only — a real, deliberate simplification
+    // after real remote-driven recall (arrow bytes sent to the remote,
+    // its own redraw response parsed and routed into lineInputValue)
+    // went through several genuine fix attempts (buffer-reset races,
+    // concurrent-press concatenation, unhandled backspace bytes) without
+    // ever becoming reliable — each fix addressed one real, confirmed
+    // bug while the underlying problem (correctly interpreting an
+    // adaptive, cursor-position-based redisplay protocol with no real
+    // cursor-addressable buffer to apply it to) kept surfacing new ones.
+    // localHistory just remembers what *this app* has actually sent
+    // this session — no network round trip, no byte-parsing, no
+    // ambiguity, always instantly editable. Real, honest scope
+    // reduction: doesn't include commands run some other way (a
+    // different SSH session to the same box, etc.) — this is the app's
+    // own memory of what you typed, not the remote shell's own history
+    // file, per explicit direction after the remote-driven approach
+    // proved unreliable in practice.
+    var localHistory by remember { mutableStateOf<List<String>>(emptyList()) }
+    // null = not currently browsing history (a fresh/normal line, or one
+    // the user has since edited); otherwise an index into localHistory,
+    // most-recent-last (so index localHistory.size-1 is the most recent
+    // entry, matching real shell history recall order).
+    var localHistoryBrowseIndex by remember { mutableStateOf<Int?>(null) }
     // Real PTY dimensions, sent via rnsh's own WindowSize message
     // (RnshRepository.resize() already existed end-to-end — Kotlin →
     // orchestrator.rnsh_resize → RnshSession.resize() — but was never
@@ -332,6 +383,24 @@ fun RnshTerminalScreen(
             return
         }
         connectError = null
+        // Real, on-device-reported security concern this fixes: cleared
+        // synchronously, right here — not inside the coroutine below,
+        // and not conditional on auth succeeding — so there is no
+        // timing window where the visible field could show the hash
+        // again. The previous code instead *set* destinationHash to the
+        // real hash after a successful auth (originally meant for the
+        // typed-entry case, where it was already redundant — the field
+        // already held that value from the user's own typing); for a
+        // history-row tap specifically, that line was actively
+        // *populating* the field with a hash the user never typed at
+        // all, and since status.state doesn't flip away from IDLE until
+        // the next status poll tick (up to ~500ms later), the
+        // still-visible idle section's OutlinedTextField would render
+        // that real hash for a real, visible moment before the screen
+        // moved on — "once a hash is entered there should be no way to
+        // see it again" is the correct security bar here, not just
+        // "eventually gets covered up."
+        destinationHash = ""
         scope.launch {
             val authResult = DeviceCredentialGate.authenticate(
                 activity = activity,
@@ -339,7 +408,7 @@ fun RnshTerminalScreen(
                 subtitle = "rnsh gives real shell access to a remote machine — confirm it's you.",
             )
             when (authResult) {
-                is DeviceCredentialResult.Authenticated -> Unit
+                is DeviceCredentialResult.Authenticated -> sessionUnlocked = true
                 is DeviceCredentialResult.Cancelled -> return@launch
                 is DeviceCredentialResult.Unavailable -> {
                     connectError = authResult.reason
@@ -350,7 +419,6 @@ fun RnshTerminalScreen(
                     return@launch
                 }
             }
-            destinationHash = trimmed
             terminalBuffer = AnnotatedString("")
             terminalStyle = TermStyleState()
             currentAttemptHash = trimmed
@@ -394,8 +462,55 @@ fun RnshTerminalScreen(
         recordedOutcomeFor = null
         destinationHash = ""
         connectError = null
-        awaitingHistoryRecall = false
-        historyRecallRawBuffer = ""
+        localHistory = emptyList()
+        localHistoryBrowseIndex = null
+        sessionUnlocked = false
+        unlockError = null
+    }
+
+    fun requestSessionUnlock() {
+        val activity = hostActivity
+        if (activity == null) {
+            unlockError = "Could not verify device security — please try again"
+            return
+        }
+        unlockError = null
+        scope.launch {
+            val result = DeviceCredentialGate.authenticate(
+                activity = activity,
+                title = "Unlock to view session",
+                subtitle = "A real remote shell session is already active on this device — confirm it's you before viewing it.",
+            )
+            when (result) {
+                is DeviceCredentialResult.Authenticated -> sessionUnlocked = true
+                // Stays locked — the retry button in the gate UI below
+                // lets the user try again rather than getting bounced
+                // back out of the screen.
+                is DeviceCredentialResult.Cancelled -> Unit
+                is DeviceCredentialResult.Unavailable -> unlockError = result.reason
+                is DeviceCredentialResult.Failed -> unlockError = "Authentication failed: ${result.reason}"
+            }
+        }
+    }
+
+    // Real, explicit direction: returning to view an already-active
+    // session (this composable instance mounting onto a real,
+    // CONNECTED/CONNECTING session it didn't itself just start via
+    // attemptConnect — e.g. navigating away with Back, which
+    // deliberately does NOT end the session, then back into this
+    // screen) requires fresh authentication before the terminal content
+    // is shown, the same real bar as starting a session in the first
+    // place. Keyed on status.state (not Unit/mount-once) because the
+    // real first status value only arrives from the polled Flow a
+    // moment after this composable mounts — collectAsState's `initial`
+    // fallback is IDLE until then, so checking only once at mount would
+    // usually see the wrong, stale value.
+    LaunchedEffect(status.state) {
+        if (!sessionUnlocked &&
+            (status.state == RnshConnectionState.CONNECTED || status.state == RnshConnectionState.CONNECTING)
+        ) {
+            requestSessionUnlock()
+        }
     }
 
     LaunchedEffect(status.state, status.error, currentAttemptHash) {
@@ -423,100 +538,6 @@ fun RnshTerminalScreen(
             return@LaunchedEffect
         }
         repository.outputChunks().collect { chunk ->
-            if (awaitingHistoryRecall) {
-                // Real history-recall redraw handling — see
-                // requestHistoryRecall's own doc comment for the full
-                // design and its honest limitations. A bare carriage
-                // return (`\r`, not followed by `\n`) is how readline's
-                // most common/portable redraw strategy overwrites the
-                // current line; everything after the *last* `\r` seen
-                // since the arrow was sent is the remote's own redrawn
-                // version of that line (prompt + recalled command).
-                //
-                // Real, on-device-confirmed bug this exact structure
-                // fixes: outputChunks() emits an *empty* ByteArray every
-                // poll even when there's nothing new (see
-                // RealRnshRepository's own poll loop) — an early
-                // `if (chunk.isEmpty()) return@collect` guard placed
-                // ahead of this block, as an earlier version of this
-                // code had, meant the timeout check below never even
-                // ran when the remote's response used a redraw strategy
-                // this parser doesn't recognize (or the byte never
-                // reached the remote at all), leaving
-                // awaitingHistoryRecall stuck true forever — which
-                // silently blocked *all* future terminal output too,
-                // not just the recall, since this same gate sits in
-                // front of the normal parse-and-append path below.
-                // Checking the timeout on every collection (empty
-                // chunks included, since collect() still fires for
-                // those) is what actually guarantees recovery.
-                if (chunk.isNotEmpty()) {
-                    historyRecallRawBuffer += String(chunk, Charsets.UTF_8)
-                    val crIndex = historyRecallRawBuffer.lastIndexOf('\r')
-                    if (crIndex != -1) {
-                        val redrawnRaw = historyRecallRawBuffer.substring(crIndex + 1)
-                        val (styled, _) = parseAnsiChunk(redrawnRaw, TermStyleState())
-                        var recalled = styled.text
-                        // Strip the repeated prompt prefix so only the
-                        // real recalled *command* lands in the edit
-                        // field, not the prompt text too — this device
-                        // never streams partial input to the remote
-                        // (line mode), so the remote's own idea of "the
-                        // current line" before any recall is always
-                        // just the bare prompt, which is exactly the
-                        // last line already sitting in terminalBuffer.
-                        // Falls back to the unstripped text if that
-                        // prefix doesn't match (a different prompt
-                        // format than expected) rather than silently
-                        // dropping a real recalled command.
-                        val knownPromptLine = terminalBuffer.text.substringAfterLast('\n')
-                        if (knownPromptLine.isNotEmpty() && recalled.startsWith(knownPromptLine)) {
-                            recalled = recalled.removePrefix(knownPromptLine)
-                        }
-                        // Real, on-device-confirmed bug this trim fixes:
-                        // a stray leading/trailing '\n' or '\r' left over
-                        // in the redraw (e.g. the real terminal-refresh
-                        // sequence readline emits around the redrawn
-                        // line) put the cursor on a blank line *after*
-                        // the visibly-recalled text instead of right at
-                        // the end of it — looked like "the recalled text
-                        // is stuck in the prompt row above, the cursor
-                        // is stuck in the row below" from the outside,
-                        // even though both are the same lineInputValue.
-                        // A real recalled command line never legitimately
-                        // needs a hard newline at either end.
-                        recalled = recalled.trim('\n', '\r')
-                        lineInputValue = TextFieldValue(recalled, TextRange(recalled.length))
-                        awaitingHistoryRecall = false
-                        historyRecallRawBuffer = ""
-                        return@collect
-                    }
-                }
-                // No \r seen yet — real redraws can arrive split across
-                // several polls over a slow link (confirmed real on this
-                // app's own RNode/LoRa testing), so keep accumulating
-                // rather than giving up on the first empty-handed chunk.
-                if (System.currentTimeMillis() - historyRecallStartedAtMillis > 8000L) {
-                    // Gave up — flush whatever arrived as ordinary output
-                    // instead of silently swallowing it forever; a
-                    // redraw strategy this parser doesn't recognize
-                    // (real, honest limitation, not every readline
-                    // configuration uses a bare \r) shouldn't just eat
-                    // real output.
-                    awaitingHistoryRecall = false
-                    if (historyRecallRawBuffer.isNotEmpty()) {
-                        val (appended, newStyle) = parseAnsiChunk(historyRecallRawBuffer, terminalStyle)
-                        terminalStyle = newStyle
-                        terminalBuffer = buildAnnotatedString {
-                            append(terminalBuffer)
-                            append(appended)
-                        }
-                    }
-                    historyRecallRawBuffer = ""
-                }
-                return@collect
-            }
-
             if (chunk.isEmpty()) return@collect
             val raw = String(chunk, Charsets.UTF_8)
             val (appended, newStyle) = parseAnsiChunk(raw, terminalStyle)
@@ -612,6 +633,24 @@ fun RnshTerminalScreen(
                     if (latestStatus.state == RnshConnectionState.CONNECTING ||
                         latestStatus.state == RnshConnectionState.CONNECTED
                     ) {
+                        // Real, explicit direction: leaving the app and
+                        // coming back should require re-entering the
+                        // PIN, not just silently resume showing a live
+                        // session. Locked *immediately* on ON_STOP (not
+                        // deferred like the disconnect below) — the same
+                        // sessionUnlocked gate already used for
+                        // returning to this screen via in-app
+                        // navigation, reused here for the "left the
+                        // whole app" case too, so both real ways of
+                        // "coming back to an active session" share one
+                        // real re-auth requirement instead of two
+                        // different behaviors. The grace-period
+                        // disconnect below still runs on its own timer
+                        // underneath this — a quick background+return
+                        // just re-locks a still-live session; a longer
+                        // absence still actually ends it as a stronger
+                        // fail-safe.
+                        sessionUnlocked = false
                         backgroundDisconnectJob = scope.launch {
                             delay(BACKGROUND_DISCONNECT_GRACE_MS)
                             disconnectAndClearSession()
@@ -621,6 +660,21 @@ fun RnshTerminalScreen(
                 Lifecycle.Event.ON_START -> {
                     backgroundDisconnectJob?.cancel()
                     backgroundDisconnectJob = null
+                    // Auto-trigger the re-auth prompt right as the app
+                    // actually resumes to the foreground — the real
+                    // right moment for BiometricPrompt (it needs a
+                    // resumed, visible Activity to reliably show;
+                    // triggering it reactively off sessionUnlocked
+                    // instead, which flips false back on ON_STOP while
+                    // still backgrounded, risked trying to show it
+                    // before the app was actually back in front). The
+                    // "Session locked" gate's own manual Unlock button
+                    // is still there underneath as a fallback either way.
+                    if (!sessionUnlocked &&
+                        (latestStatus.state == RnshConnectionState.CONNECTED || latestStatus.state == RnshConnectionState.CONNECTING)
+                    ) {
+                        requestSessionUnlock()
+                    }
                 }
                 else -> Unit
             }
@@ -635,6 +689,14 @@ fun RnshTerminalScreen(
     fun sendLine(extra: String = "") {
         val toSend = (lineInputValue.text + extra).toByteArray(Charsets.UTF_8)
         if (toSend.isEmpty()) return
+        // Real local-only history (see localHistory's own doc comment) —
+        // append the sent line so Up/Down has it to recall. Blank/
+        // whitespace-only sends (e.g. a bare Enter) aren't worth
+        // recalling, matching real shells' own history behavior.
+        if (lineInputValue.text.isNotBlank()) {
+            localHistory = localHistory + lineInputValue.text
+        }
+        localHistoryBrowseIndex = null
         lineInputValue = TextFieldValue("")
         scope.launch {
             try {
@@ -669,19 +731,42 @@ fun RnshTerminalScreen(
 
     fun sendControl(byte: Int) = sendRaw(byteArrayOf(byte.toByte()))
 
-    // Up/Down: sends the real xterm arrow CSI sequence (`ESC [ A`/
-    // `ESC [ B`) to the remote, exactly what a real terminal sends for
-    // Up/Down — this *does* drive the remote's own real readline history
-    // (not a fake local-only list), matching the destination's actual
-    // shell state. The outputChunks collector above is what intercepts
-    // the resulting redraw and routes it into lineInputValue instead of
-    // the read-only terminalBuffer — see its own doc comment for that
-    // half of the design.
-    fun requestHistoryRecall(letter: Char) {
-        awaitingHistoryRecall = true
-        historyRecallRawBuffer = ""
-        historyRecallStartedAtMillis = System.currentTimeMillis()
-        sendRaw(byteArrayOf(0x1B, '['.code.toByte(), letter.code.toByte()))
+    // Up/Down: local-only history recall — see localHistory's own doc
+    // comment for why this replaced the earlier remote-driven approach
+    // (real arrow bytes + parsing the remote's own redraw response),
+    // which went through several genuine fix attempts without ever
+    // becoming reliable. This is instant, always-editable-by-
+    // construction, and has no bytes to parse — recalled text is just
+    // set directly, the same simple, already-proven pattern this screen
+    // uses everywhere else a value gets set programmatically. older=true
+    // is Up (step to an older entry); older=false is Down (step to a
+    // more recent one, or exit back to a blank line once past the
+    // newest — matching real shell behavior, not a no-op).
+    fun recallLocalHistory(older: Boolean) {
+        if (localHistory.isEmpty()) return
+        val current = localHistoryBrowseIndex
+        if (older) {
+            val newIndex = if (current == null) localHistory.size - 1 else (current - 1).coerceAtLeast(0)
+            localHistoryBrowseIndex = newIndex
+            val recalled = localHistory[newIndex]
+            lineInputValue = TextFieldValue(recalled, TextRange(recalled.length))
+        } else {
+            if (current == null) return
+            val newIndex = current + 1
+            if (newIndex >= localHistory.size) {
+                localHistoryBrowseIndex = null
+                lineInputValue = TextFieldValue("")
+            } else {
+                localHistoryBrowseIndex = newIndex
+                val recalled = localHistory[newIndex]
+                lineInputValue = TextFieldValue(recalled, TextRange(recalled.length))
+            }
+        }
+        // Real, on-device-reported bug this also fixes ("recovered rows
+        // are not editable"): tapping the Up/Down button shifts keyboard
+        // focus onto that button, and simply updating lineInputValue's
+        // *value* doesn't bring focus back to the text field on its own.
+        commandFocusRequester.requestFocus()
     }
 
     Scaffold(
@@ -756,7 +841,25 @@ fun RnshTerminalScreen(
             )
         },
     ) { innerPadding ->
-        Column(modifier = Modifier.fillMaxSize().padding(innerPadding).padding(12.dp)) {
+        // Box, not a bare Column, specifically so the session-lock gate
+        // below can overlay on top of the real content without having
+        // to restructure this whole large existing block into an
+        // if/else — the real content still composes underneath
+        // (needed anyway so it's ready to show the instant
+        // sessionUnlocked flips true), just visually covered while
+        // locked. See sessionUnlocked's own doc comment for why this
+        // gate exists at all (returning to an already-active session
+        // needs fresh authentication, same as starting one).
+        // dismissKeyboardOnTap — same established, real utility already
+        // used elsewhere in this app (Compose gives a focused text field
+        // no built-in way to lose focus/hide the keyboard from a tap
+        // elsewhere on the screen). Real, on-device-asked-for gap here
+        // specifically: this screen's own BasicTextField auto-requests
+        // focus (on CONNECTED, and after every Up/Down recall), so
+        // there was previously no way to dismiss the keyboard at all
+        // without leaving the screen or disconnecting.
+        Box(modifier = Modifier.fillMaxSize().padding(innerPadding).dismissKeyboardOnTap()) {
+        Column(modifier = Modifier.fillMaxSize().padding(12.dp)) {
             if (status.state == RnshConnectionState.IDLE || status.state == RnshConnectionState.CLOSED ||
                 status.state == RnshConnectionState.FAILED
             ) {
@@ -985,6 +1088,30 @@ fun RnshTerminalScreen(
                     BasicTextField(
                         value = lineInputValue,
                         onValueChange = { new ->
+                            // A real, on-device-reported bug this guard
+                            // fixes ("up arrow only worked for the most
+                            // immediate previous command, never changed
+                            // to further-back entries"): requesting focus
+                            // right after recallLocalHistory
+                            // programmatically sets lineInputValue (to
+                            // fix a *different*, earlier-reported focus
+                            // bug) causes the platform text field to
+                            // echo an onValueChange call back with the
+                            // *same* text, as an artifact of its own
+                            // internal focus-reconciliation — not a real
+                            // user edit. Unconditionally resetting
+                            // localHistoryBrowseIndex on every call, as
+                            // an earlier version of this did, meant that
+                            // echo reset browsing state right after every
+                            // single recall, so the *next* Up press
+                            // always looked like a fresh "start from the
+                            // most recent entry" rather than stepping
+                            // further back. Only an *actual* content
+                            // change means the user has moved off
+                            // whatever history entry was last recalled.
+                            if (new.text != lineInputValue.text) {
+                                localHistoryBrowseIndex = null
+                            }
                             // A literal '\n' reaching here is legitimate,
                             // intentional multi-line composition (Shift+
                             // Enter — see onPreviewKeyEvent below, the
@@ -1012,13 +1139,71 @@ fun RnshTerminalScreen(
                         textStyle = terminalTextStyle.copy(color = Color.White),
                         cursorBrush = SolidColor(Color.White),
                         keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send),
-                        keyboardActions = KeyboardActions(onSend = { sendLine("\r") }),
+                        // Real, on-device-reported bug this fixes: this
+                        // callback fires when the *soft keyboard's own*
+                        // Enter/Send key is tapped — a genuinely separate
+                        // path from onPreviewKeyEvent below, which only
+                        // ever sees real hardware KeyEvents (a Bluetooth/
+                        // USB keyboard's physical Enter key). A touch-only
+                        // device has no hardware KeyEvent to check
+                        // isShiftPressed against, so onSend used to call
+                        // sendLine() unconditionally — meaning the Shift
+                        // toggle had no effect at all on a soft keyboard,
+                        // exactly the reported symptom ("can't get shift
+                        // to help enter a multi-line enter"). Checking
+                        // shiftActive here and manually inserting a real
+                        // newline instead of sending mirrors what the
+                        // hardware-keyboard path already does for a true
+                        // Shift+Enter keydown.
+                        keyboardActions = KeyboardActions(onSend = {
+                            if (shiftActive) {
+                                val newText = lineInputValue.text.replaceRange(
+                                    lineInputValue.selection.min, lineInputValue.selection.max, "\n",
+                                )
+                                val newCursor = lineInputValue.selection.min + 1
+                                lineInputValue = TextFieldValue(newText, TextRange(newCursor))
+                            } else {
+                                sendLine("\r")
+                            }
+                        }),
                         decorationBox = { innerTextField ->
-                            Row(verticalAlignment = Alignment.Top) {
-                                if (promptAnnotated.isNotEmpty()) {
-                                    Text(text = promptAnnotated, style = terminalTextStyle)
+                            // Real, on-device-reported bug this fixes:
+                            // a Row lays every visual line of
+                            // innerTextField() out at the *same* x-offset
+                            // as the prompt, because decorationBox wraps
+                            // the whole field rather than participating
+                            // in its own text-layout line-wrapping — fine
+                            // for the common single-line case (the prompt
+                            // and the one line of input genuinely belong
+                            // side by side), but once real multi-line
+                            // content exists (Shift+Enter), every line
+                            // after the first stayed indented under where
+                            // the prompt ended instead of starting at the
+                            // real left margin ("doesn't left justify,
+                            // stuck inline with the row above"). Falling
+                            // back to a Column once the content actually
+                            // contains a newline — prompt on its own
+                            // line, above the now-multi-line field — is
+                            // what actually left-justifies every line;
+                            // the true inline-with-prompt cursor is
+                            // deliberately only for the single-line case,
+                            // since a decorationBox fundamentally can't
+                            // make a decorative prefix participate in the
+                            // text field's own internal line-wrapping.
+                            if (lineInputValue.text.contains('\n')) {
+                                Column {
+                                    if (promptAnnotated.isNotEmpty()) {
+                                        Text(text = promptAnnotated, style = terminalTextStyle)
+                                    }
+                                    innerTextField()
                                 }
-                                innerTextField()
+                            } else {
+                                Row(verticalAlignment = Alignment.Top) {
+                                    if (promptAnnotated.isNotEmpty()) {
+                                        Text(text = promptAnnotated, style = terminalTextStyle)
+                                    }
+                                    innerTextField()
+                                }
                             }
                         },
                         modifier = Modifier
@@ -1133,35 +1318,37 @@ fun RnshTerminalScreen(
                         // more inside full-screen programs like vim,
                         // already out of scope for this screen (no
                         // cursor-addressable rendering — see this file's
-                        // own top doc comment). Up/Down are reinterpreted
-                        // rather than forwarded as raw bytes, see
-                        // requestHistoryRecall's own doc comment — sends
-                        // the *real* arrow CSI sequence, driving the
-                        // remote shell's own genuine history, but the
-                        // redraw that comes back is intercepted and
-                        // routed into lineInputValue as real editable/
-                        // backspaceable text instead of the read-only
-                        // scrollback. No Left/Right — cut per explicit
+                        // own top doc comment). Up/Down recall from a
+                        // real local-only history (see localHistory's own
+                        // doc comment for why — replaced an earlier
+                        // remote-driven design that never became
+                        // reliable). No Left/Right — cut per explicit
                         // direction: their only real value (nudging the
                         // cursor one character after an imprecise tap)
                         // was judged too narrow to keep, and a touch
                         // field's own native tap-to-place-cursor / long-
                         // press-to-select already covers positioning.
-                        // horizontalScroll is a safety net, not the
-                        // primary fix — on a real, on-device-confirmed
-                        // narrow layout (320dp), even after the KeyRowButton
-                        // rewrite + this tight padding, 6 controls sit
-                        // right at the edge of the available width. Rather
-                        // than risk a repeat of the exact bug that
-                        // motivated KeyRowButton in the first place (a
-                        // button silently collapsing to zero size when it
-                        // doesn't fit), this guarantees every control stays
-                        // genuinely reachable on any screen width — a
-                        // no-op visually on any screen wide enough that it
-                        // never needs to actually scroll.
+                        // fillMaxWidth + SpaceEvenly — per explicit
+                        // direction, spreads the 6 controls evenly across
+                        // the full row instead of clustering together
+                        // with a bare 2dp gap. This does give up the
+                        // horizontalScroll safety net an earlier revision
+                        // had here (the two are fundamentally
+                        // incompatible — scroll needs the row's content
+                        // to be allowed to exceed the viewport, whereas
+                        // SpaceEvenly needs a bounded viewport to have any
+                        // leftover space to distribute), but a real
+                        // uiautomator dump confirmed all 6 KeyRowButtons
+                        // together only need ~190dp on a 320dp-wide
+                        // screen — comfortably within a normal phone's
+                        // width even accounting for a larger accessibility
+                        // text-scale setting, so the risk this reintroduces
+                        // is low, unlike the original TextButton-MinWidth
+                        // bug (KeyRowButton itself, not this Arrangement
+                        // choice, is what actually fixed that).
                         Row(
-                            horizontalArrangement = Arrangement.spacedBy(2.dp),
-                            modifier = Modifier.horizontalScroll(rememberScrollState()),
+                            horizontalArrangement = Arrangement.SpaceEvenly,
+                            modifier = Modifier.fillMaxWidth(),
                         ) {
                             ModifierToggleButton(
                                 "Ctrl", active = ctrlActive, contentPadding = keyButtonPadding,
@@ -1191,18 +1378,56 @@ fun RnshTerminalScreen(
                                     else sendControl(0x09)
                                 },
                             ) { Text("Tab", style = keyButtonTextStyle) }
+                            // Local-only recall (see localHistory's own
+                            // doc comment) — instant, no round trip, so
+                            // no loading state is needed here.
                             KeyRowButton(
                                 contentPadding = arrowButtonPadding,
-                                onClick = { requestHistoryRecall('A') },
+                                onClick = { recallLocalHistory(older = true) },
                             ) { Text("↑", style = arrowButtonTextStyle) }
                             KeyRowButton(
                                 contentPadding = arrowButtonPadding,
-                                onClick = { requestHistoryRecall('B') },
+                                onClick = { recallLocalHistory(older = false) },
                             ) { Text("↓", style = arrowButtonTextStyle) }
                         }
                     }
                 }
             }
+        }
+        val needsUnlock = !sessionUnlocked &&
+            (status.state == RnshConnectionState.CONNECTED || status.state == RnshConnectionState.CONNECTING)
+        if (needsUnlock) {
+            Column(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .background(MaterialTheme.colorScheme.background)
+                    .padding(24.dp),
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.Center,
+            ) {
+                Text("Session locked", style = MaterialTheme.typography.titleMedium)
+                Text(
+                    "A real remote shell session is already active on this device. Authenticate to view it.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = NomadTextDim,
+                    textAlign = TextAlign.Center,
+                    modifier = Modifier.padding(top = 8.dp),
+                )
+                unlockError?.let {
+                    Text(
+                        it,
+                        color = MaterialTheme.colorScheme.error,
+                        style = MaterialTheme.typography.bodySmall,
+                        textAlign = TextAlign.Center,
+                        modifier = Modifier.padding(top = 8.dp),
+                    )
+                }
+                TextButton(
+                    onClick = { requestSessionUnlock() },
+                    modifier = Modifier.padding(top = 16.dp),
+                ) { Text("Unlock") }
+            }
+        }
         }
     }
 }
@@ -1598,9 +1823,32 @@ internal fun parseAnsiChunk(raw: String, state: TermStyleState): Pair<AnnotatedS
                 // cursor-control sequence.
                 textBuf.append('\n')
                 i++
+            } else if (c.code == 0x08 || c.code == 0x7F) {
+                // Backspace (0x08) / DEL (0x7F, some terminals send this
+                // for backspace instead) — a real, on-device-confirmed
+                // bug this fixes: previously fell into the generic
+                // control-byte-strip branch below like bell/etc., so a
+                // real backspace-based erase (readline commonly uses
+                // this for short in-place redraws — erase N characters
+                // then retype — not always a fresh `\r`+full-rewrite)
+                // never actually removed the character it was erasing.
+                // The stale character stayed in the extracted text with
+                // whatever got typed next appended right after it —
+                // on-device-confirmed as two full recalled commands
+                // concatenated with no separator ("whoamiecho test1")
+                // instead of a clean replacement. Removes the last
+                // character already accumulated in the *current* styled
+                // run; if nothing's been accumulated yet here (e.g. the
+                // character it would erase was already flushed into an
+                // earlier, differently-styled span across a color
+                // change), there's genuinely nothing this flat, no-real-
+                // cursor buffer can safely undo — a real, narrower
+                // remaining limitation, not the common case.
+                if (textBuf.isNotEmpty()) textBuf.deleteCharAt(textBuf.length - 1)
+                i++
             } else if (c.code < 0x20 && c != '\n' && c != '\t') {
-                // Other control bytes (bell, backspace, etc.) —
-                // silently stripped, not rendered and not acted on.
+                // Other control bytes (bell, etc.) — silently stripped,
+                // not rendered and not acted on.
                 i++
             } else {
                 textBuf.append(c)
