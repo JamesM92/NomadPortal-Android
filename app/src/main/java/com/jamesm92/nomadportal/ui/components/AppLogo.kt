@@ -148,7 +148,11 @@ fun PanicWipeLogo(modifier: Modifier = Modifier, onTripleTap: () -> Unit) {
  * proportions/colors in place once seen live on a real device.
  */
 @Composable
-private fun TentPortalMark(modifier: Modifier = Modifier, markSize: Dp = 24.dp) {
+// No longer private — OnboardingScreen's own SafetyStep is a second
+// real caller (showing this exact mark, larger, with a pointing arrow,
+// so a first-run user sees literally which icon to triple-tap), per
+// this project's own "promote only after real reuse" convention.
+fun TentPortalMark(modifier: Modifier = Modifier, markSize: Dp = 24.dp) {
     val tentColor = MaterialTheme.colorScheme.primary
     val portalColor = NomadPortalPurple
     Canvas(modifier = modifier.size(markSize)) {
