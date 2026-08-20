@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Notification small icon — a simple flat silhouette, per Android's
+     own requirement (the system masks out any color here and renders
+     just the alpha shape in white/status-bar-tint regardless of what's
+     specified below, on API 21+). A simplified single-path version of
+     the app's real TentPortalMark (ui/components/AppLogo.kt) — a tent
+     silhouette with a triangular doorway cutout, recognizable at the
+     tiny sizes a status-bar icon actually renders at, unlike the full
+     multi-layer Canvas-drawn mark (guy lines, ridge seam, arched
+     doorway) that composable draws for in-app use. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24"
+    android:tint="#FFFFFF">
+    <path
+        android:fillColor="#FF000000"
+        android:fillType="evenOdd"
+        android:pathData="M12,2 L21,20 L3,20 Z M12,9 L8,20 L16,20 Z" />
+</vector>

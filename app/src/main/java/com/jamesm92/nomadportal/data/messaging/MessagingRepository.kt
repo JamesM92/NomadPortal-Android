@@ -145,6 +145,11 @@ interface MessagingRepository {
      * background Python thread independent of any UI observing it. */
     fun propagationSyncStatus(): Flow<PropagationSyncStatus>
 
+    /** Every known propagation node — see [RelayNode]'s own doc comment
+     * for why this is a separate list from [conversations], not a
+     * filtered view of it. Polled, same convention as [conversations]. */
+    fun relayNodes(): Flow<List<RelayNode>>
+
     /** Manual "Sync now" trigger. Returns a short, UI-displayable
      * success message; throws on failure (e.g. no propagation node
      * discovered yet) with a UI-displayable reason, same contract as
@@ -183,6 +188,26 @@ interface MessagingRepository {
      * inconvenience like most of this app's other ephemeral toggles.
      */
     suspend fun setMessagesContactsOnly(enabled: Boolean)
+
+    /**
+     * "Calls from contacts only" allowlist mode — see
+     * [AnnounceStatus.callsContactsOnly]'s own doc comment for what this
+     * actually does. Same persistence rationale as
+     * [setMessagesContactsOnly] (a privacy-protective toggle resetting to
+     * permissive on restart would be a real footgun), but deliberately a
+     * separate persisted setting, not shared with it.
+     */
+    suspend fun setCallsContactsOnly(enabled: Boolean)
+
+    /**
+     * Master "Allow incoming voice calls" toggle — see
+     * [AnnounceStatus.callsEnabled]'s own doc comment for what this
+     * actually does. Same persistence rationale as
+     * [setMessagesContactsOnly]/[setCallsContactsOnly], and deliberately
+     * a separate persisted setting from both — independent of, and
+     * enforced ahead of, [setCallsContactsOnly]'s own allowlist.
+     */
+    suspend fun setCallsEnabled(enabled: Boolean)
 
     /**
      * "Retry via relay on failure" — see [AnnounceStatus.retryViaRelay]'s

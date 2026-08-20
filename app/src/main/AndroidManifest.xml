@@ -62,6 +62,22 @@
     <uses-permission android:name="android.permission.CAMERA" />
     <uses-feature android:name="android.hardware.camera.any" android:required="false" />
 
+    <!-- Settings → Notifications (see notifications/ package). A real
+         runtime permission on API 33+ (requested from the Notifications
+         section, same rememberLauncherForActivityResult(RequestPermission())
+         pattern as RECORD_AUDIO/CAMERA above) — a denial degrades
+         gracefully, same rule as every other optional permission here:
+         the app keeps working, it just can't show notifications. -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <!-- Always-on notification mode's real foreground service
+         (MessageNotificationService) — FOREGROUND_SERVICE_DATA_SYNC
+         (not CONNECTED_DEVICE, which RnsBleForegroundService already
+         declares for the Bluetooth-mesh-specific service — this one's
+         job is periodic message-delivery checking, a data-sync
+         workload). -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
+
     <application
         android:name=".NomadPortalApp"
         android:allowBackup="false"
@@ -81,6 +97,17 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
+
+        <!-- Always-on notification mode's real foreground service — see
+             notifications/MessageNotificationService.kt's own doc
+             comment. Declared directly in this app's own manifest
+             (unlike RnsBleForegroundService, which only exists via the
+             RNS_BLE_Wrapper AAR merge — this one's plain Kotlin, no
+             library dependency). -->
+        <service
+            android:name=".notifications.MessageNotificationService"
+            android:exported="false"
+            android:foregroundServiceType="dataSync" />
 
         <!-- Exposes received/sent message attachments (stored under
              getNoBackupFilesDir()/reticulum/lxmf/attachments — see

@@ -29,7 +29,11 @@ android {
         minSdk = 31
         targetSdk = 37
         versionCode = 1
-        versionName = "0.1.0"
+        // v0.0.1 — this app's real first (beta) release tag, per explicit
+        // direction ahead of cutting it. Was "0.1.0" (an earlier, informal
+        // placeholder from initial scaffolding, before there was a real
+        // release to version at all).
+        versionName = "0.0.1"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
 
@@ -170,6 +174,7 @@ dependencies {
     // FragmentActivity comment for why the base Activity class had to
     // change for this.
     implementation(libs.androidx.biometric)
+    implementation(libs.androidx.work.runtime.ktx)
 
     testImplementation(libs.junit)
 

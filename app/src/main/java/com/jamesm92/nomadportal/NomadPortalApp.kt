@@ -15,6 +15,8 @@ import com.jamesm92.nomadportal.data.browsing.BrowserRepository
 import com.jamesm92.nomadportal.data.browsing.RealBrowserRepository
 import com.jamesm92.nomadportal.data.hosting.RealSiteFileRepository
 import com.jamesm92.nomadportal.data.hosting.SiteFileRepository
+import com.jamesm92.nomadportal.data.identity.IdentityRepository
+import com.jamesm92.nomadportal.data.identity.RealIdentityRepository
 import com.jamesm92.nomadportal.data.messaging.MdiIconRepository
 import com.jamesm92.nomadportal.data.messaging.MessagingRepository
 import com.jamesm92.nomadportal.data.messaging.RealMessagingRepository
@@ -22,6 +24,7 @@ import com.jamesm92.nomadportal.data.rnsh.RealRnshHistoryRepository
 import com.jamesm92.nomadportal.data.rnsh.RealRnshRepository
 import com.jamesm92.nomadportal.data.rnsh.RnshHistoryRepository
 import com.jamesm92.nomadportal.data.rnsh.RnshRepository
+import com.jamesm92.nomadportal.notifications.MessageNotificationController
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -57,6 +60,8 @@ class NomadPortalApp : Application() {
     lateinit var rnshRepository: RnshRepository
         private set
     lateinit var rnshHistoryRepository: RnshHistoryRepository
+        private set
+    lateinit var identityRepository: IdentityRepository
         private set
 
     override fun onCreate() {
@@ -94,7 +99,14 @@ class NomadPortalApp : Application() {
         // nodes.json/favorites.json/etc.) before returning.
         appScope.launch(Dispatchers.IO) {
             val orchestrator = Python.getInstance().getModule("nomadportal_core.orchestrator")
-            orchestrator.callAttr("start", noBackupFilesDir.absolutePath)
+            // enable_transport is read once here, at process start — RNS's
+            // own singleton constraint (this module's own comment above)
+            // means it can't change live once RNS.Reticulum() is
+            // constructed, so the toggle in Settings triggers a real app
+            // restart (AppRestart.restart) rather than trying to apply
+            // live. See orchestrator.py's start()'s own doc comment.
+            val transportNodeEnabled = settingsRepository.transportNodeEnabled.first()
+            orchestrator.callAttr("start", noBackupFilesDir.absolutePath, transportNodeEnabled)
 
             // start() only constructs NodeBrowser/RNS — it never adds any
             // Interface itself. Without this, a persisted "TCP: on" (the
@@ -155,6 +167,29 @@ class NomadPortalApp : Application() {
             if (settingsRepository.messagesContactsOnly.first()) {
                 orchestrator.callAttr("set_messages_contacts_only", true)
             }
+            // Same replay, for the separate "Calls from contacts only"
+            // toggle — see SettingsRepository.callsContactsOnly's own
+            // doc comment. Safe to call this early (before the call
+            // engine's own deferred RNS setup finishes): _call_manager
+            // is already constructed synchronously inside
+            // orchestrator.start() by this point, and
+            // set_calls_contacts_only() only flips an in-memory flag on
+            // it — independent of when its contact-checker gets wired
+            // up by _start_call_manager() on the deferred-setup thread.
+            if (settingsRepository.callsContactsOnly.first()) {
+                orchestrator.callAttr("set_calls_contacts_only", true)
+            }
+            // Same replay, for the master "Allow incoming voice calls"
+            // toggle — see SettingsRepository.callsEnabled's own doc
+            // comment. Unlike the other toggles above (which default
+            // false and only need replaying when true), this one
+            // defaults true on both sides — CallManager's own
+            // _calls_enabled already starts True, matching this
+            // property's own default — so only a persisted *false*
+            // needs an explicit replay call here.
+            if (!settingsRepository.callsEnabled.first()) {
+                orchestrator.callAttr("set_calls_enabled", false)
+            }
         }
 
         // Real, orchestrator-backed repositories (Aug 2026) — replaced
@@ -191,5 +226,24 @@ class NomadPortalApp : Application() {
         // see RnshHistoryRepository's own doc comment. Independent of
         // orchestrator readiness (plain DataStore, no Chaquopy involved).
         rnshHistoryRepository = RealRnshHistoryRepository(this)
+        // Multi-identity management (Settings → Identities) — same
+        // safe-before-orchestrator.start()-finishes reasoning as the
+        // repositories above; every bridge function it calls degrades
+        // to a clear "not ready yet" failure rather than erroring while
+        // _identity_store is still None.
+        identityRepository = RealIdentityRepository()
+
+        // Notifications' boot-time replay — same pattern as the four
+        // interface toggles above, placed after messagingRepository is
+        // constructed (this line, not the earlier launch block) since
+        // MessageNotificationService/MessageCheckWorker both read
+        // `app.messagingRepository` lazily once actually running, and
+        // that field must already be non-null by the time either one
+        // could plausibly start.
+        appScope.launch {
+            val enabled = settingsRepository.notificationsEnabled.first()
+            val alwaysOn = settingsRepository.notificationsAlwaysOn.first()
+            MessageNotificationController.apply(this@NomadPortalApp, enabled, alwaysOn)
+        }
     }
 }

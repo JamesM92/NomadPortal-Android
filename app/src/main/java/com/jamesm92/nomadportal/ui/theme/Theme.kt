@@ -1,14 +1,19 @@
 package com.jamesm92.nomadportal.ui.theme
 
+import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.darkColorScheme
+import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.lerp
+import com.jamesm92.nomadportal.data.ThemeMode
 
-// Dark-only by design (matches NomadPortal's terminal aesthetic — see
-// Color.kt). isSystemInDarkTheme() is intentionally not branched on: there
-// is no light variant to fall back to.
+// Was dark-only by design (matches NomadPortal's terminal aesthetic —
+// see Color.kt) — a real light variant was added once Settings' own
+// theme-mode toggle needed one (closing a real Columba-parity gap; see
+// NomadLightColorScheme below and NomadPortalTheme's own ThemeMode
+// handling for isSystemInDarkTheme() actually being consulted now).
 //
 // Redesign (color tokens): fills in the ~21 of Material 3's ~30
 // colorScheme roles that were previously left at Compose's stock purple
@@ -23,7 +28,7 @@ import androidx.compose.ui.graphics.lerp
 // new hex literals — the android-compose-app-design skill's own "derive
 // variants from theme colors, don't invent new literals" guidance,
 // applied with a real interpolation utility instead of eyeballing.
-private val NomadColorScheme = darkColorScheme(
+private val NomadDarkColorScheme = darkColorScheme(
     primary = NomadAccent,
     onPrimary = NomadBg,
     primaryContainer = lerp(NomadBg2, NomadAccent, 0.3f),
@@ -78,12 +83,82 @@ private val NomadColorScheme = darkColorScheme(
     surfaceContainerHighest = lerp(NomadBg3, NomadText, 0.12f),
 )
 
-/** @param textScale User-adjustable multiplier (Settings → text size) —
- * see [nomadTypography]/[com.jamesm92.nomadportal.data.SettingsRepository.textScale]. */
+// Light counterpart — see Color.kt's own doc comment on NomadBgLight/
+// NomadBg2Light/NomadBg3Light/NomadBorderLight for why only background/
+// surface/border/body-text tokens are genuinely new here: the accent
+// hues (primary/secondary/tertiary/error) and NomadTextDim are reused
+// as-is from the dark scheme for brand consistency across both themes,
+// and NomadBg (already near-black, #131313) doubles as this scheme's
+// own primary body-text color rather than a separately-invented
+// "NomadTextLight" that would just duplicate it.
+private val NomadLightColorScheme = lightColorScheme(
+    primary = NomadAccent,
+    onPrimary = NomadBg,
+    primaryContainer = lerp(NomadBgLight, NomadAccent, 0.2f),
+    onPrimaryContainer = NomadBg,
+    inversePrimary = lerp(NomadAccent, Color.Black, 0.25f),
+
+    secondary = NomadAccent2,
+    onSecondary = NomadBg,
+    secondaryContainer = lerp(NomadBgLight, NomadAccent2, 0.2f),
+    onSecondaryContainer = NomadBg,
+
+    tertiary = NomadPortalPurple,
+    onTertiary = NomadBg,
+    tertiaryContainer = lerp(NomadBgLight, NomadPortalPurple, 0.2f),
+    onTertiaryContainer = NomadBg,
+
+    error = NomadError,
+    onError = NomadBg,
+    errorContainer = lerp(NomadBgLight, NomadError, 0.2f),
+    onErrorContainer = NomadBg,
+
+    background = NomadBgLight,
+    onBackground = NomadBg,
+
+    surface = NomadBgLight,
+    onSurface = NomadBg,
+    surfaceVariant = NomadBg3Light,
+    onSurfaceVariant = NomadTextDim,
+    surfaceTint = NomadAccent,
+
+    outline = NomadBorderLight,
+    outlineVariant = lerp(NomadBgLight, NomadBorderLight, 0.5f),
+    scrim = Color.Black,
+
+    inverseSurface = NomadBg,
+    inverseOnSurface = NomadBgLight,
+
+    surfaceDim = NomadBg3Light,
+    surfaceBright = NomadBgLight,
+    surfaceContainerLowest = Color.White,
+    surfaceContainerLow = NomadBgLight,
+    surfaceContainer = NomadBg2Light,
+    surfaceContainerHigh = NomadBg3Light,
+    surfaceContainerHighest = lerp(NomadBg3Light, NomadBg, 0.08f),
+)
+
+/**
+ * @param themeMode [ThemeMode.SYSTEM] (the default) follows the OS's own
+ * light/dark setting via [isSystemInDarkTheme]; [ThemeMode.LIGHT]/
+ * [ThemeMode.DARK] pin it regardless of the OS. See
+ * [com.jamesm92.nomadportal.data.SettingsRepository.themeMode].
+ * @param textScale User-adjustable multiplier (Settings → text size) —
+ * see [nomadTypography]/[com.jamesm92.nomadportal.data.SettingsRepository.textScale].
+ */
 @Composable
-fun NomadPortalTheme(textScale: Float = 1f, content: @Composable () -> Unit) {
+fun NomadPortalTheme(
+    themeMode: ThemeMode = ThemeMode.SYSTEM,
+    textScale: Float = 1f,
+    content: @Composable () -> Unit,
+) {
+    val isDark = when (themeMode) {
+        ThemeMode.SYSTEM -> isSystemInDarkTheme()
+        ThemeMode.LIGHT -> false
+        ThemeMode.DARK -> true
+    }
     MaterialTheme(
-        colorScheme = NomadColorScheme,
+        colorScheme = if (isDark) NomadDarkColorScheme else NomadLightColorScheme,
         typography = nomadTypography(textScale),
         content = content,
     )

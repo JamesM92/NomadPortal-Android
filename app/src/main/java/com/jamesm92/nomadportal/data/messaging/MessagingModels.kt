@@ -178,6 +178,34 @@ data class ConversationSummary(
     val unreadCount: Int,
 )
 
+/**
+ * A propagation node heard via a real `lxmf.propagation`-aspect
+ * announce — mesh infrastructure (a store-and-forward relay), not a
+ * contact. Backs the Network tab's "Relays" filter
+ * ([com.jamesm92.nomadportal.ui.network.NetworkScreen]'s own
+ * `AnnounceTypeFilter.RELAYS`); see
+ * [MessagingRepository.relayNodes]/`PropagationSyncService.get_known_nodes()`
+ * for where this comes from.
+ *
+ * Deliberately has no [displayName]/favorite/blocked fields the way
+ * [Contact] does — a propagation node's `app_data` isn't a human name
+ * (see `call_tracker.py`'s own doc comment on aspect-derived hashes for
+ * why this is a genuinely different kind of destination from an LXMF
+ * delivery peer, not just an LXMF peer with a different label), so the
+ * UI shows its hash. [hopCount]/[lastAnnounceMillis]/[announceCount]
+ * mirror [Contact]'s own fields/conventions so the unified Announces
+ * browser can sort a mix of peers, sites, and relays with one set of
+ * [com.jamesm92.nomadportal.ui.components.SortOption]s.
+ */
+data class RelayNode(
+    val hash: String,
+    /** -1 = unknown, matching [Contact.hopCount]'s sentinel. */
+    val hopCount: Int = -1,
+    val firstSeenMillis: Long,
+    val lastAnnounceMillis: Long,
+    val announceCount: Int = 0,
+)
+
 /** [LXMRouter.propagation_transfer_state]'s real states, mirrored
  * directly (confirmed against the installed LXMF package's source, not
  * guessed) — see lxmf_sync.py's own `_TRANSFER_STATE_LABELS` for the
@@ -330,6 +358,34 @@ data class AnnounceStatus(
      * [autoAnnounceMasterEnabled], which is deliberately left
      * Python-side ephemeral). */
     val messagesContactsOnly: Boolean,
+    /** Live, enforced state of the "Calls from contacts only" allowlist
+     * mode — the calls-specific counterpart to [messagesContactsOnly],
+     * deliberately a separate toggle rather than shared (a user may want
+     * to receive messages from strangers but never be rung by one, or
+     * vice versa). When true, `call_manager.py`'s `_caller_identified`
+     * signals a real BUSY status and tears the link down for any caller
+     * who isn't already a known contact — indistinguishable from a
+     * genuine busy signal on the caller's side, matching the same
+     * "dropped outright, never surfaced" privacy contract
+     * [messagesContactsOnly] already establishes for messages. See
+     * [MessagingRepository.setCallsContactsOnly]'s own doc comment; this
+     * one is persisted (unlike [retryViaRelay]) for the same reason
+     * [messagesContactsOnly] is. */
+    val callsContactsOnly: Boolean,
+    /** Live, enforced state of the master "Allow incoming voice calls"
+     * toggle — a real Columba-parity gap (its own real
+     * `VoiceCallPermissionsCard.kt` `allowVoiceCalls` setting, found via
+     * a direct source audit and closed here per explicit direction).
+     * Independent of, and enforced *before*, [callsContactsOnly] — this
+     * is "no calls at all," not "no calls from strangers." When false,
+     * `call_manager.py`'s `_incoming_link_established` rejects every
+     * incoming call link with a real BUSY signal before identification
+     * even happens (so it doesn't matter whether the caller is a known
+     * contact), and hangs up any call already in progress. See
+     * [MessagingRepository.setCallsEnabled]'s own doc comment; persisted
+     * for the same reason [callsContactsOnly] is. Defaults to true
+     * (calls accepted), matching Columba's own real default. */
+    val callsEnabled: Boolean,
     /** Live, enforced state of "Retry via relay on failure" — per the
      * Columba-parity-audit's own real `MessageDeliveryRetrievalCard.kt`
      * finding. When true, a failed direct/opportunistic send

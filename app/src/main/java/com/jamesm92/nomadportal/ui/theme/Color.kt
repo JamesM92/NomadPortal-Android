@@ -28,6 +28,24 @@ val NomadSentBubbleBorder = Color(0xFF2A5570)
 // rather than a jarring one-off accent.
 val NomadPortalPurple = Color(0xFF9B6BC8)
 
+// Light-theme background/surface/border tiers — the real light palette
+// added for Settings' theme-mode toggle (per explicit direction, closing
+// a real Columba-parity gap; this app was dark-only before). Deliberately
+// NOT a full parallel token set: the accent hues (NomadAccent/Accent2/
+// PortalPurple/Warn/Error) and NomadTextDim are reused as-is in both
+// themes (kept as brand-consistent, and NomadTextDim's medium-gray value
+// already has workable contrast against both a near-black and a
+// near-white background) — only background/surface/border/body-text
+// actually need light-specific values, and NomadBg itself (#131313,
+// already near-black) doubles as the light theme's own primary body-text
+// color rather than inventing a separate "NomadTextLight" that would
+// just duplicate it. See Theme.kt's own NomadLightColorScheme for the
+// exact role mapping.
+val NomadBgLight = Color(0xFFFAFAFA)
+val NomadBg2Light = Color(0xFFF2F2F2)
+val NomadBg3Light = Color(0xFFE8E8E8)
+val NomadBorderLight = Color(0xFFD4D4D4)
+
 // Identicon "kind" ring color — Contacts specifically (see Identicon.kt's
 // own `ringColor` doc comment for the full 3-kind scheme: Sites reuse
 // NomadPortalPurple, rnsh reuses NomadAccent, both already-established

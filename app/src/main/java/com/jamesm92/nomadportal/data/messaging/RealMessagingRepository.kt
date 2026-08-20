@@ -180,6 +180,13 @@ class RealMessagingRepository(private val settings: SettingsRepository) : Messag
         }
     }.flowOn(Dispatchers.IO)
 
+    override fun relayNodes(): Flow<List<RelayNode>> = flow {
+        while (true) {
+            emit(fetchRelayNodes())
+            delay(POLL_INTERVAL_MS)
+        }
+    }.flowOn(Dispatchers.IO)
+
     override suspend fun triggerPropagationSync(): String = withContext(Dispatchers.IO) {
         try {
             orchestrator.callAttr("trigger_propagation_sync").toString()
@@ -203,6 +210,20 @@ class RealMessagingRepository(private val settings: SettingsRepository) : Messag
             orchestrator.callAttr("set_messages_contacts_only", enabled)
         }
         settings.setMessagesContactsOnly(enabled)
+    }
+
+    override suspend fun setCallsContactsOnly(enabled: Boolean) {
+        withContext(Dispatchers.IO) {
+            orchestrator.callAttr("set_calls_contacts_only", enabled)
+        }
+        settings.setCallsContactsOnly(enabled)
+    }
+
+    override suspend fun setCallsEnabled(enabled: Boolean) {
+        withContext(Dispatchers.IO) {
+            orchestrator.callAttr("set_calls_enabled", enabled)
+        }
+        settings.setCallsEnabled(enabled)
     }
 
     override suspend fun setRetryViaRelay(enabled: Boolean) {
@@ -240,6 +261,21 @@ class RealMessagingRepository(private val settings: SettingsRepository) : Messag
             transferProgress = obj.optDouble("transfer_progress", 0.0).toFloat(),
             transferLastResult = obj.optIntOrNull("transfer_last_result"),
         )
+    }
+
+    private fun fetchRelayNodes(): List<RelayNode> {
+        val obj = JSONObject(orchestrator.callAttr("get_propagation_nodes_json").toString())
+        val array = obj.optJSONArray("nodes") ?: JSONArray()
+        return (0 until array.length()).map { i ->
+            val n = array.getJSONObject(i)
+            RelayNode(
+                hash = n.getString("hash"),
+                hopCount = n.optInt("hops", -1),
+                firstSeenMillis = (n.optDouble("first_seen", 0.0) * 1000).toLong(),
+                lastAnnounceMillis = (n.optDouble("last_seen", 0.0) * 1000).toLong(),
+                announceCount = n.optInt("announce_count", 0),
+            )
+        }
     }
 
     private fun fetchAnnounceStatus(): AnnounceStatus {
@@ -284,6 +320,8 @@ class RealMessagingRepository(private val settings: SettingsRepository) : Messag
                 obj.optString("send_blocked_reason")
             },
             messagesContactsOnly = obj.optBoolean("contacts_only_messages", false),
+            callsContactsOnly = obj.optBoolean("calls_contacts_only", false),
+            callsEnabled = obj.optBoolean("calls_enabled", true),
             retryViaRelay = obj.optBoolean("retry_via_relay", false),
         )
     }

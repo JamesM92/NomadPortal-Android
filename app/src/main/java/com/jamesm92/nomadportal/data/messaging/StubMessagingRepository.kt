@@ -166,6 +166,8 @@ class StubMessagingRepository(private val scope: CoroutineScope) : MessagingRepo
             sendBlocked = false,
             sendBlockedReason = null,
             messagesContactsOnly = false,
+            callsContactsOnly = false,
+            callsEnabled = true,
             retryViaRelay = false,
         )
     )
@@ -174,6 +176,14 @@ class StubMessagingRepository(private val scope: CoroutineScope) : MessagingRepo
 
     override suspend fun setMessagesContactsOnly(enabled: Boolean) {
         announceStatus.value = announceStatus.value.copy(messagesContactsOnly = enabled)
+    }
+
+    override suspend fun setCallsContactsOnly(enabled: Boolean) {
+        announceStatus.value = announceStatus.value.copy(callsContactsOnly = enabled)
+    }
+
+    override suspend fun setCallsEnabled(enabled: Boolean) {
+        announceStatus.value = announceStatus.value.copy(callsEnabled = enabled)
     }
 
     override suspend fun setRetryViaRelay(enabled: Boolean) {
@@ -238,6 +248,20 @@ class StubMessagingRepository(private val scope: CoroutineScope) : MessagingRepo
     )
 
     override fun propagationSyncStatus(): StateFlow<PropagationSyncStatus> = propagationSyncStatus.asStateFlow()
+
+    private val relayNodes = MutableStateFlow(
+        listOf(
+            RelayNode(
+                hash = "d4e8f1a2b3c4d5e6",
+                hopCount = 2,
+                firstSeenMillis = System.currentTimeMillis() - 3_600_000L,
+                lastAnnounceMillis = System.currentTimeMillis() - 60_000L,
+                announceCount = 14,
+            ),
+        )
+    )
+
+    override fun relayNodes(): StateFlow<List<RelayNode>> = relayNodes.asStateFlow()
 
     override suspend fun importScannedContact(destinationHash: String, publicKeyHex: String) {
         // Same "manual/scanned entry favorites the contact" convention as
