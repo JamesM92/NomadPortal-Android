@@ -17,21 +17,41 @@ permissions:
 jobs:
   analyze:
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # Real gap closed here, not a hypothetical: this job used to only
+        # ever scan java-kotlin, with a comment saying to add a python leg
+        # "once real app/src/main/python code lands" — that code (and
+        # python-core/'s own real RNS/LXMF integration, 20 files) has
+        # existed for a long time, the python leg was just never actually
+        # added. Python is exactly where this app's own highest-risk
+        # surface lives (parsing untrusted peer input off the mesh — RNS/
+        # LXMF message/announce handling, contact/blocklist storage — not
+        # the Kotlin UI layer), so this was the more important half to be
+        # missing, not a minor gap.
+        language: [java-kotlin, python]
     # See ci.yml's identical env var/comment: actions/checkout@v7 refuses
-    # a path outside $GITHUB_WORKSPACE, so micron2compose lands as a
-    # subdirectory of this repo's own checkout instead of a true sibling
-    # (matching local dev's ../micron2compose layout), and this env var
-    # tells settings.gradle.kts's includeBuild() where to actually find it.
+    # a path outside $GITHUB_WORKSPACE, so micron2compose/RNS_BLE_Wrapper
+    # land as subdirectories of this repo's own checkout instead of true
+    # siblings (matching local dev's ../micron2compose layout), and these
+    # env vars tell settings.gradle.kts's includeBuild() where to actually
+    # find them. Only needed for the java-kotlin leg's real Gradle build
+    # below, but harmless to set for both.
     env:
       MICRON2COMPOSE_DIR: micron2compose
+      RNS_BLE_WRAPPER_DIR: RNS_BLE_Wrapper
     steps:
       - name: Checkout
         uses: actions/checkout@v7
 
-      # See ci.yml's identical step for why this is needed (composite-build
-      # sibling for the unpublished micron2compose dependency), why `dev`
-      # is pinned rather than `main`, and why `path` is a subdirectory not
-      # `../...`.
+      # See ci.yml's identical steps for why these are needed (composite-
+      # build siblings for the unpublished micron2compose/RNS_BLE_Wrapper
+      # dependencies, why non-main branches are pinned, and why `path` is
+      # a subdirectory not `../...`). Only the java-kotlin leg actually
+      # builds anything that needs these, but checking them out
+      # unconditionally is simpler than gating on matrix.language and
+      # they're inert for the python leg.
       - name: Checkout micron2compose (composite-build dependency)
         uses: actions/checkout@v7
         with:
@@ -39,7 +59,15 @@ jobs:
           ref: dev
           path: micron2compose
 
+      - name: Checkout RNS_BLE_Wrapper (composite-build dependency)
+        uses: actions/checkout@v7
+        with:
+          repository: JamesM92/RNS_BLE_Android-Wrapper
+          ref: feature/nomadportal-integration-fixes
+          path: RNS_BLE_Wrapper
+
       - name: Set up JDK 17
+        if: matrix.language == 'java-kotlin'
         uses: actions/setup-java@v5
         with:
           distribution: temurin
@@ -47,33 +75,35 @@ jobs:
 
       # Chaquopy resolves/installs pip dependencies (rns, lxmf) at build
       # time, not just on-device — see ci.yml's identical step for why.
+      # Needed for the java-kotlin leg's real Gradle build below; CodeQL's
+      # own Python leg doesn't need a build at all (Python is scanned as
+      # source, not compiled), so this is skipped there.
       - name: Set up build-time Python
+        if: matrix.language == 'java-kotlin'
         uses: actions/setup-python@v7
         with:
           python-version: "3.12"
 
       - name: Set up Gradle
+        if: matrix.language == 'java-kotlin'
         uses: gradle/actions/setup-gradle@v6
 
       - name: Initialize CodeQL
         uses: github/codeql-action/init@v4
         with:
-          languages: java-kotlin
+          languages: ${{ matrix.language }}
           # RNS/LXMF and this app's link handling are the security-critical
-          # surface (untrusted peer input over the mesh, per
-          # porting-notes.md §3) — worth the slower, more thorough queries
-          # over the default "quality" pack once real network-parsing code
-          # lands here.
+          # surface (untrusted peer input over the mesh) — worth the
+          # slower, more thorough queries over the default "quality" pack
+          # for both languages, not just the one that happened to be
+          # configured first.
           queries: security-extended
 
-      # Chaquopy's Python side isn't covered by java-kotlin CodeQL; once the
-      # core extraction (nomadportal_android_handoff.md, sequencing step 1)
-      # adds real app/src/main/python code, add a second `languages: python`
-      # matrix leg here rather than assuming this job covers it.
       - name: Build (for CodeQL's Java/Kotlin autobuild)
+        if: matrix.language == 'java-kotlin'
         run: ./gradlew assembleDebug --no-daemon
 
       - name: Perform CodeQL analysis
         uses: github/codeql-action/analyze@v4
         with:
-          category: "/language:java-kotlin"
+          category: "/language:${{ matrix.language }}"

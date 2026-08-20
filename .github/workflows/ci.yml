@@ -15,6 +15,28 @@ permissions:
   contents: read
 
 jobs:
+  # Real, project-specific footgun this catches: local dev always needs a
+  # temporary `buildPython("C:/path/to/python.exe")` override in
+  # app/build.gradle.kts (see the chaquopy-build-cycle convention this
+  # repo's own README documents), which must be removed again before
+  # committing — it's a machine-specific, possibly-third-party path that
+  # means nothing on any other machine or CI runner. This has been missed
+  # and caught by hand more than once this project's history; a 5-second
+  # grep here catches it for good instead of relying on remembering every
+  # time.
+  sanity-checks:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: No committed buildPython() override
+        run: |
+          if grep -n '^\s*buildPython(' app/build.gradle.kts; then
+            echo "::error file=app/build.gradle.kts::A buildPython() override is committed — this is a machine-specific local-dev path (see the chaquopy-build-cycle convention) and must never be committed. Remove it before pushing."
+            exit 1
+          fi
+
   build-and-test:
     runs-on: ubuntu-latest
     # settings.gradle.kts's includeBuild() reads these to find
