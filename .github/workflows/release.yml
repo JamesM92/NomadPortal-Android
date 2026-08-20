@@ -27,6 +27,7 @@ jobs:
     # See ci.yml's identical env var/comment for why this exists.
     env:
       MICRON2COMPOSE_DIR: micron2compose
+      RNS_BLE_WRAPPER_DIR: RNS_BLE_Wrapper
     steps:
       - name: Checkout
         uses: actions/checkout@v7
@@ -39,6 +40,15 @@ jobs:
           repository: JamesM92/micron2compose
           ref: dev
           path: micron2compose
+
+      # See ci.yml's identical step for why this is needed and why
+      # feature/nomadportal-integration-fixes, not main, is pinned.
+      - name: Checkout RNS_BLE_Wrapper (composite-build dependency)
+        uses: actions/checkout@v7
+        with:
+          repository: JamesM92/RNS_BLE_Android-Wrapper
+          ref: feature/nomadportal-integration-fixes
+          path: RNS_BLE_Wrapper
 
       - name: Set up JDK 17
         uses: actions/setup-java@v5
