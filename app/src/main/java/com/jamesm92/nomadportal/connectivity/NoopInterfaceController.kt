@@ -99,4 +99,6 @@ class NoopInterfaceController(
     // No real RNS Transport/path table here — persisted-intent-only,
     // matching this class's own convention throughout.
     override fun announceInterfaces(): Flow<Map<String, String>> = flowOf(emptyMap())
+
+    override fun interfaceByteStats(): Flow<Map<String, InterfaceByteStats>> = flowOf(emptyMap())
 }

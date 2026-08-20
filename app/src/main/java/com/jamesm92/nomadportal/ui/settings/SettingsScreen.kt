@@ -1,14 +1,11 @@
 package com.jamesm92.nomadportal.ui.settings
 
-import android.Manifest
 import android.content.ActivityNotFoundException
 import android.content.ClipData
 import android.content.Intent
 import android.net.Uri
 import android.os.Build
 import android.provider.Settings
-import androidx.activity.compose.rememberLauncherForActivityResult
-import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -129,7 +126,6 @@ import com.jamesm92.nomadportal.data.messaging.MessagingRepository
 import com.jamesm92.nomadportal.data.messaging.materialIconFor
 import com.jamesm92.nomadportal.notifications.MessageNotificationController
 import com.jamesm92.nomadportal.panicwipe.PanicWipe
-import com.jamesm92.nomadportal.permissions.BLUETOOTH_PERMISSIONS
 import com.jamesm92.nomadportal.permissions.hasBluetoothPermissions
 import com.jamesm92.nomadportal.permissions.hasPostNotificationsPermission
 import com.jamesm92.nomadportal.permissions.hasRecordAudioPermission
@@ -206,7 +202,9 @@ fun SettingsScreen(
     val scope = rememberCoroutineScope()
 
     val textScale by settingsRepository.textScale.collectAsState(initial = SettingsRepository.DEFAULT_TEXT_SCALE)
-    val themeMode by settingsRepository.themeMode.collectAsState(initial = ThemeMode.SYSTEM)
+    // Matches SettingsRepository.themeMode's own real default (DARK, not
+    // SYSTEM — see that property's own doc comment).
+    val themeMode by settingsRepository.themeMode.collectAsState(initial = ThemeMode.DARK)
     val announceStatus by messagingRepository.announceStatus().collectAsState(initial = null)
     val conversations by messagingRepository.conversations().collectAsState(initial = emptyList())
     val hostedNodeStatus by interfaceController.hostedNodeStatus().collectAsState(initial = null)
@@ -220,16 +218,45 @@ fun SettingsScreen(
     val wifiDiscoveryEnabled by interfaceController.wifiDiscoveryEnabled.collectAsState()
     val nodeHostingEnabled by interfaceController.nodeHostingEnabled.collectAsState()
 
+    // Real, on-device-confirmed crash — the most severe instance of the
+    // FragmentActivity/ActivityResultRegistry incompatibility found this
+    // session (see the Notifications section's own doc comment for the
+    // full story): unlike the other launchers in this file, this one was
+    // never wrapped in a try/catch at all, so turning this toggle on
+    // without Bluetooth permission already granted would deterministically
+    // crash the whole app, every time. Root-caused the same way as the
+    // others: no launcher at all, a plain context.startActivity() to this
+    // app's own details settings page (there's no single dedicated
+    // "grant these 2 permissions" system intent for a permission group
+    // the way there is for notifications, so this is the same fallback
+    // Columba's own real grant actions already use uniformly) + a
+    // polling LaunchedEffect that both keeps bluetoothGranted current and
+    // auto-enables the toggle the moment it detects a fresh grant —
+    // preserving the original "grant then auto-turn-on" intent without
+    // needing an ActivityResult callback to react to.
     var bluetoothGranted by remember { mutableStateOf(hasBluetoothPermissions(context)) }
-    val permissionLauncher = rememberLauncherForActivityResult(
-        ActivityResultContracts.RequestMultiplePermissions()
-    ) { results ->
-        bluetoothGranted = results.values.all { it }
-        // Denial is a fully-supported end state, not an error: leave the
-        // toggle off and keep going. Nothing else in this screen (or the
-        // app) is allowed to hard-require this permission.
-        if (bluetoothGranted) {
-            scope.launch { interfaceController.setBluetoothMeshEnabled(true) }
+    LaunchedEffect(Unit) {
+        delay(500)
+        while (true) {
+            val nowGranted = hasBluetoothPermissions(context)
+            if (nowGranted && !bluetoothGranted) {
+                interfaceController.setBluetoothMeshEnabled(true)
+            }
+            bluetoothGranted = nowGranted
+            delay(3000)
+        }
+    }
+    fun requestBluetoothPermissions() {
+        try {
+            context.startActivity(
+                Intent(
+                    Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
+                    Uri.parse("package:${context.packageName}"),
+                ),
+            )
+        } catch (e: ActivityNotFoundException) {
+            // Best-effort — a device with no app-details settings screen
+            // shouldn't crash this screen.
         }
     }
 
@@ -399,7 +426,7 @@ fun SettingsScreen(
                                 checked = bluetoothMeshEnabled,
                                 onCheckedChange = { turningOn ->
                                     if (turningOn && !bluetoothGranted) {
-                                        permissionLauncher.launch(BLUETOOTH_PERMISSIONS)
+                                        requestBluetoothPermissions()
                                     } else {
                                         scope.launch { interfaceController.setBluetoothMeshEnabled(turningOn) }
                                     }
@@ -872,48 +899,65 @@ fun SettingsScreen(
                     var hasNotificationPermission by remember {
                         mutableStateOf(hasPostNotificationsPermission(context))
                     }
-                    val notificationPermissionLauncher = rememberLauncherForActivityResult(
-                        ActivityResultContracts.RequestPermission(),
-                    ) { granted -> hasNotificationPermission = granted }
                     var isIgnoringBatteryOpt by remember {
                         mutableStateOf(isIgnoringBatteryOptimizations(context))
                     }
-                    val batteryOptLauncher = rememberLauncherForActivityResult(
-                        ActivityResultContracts.StartActivityForResult(),
-                    ) { isIgnoringBatteryOpt = isIgnoringBatteryOptimizations(context) }
-                    // Real, on-device-confirmed crash (same root cause
-                    // already found+fixed once this session for
-                    // IdentitiesScreen's own file-picker launch):
-                    // IllegalArgumentException("Can only use lower 16
-                    // bits for requestCode") — a known AndroidX
-                    // ActivityResultRegistry issue where its internal
-                    // request-code counter can exceed 16 bits on a
-                    // long-lived Activity, unrelated to anything this
-                    // screen does wrong. Every real launcher.launch()
-                    // call in this section goes through these two
-                    // wrappers instead of calling launch() directly, so
-                    // a permission/settings-intent request can't crash
-                    // the whole app over it.
+                    // Real root-cause fix, not a launcher + try/catch —
+                    // same fix already applied to Voice Call Permissions'
+                    // own Microphone grant button (see that section's own
+                    // doc comment for the full story): MainActivity is a
+                    // FragmentActivity (for BiometricPrompt), and
+                    // FragmentActivity's own startActivityForResult
+                    // override is fundamentally incompatible with
+                    // ActivityResultRegistry's own request-code scheme —
+                    // confirmed real and deterministic (reproduced 6/6
+                    // times via a temporary debug log), not flaky. Every
+                    // rememberLauncherForActivityResult launcher in this
+                    // section threw on every tap, silently swallowed by
+                    // the try/catch that used to wrap each launch() call
+                    // — exactly why these two buttons/the master-toggle
+                    // auto-prompt all read as "doing nothing" rather than
+                    // genuinely not working. Plain context.startActivity()
+                    // never allocates a request code at all, so it
+                    // sidesteps the incompatibility entirely, and both
+                    // buttons now open the real system settings screen
+                    // for that specific permission (matching Columba's
+                    // own real pattern, not a runtime dialog attempt).
+                    // A polling LaunchedEffect (same 500ms+3s shape
+                    // already established for Voice Call Permissions)
+                    // re-checks both statuses once the user comes back,
+                    // since there's no ActivityResult callback to react
+                    // to instead.
+                    LaunchedEffect(Unit) {
+                        delay(500)
+                        hasNotificationPermission = hasPostNotificationsPermission(context)
+                        isIgnoringBatteryOpt = isIgnoringBatteryOptimizations(context)
+                        while (true) {
+                            delay(3000)
+                            hasNotificationPermission = hasPostNotificationsPermission(context)
+                            isIgnoringBatteryOpt = isIgnoringBatteryOptimizations(context)
+                        }
+                    }
                     fun requestNotificationPermission() {
                         try {
-                            notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
-                        } catch (e: IllegalArgumentException) {
-                            // Best-effort — nothing more to do than leave
-                            // the existing "permission not granted"
-                            // status row visible; a crash here would be
-                            // far worse than a request that silently
-                            // didn't open.
+                            context.startActivity(
+                                Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS)
+                                    .putExtra(Settings.EXTRA_APP_PACKAGE, context.packageName),
+                            )
+                        } catch (e: ActivityNotFoundException) {
+                            // Best-effort — a device with no notification
+                            // settings screen shouldn't crash this screen.
                         }
                     }
                     fun requestBatteryOptExemption() {
                         try {
-                            batteryOptLauncher.launch(
+                            context.startActivity(
                                 Intent(
                                     Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS,
                                     Uri.parse("package:${context.packageName}"),
                                 ),
                             )
-                        } catch (e: IllegalArgumentException) {
+                        } catch (e: ActivityNotFoundException) {
                             // Same best-effort reasoning as above.
                         }
                     }
@@ -982,12 +1026,38 @@ fun SettingsScreen(
                                         "arrive in real time."
                                 } else {
                                     "No persistent notification — Android may delay checks by 15+ " +
-                                        "minutes, or skip them, while the app is backgrounded."
+                                        "minutes, or skip them entirely, while the app is backgrounded. " +
+                                        "That's not just message notifications: without a foreground " +
+                                        "service keeping this process alive, real mesh activity " +
+                                        "(announces, relayed traffic) is likely to be missed too."
                                 },
                                 style = MaterialTheme.typography.labelSmall,
                                 color = NomadTextDim,
                                 modifier = Modifier.padding(start = 16.dp, end = 16.dp, bottom = 4.dp),
                             )
+                            // Per explicit direction: make it clear
+                            // *when* Battery-friendly's real trade-off
+                            // actually matters, rather than leaving it as
+                            // an abstract "may delay/skip" warning —
+                            // RNode/Bluetooth mesh/hosting all depend on
+                            // this process staying alive in the
+                            // background to keep working at all, not just
+                            // on timely notifications.
+                            if (!notificationsAlwaysOn && (rNodeEnabled || bluetoothMeshEnabled || nodeHostingEnabled)) {
+                                Text(
+                                    text = "Recommended: switch to Always-on — you have " +
+                                        listOfNotNull(
+                                            "RNode".takeIf { rNodeEnabled },
+                                            "Bluetooth mesh".takeIf { bluetoothMeshEnabled },
+                                            "node hosting".takeIf { nodeHostingEnabled },
+                                        ).joinToString(", ") +
+                                        " on, and all of those need this app actually running in " +
+                                        "the background to keep working.",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.error,
+                                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
+                                )
+                            }
                             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU && !hasNotificationPermission) {
                                 Text(
                                     text = "Notification permission not granted — nothing will show.",
@@ -995,10 +1065,13 @@ fun SettingsScreen(
                                     color = MaterialTheme.colorScheme.error,
                                     modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
                                 )
-                                TextButton(
+                                Button(
                                     onClick = { requestNotificationPermission() },
                                     modifier = Modifier.padding(start = 8.dp),
-                                ) { Text("Grant permission") }
+                                    colors = ButtonDefaults.buttonColors(
+                                        containerColor = MaterialTheme.colorScheme.error,
+                                    ),
+                                ) { Text("Open Settings") }
                             }
                             if (notificationsAlwaysOn && !isIgnoringBatteryOpt) {
                                 Text(
@@ -1008,7 +1081,7 @@ fun SettingsScreen(
                                     color = NomadTextDim,
                                     modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
                                 )
-                                TextButton(
+                                Button(
                                     onClick = { requestBatteryOptExemption() },
                                     modifier = Modifier.padding(start = 8.dp),
                                 ) { Text("Don't optimize") }
@@ -1182,6 +1255,46 @@ fun SettingsScreen(
                                         settingsRepository.setTransportNodeEnabled(enabled)
                                         AppRestart.restart(context)
                                     }
+                                },
+                            )
+                        }
+
+                        HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
+
+                        // Stale-while-revalidate page cache (per explicit
+                        // direction) — see PageCacheStore's and
+                        // BrowserScreen's own doc comments for the full
+                        // flow this toggle gates.
+                        val pageCacheEnabled by settingsRepository.pageCacheEnabled
+                            .collectAsState(initial = true)
+                        Text(
+                            text = "Cache browsed pages",
+                            style = MaterialTheme.typography.bodyLarge,
+                            modifier = Modifier.padding(start = 16.dp, end = 16.dp, top = 4.dp),
+                        )
+                        Text(
+                            text = "Show an already-seen page instantly while it re-fetches " +
+                                "the current version in the background, instead of a blank " +
+                                "spinner every time. Turning this off just stops using the " +
+                                "cache — it doesn't delete what's already saved; a panic " +
+                                "wipe does.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = NomadTextDim,
+                            modifier = Modifier.padding(start = 16.dp, end = 16.dp, top = 2.dp, bottom = 4.dp),
+                        )
+                        Row(
+                            modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Text(
+                                text = if (pageCacheEnabled) "On" else "Off",
+                                style = MaterialTheme.typography.bodyMedium,
+                                modifier = Modifier.weight(1f),
+                            )
+                            Switch(
+                                checked = pageCacheEnabled,
+                                onCheckedChange = { enabled ->
+                                    scope.launch { settingsRepository.setPageCacheEnabled(enabled) }
                                 },
                             )
                         }

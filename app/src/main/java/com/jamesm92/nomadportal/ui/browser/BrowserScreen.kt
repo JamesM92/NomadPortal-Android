@@ -1,6 +1,9 @@
 package com.jamesm92.nomadportal.ui.browser
 
 import android.content.res.Configuration
+import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.splineBasedDecay
 import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
@@ -58,6 +61,7 @@ import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.input.pointer.positionChange
 import androidx.compose.ui.input.pointer.positionChanged
+import androidx.compose.ui.input.pointer.util.VelocityTracker
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
@@ -77,21 +81,42 @@ import com.jamesm92.micron2compose.parser.LinkRun
 import com.jamesm92.micron2compose.parser.LinkTarget
 import com.jamesm92.micron2compose.parser.MicronConverter
 import com.jamesm92.micron2compose.parser.TextRun
+import com.jamesm92.nomadportal.data.SettingsRepository
 import com.jamesm92.nomadportal.data.browsing.BrowserRepository
 import com.jamesm92.nomadportal.data.browsing.PageAddress
+import com.jamesm92.nomadportal.data.browsing.PageCacheStore
+import com.jamesm92.nomadportal.data.identity.IdentityRepository
 import com.jamesm92.nomadportal.panicwipe.PanicWipe
 import com.jamesm92.nomadportal.ui.components.AdaptiveTopAppBar
 import com.jamesm92.nomadportal.ui.components.HorizontalScrollIndicator
 import com.jamesm92.nomadportal.ui.components.PanicWipeLogo
+import com.jamesm92.nomadportal.ui.components.StatusDot
 import com.jamesm92.nomadportal.ui.components.VerticalScrollIndicator
 import com.jamesm92.nomadportal.ui.components.dismissKeyboardOnTap
+import com.jamesm92.nomadportal.ui.theme.NomadAccent2
 import com.jamesm92.nomadportal.ui.theme.NomadMono
 import com.jamesm92.nomadportal.ui.theme.NomadTextDim
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 
 /** A short, blank/near-empty page still needs *some* width — a phone-width
  * floor, not zero. */
 private val MIN_MICRON_CONTENT_WIDTH = 320.dp
+
+// Pull-to-refresh tuning (see `pullDistance`'s own doc comment). Distance
+// pulled past the top before release triggers a real refresh, in dp —
+// noticeably more than touch slop so a normal "start scrolling" drag never
+// accidentally fires a refresh; converted to px via density at the one
+// call site that needs it (LayoutDirection/density aren't available at
+// file scope for a plain top-level val).
+private val PULL_REFRESH_THRESHOLD = 72.dp
+
+// < 1 — the visual pull lags behind the raw finger movement (a real
+// "rubber band," not 1:1 tracking), same purpose as any native
+// pull-to-refresh's own resistance curve.
+private const val PULL_RESISTANCE = 0.5f
+
+private const val PULL_SNAP_BACK_MS = 200
 
 /**
  * The actual page-content browser: address bar, back/forward (an in-screen
@@ -112,13 +137,34 @@ private val MIN_MICRON_CONTENT_WIDTH = 320.dp
  * anything yet on "Download" — real file transfer needs the RNS Link layer
  * from the core extraction (sequencing step 1, not started).
  */
+/** Where a currently-displayed page's content actually came from — drives
+ * BrowserScreen's top-bar cached/loading/status-dot indicator. See that
+ * screen's own [BrowserScreen] doc comment for the full stale-while-
+ * revalidate flow this backs. */
+private enum class PageFetchStatus { REFRESHING, LIVE, FAILED }
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun BrowserScreen(
     repository: BrowserRepository,
+    pageCacheStore: PageCacheStore,
+    identityRepository: IdentityRepository,
+    settingsRepository: SettingsRepository,
     startAddress: PageAddress,
     onBack: () -> Unit,
 ) {
+    val pageCacheEnabledSetting by settingsRepository.pageCacheEnabled.collectAsState(initial = true)
+    // Page cache is identity-scoped (per explicit direction — see
+    // PageCacheStore's own doc comment) — activeIdentity stays null
+    // until the active identity's actually known, same "nothing to key
+    // the cache off of yet" reasoning as pageCacheEnabled below.
+    val identities by identityRepository.identities().collectAsState(initial = emptyList())
+    val activeIdentity = identities.find { it.isActive }
+    // Real caching only actually happens once both the user setting is
+    // on AND an active identity is known to key it by — either missing
+    // one degrades to "always fetch live, nothing shown until it
+    // resolves," today's original (pre-cache) behavior.
+    val pageCacheEnabled = pageCacheEnabledSetting && activeIdentity != null
     val converter = remember { MicronConverter() }
     val uriHandler = LocalUriHandler.current
     val scope = rememberCoroutineScope()
@@ -140,6 +186,14 @@ fun BrowserScreen(
     var result by remember { mutableStateOf<ConvertResult?>(null) }
     var rawSource by remember { mutableStateOf<String?>(null) }
     var loadError by remember { mutableStateOf<String?>(null) }
+    // Stale-while-revalidate status (per explicit direction) — REFRESHING
+    // shows a small top-bar spinner ("you're looking at a cached copy, a
+    // live fetch is in flight"); LIVE/FAILED show a green/red StatusDot
+    // once that fetch resolves, staying put until the next navigation.
+    // null before the very first status is known for this address (no
+    // dot yet) — distinct from FAILED, which specifically means "a real
+    // attempt came back negative."
+    var fetchStatus by remember { mutableStateOf<PageFetchStatus?>(null) }
     var pendingWarning by remember { mutableStateOf<PendingLinkWarning?>(null) }
     var scrollToAnchor by remember { mutableStateOf<String?>(null) }
     // "Raw" per the reference NomadPortal web app's own address-bar
@@ -207,17 +261,70 @@ fun BrowserScreen(
     // Also keyed on `identified` — toggling it mid-view re-fetches so the
     // change actually takes effect on the next request, not just next
     // navigation.
-    LaunchedEffect(currentAddress, identified) {
-        loadError = null
-        result = null
-        rawSource = null
+    //
+    // Stale-while-revalidate (per explicit direction): if a cached copy
+    // of this address exists, it's shown immediately — no blank spinner
+    // for a page this device has already fetched before — while a real
+    // fetch for the current version still runs in the background
+    // (unconditionally; caching being off/no-cache-available never skips
+    // the real fetch, it only changes what's on screen while waiting for
+    // it). A successful fetch always replaces the on-screen content with
+    // the fresh copy and marks LIVE (green dot); a failed fetch leaves
+    // whatever's already showing alone and marks FAILED (red dot) —
+    // there's no reason to blank out a still-valid cached page just
+    // because *this* refresh attempt didn't land. Only when there was
+    // never anything to show at all (no cache, and the fetch itself
+    // failed) does this fall through to the existing loadError state.
+    // Shared by the initial LaunchedEffect fetch below AND by pull-to-
+    // refresh (see the `result != null` content branch's own pointerInput
+    // — "continuing to pull a page down should trigger a refresh," per
+    // explicit direction) — one real fetch-and-apply-result path, not two
+    // copies drifting apart. `alreadyShowingContent`: false only for the
+    // very first fetch of a never-cached address (nothing on screen yet,
+    // so a failure has to surface as the full-screen loadError state);
+    // true for every other case (a cached copy already on screen, or a
+    // pull-to-refresh of an already-live page) — a failure there just
+    // marks FAILED and leaves whatever's already showing alone.
+    suspend fun refreshLive(alreadyShowingContent: Boolean) {
+        val identityId = activeIdentity?.id
         try {
             val source = repository.fetchPage(currentAddress, identify = identified)
             rawSource = source
             result = converter.convert(source, nodeHash = currentAddress.nodeHash, basePath = currentAddress.path)
+            fetchStatus = PageFetchStatus.LIVE
+            if (pageCacheEnabled && identityId != null) pageCacheStore.write(identityId, currentAddress, source)
         } catch (e: Exception) {
-            loadError = e.message ?: "Failed to load page"
+            if (alreadyShowingContent) {
+                fetchStatus = PageFetchStatus.FAILED
+            } else {
+                loadError = e.message ?: "Failed to load page"
+                fetchStatus = null
+            }
         }
+    }
+
+    LaunchedEffect(currentAddress, identified, activeIdentity?.id) {
+        loadError = null
+        result = null
+        rawSource = null
+        fetchStatus = null
+
+        val identityId = activeIdentity?.id
+        var showingCache = false
+        if (pageCacheEnabled && identityId != null) {
+            pageCacheStore.read(identityId, currentAddress)?.let { cached ->
+                rawSource = cached
+                result = runCatching {
+                    converter.convert(cached, nodeHash = currentAddress.nodeHash, basePath = currentAddress.path)
+                }.getOrNull()
+                if (result != null) {
+                    showingCache = true
+                    fetchStatus = PageFetchStatus.REFRESHING
+                }
+            }
+        }
+
+        refreshLive(alreadyShowingContent = showingCache)
     }
 
     pendingWarning?.let { warning ->
@@ -247,7 +354,39 @@ fun BrowserScreen(
                     title = {
                         val nodeName = nodes.find { it.hash == currentAddress.nodeHash }?.displayName
                             ?: (currentAddress.nodeHash.take(12) + "…")
-                        Text(nodeName, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text(nodeName, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f, fill = false))
+                            // Stale-while-revalidate status — a small
+                            // spinner while a cached page's background
+                            // refresh is still in flight, then a green
+                            // (reached the live page) or red (refresh
+                            // failed, still showing the cached copy)
+                            // StatusDot once it resolves. Nothing shown at
+                            // all before the first status is known (see
+                            // PageFetchStatus's own doc comment).
+                            when (fetchStatus) {
+                                PageFetchStatus.REFRESHING -> {
+                                    Spacer(modifier = Modifier.width(8.dp))
+                                    CircularProgressIndicator(
+                                        modifier = Modifier.size(14.dp),
+                                        strokeWidth = 2.dp,
+                                    )
+                                }
+                                PageFetchStatus.LIVE -> {
+                                    Spacer(modifier = Modifier.width(8.dp))
+                                    // NomadAccent2 — same green already used
+                                    // for "reachable"/"enabled" status dots
+                                    // elsewhere (NetworkScreen's own
+                                    // interface rows), not a new one-off hue.
+                                    StatusDot(color = NomadAccent2, size = 8.dp)
+                                }
+                                PageFetchStatus.FAILED -> {
+                                    Spacer(modifier = Modifier.width(8.dp))
+                                    StatusDot(color = MaterialTheme.colorScheme.error, size = 8.dp)
+                                }
+                                null -> Unit
+                            }
+                        }
                     },
                     navigationIcon = {
                         IconButton(onClick = onBack) {
@@ -447,6 +586,7 @@ fun BrowserScreen(
                 // line correctly regardless of which characters it uses.
                 result != null -> {
                     val density = LocalDensity.current
+                    val pullRefreshThresholdPx = with(density) { PULL_REFRESH_THRESHOLD.toPx() }
                     val textMeasurer = rememberTextMeasurer()
                     val listState = rememberLazyListState()
                     val horizontalScrollState = rememberScrollState()
@@ -483,6 +623,31 @@ fun BrowserScreen(
                         with(density) { maxWidthPx.toDp() }.coerceAtLeast(MIN_MICRON_CONTENT_WIDTH)
                     }
 
+                    // Backs the fling launched below — a real on-device
+                    // report ("swiping quickly should carry on a little
+                    // way, not stop dead") against the manual
+                    // dispatchRawDelta drag this Box already drives:
+                    // Compose's own scrollable() gives fling for free,
+                    // but this screen deliberately doesn't use it (see
+                    // the pointerInput's own doc comment for why), so
+                    // fling has to be driven by hand too, the same way
+                    // the drag itself is. remember()'d at this level (not
+                    // inside the gesture detector) so a fling from one
+                    // gesture can be found and cancelled by the *next*
+                    // gesture's very first down event, below.
+                    var flingJob by remember { mutableStateOf<Job?>(null) }
+                    // Pull-to-refresh (per explicit direction: "continuing
+                    // to pull a page down should trigger a refresh, if you
+                    // let it snap") — real overscroll distance in px past
+                    // the top of listState, tracked by hand for the same
+                    // reason fling above is: this screen's own custom
+                    // dispatchRawDelta drag replaces Compose's built-in
+                    // scrollable(), which is what normally gives
+                    // pull-to-refresh integration for free. 0f = not
+                    // pulling; > 0f drives both the pull indicator's own
+                    // position (below) and, past pullRefreshThresholdPx on
+                    // release, a real refreshLive() call.
+                    var pullDistance by remember { mutableStateOf(0f) }
                     Box(
                         modifier = Modifier
                             .fillMaxSize()
@@ -534,21 +699,65 @@ fun BrowserScreen(
                                 // complete down+up sequence.
                                 awaitEachGesture {
                                     val down = awaitFirstDown(pass = PointerEventPass.Initial)
+                                    // A new touch always wins over whatever
+                                    // the previous gesture's fling was
+                                    // still doing — without this, the
+                                    // still-running fling coroutine would
+                                    // keep calling dispatchRawDelta in
+                                    // parallel with this fresh drag,
+                                    // fighting over the same scroll states.
+                                    flingJob?.cancel()
                                     val pointerId = down.id
                                     val slop = viewConfiguration.touchSlop
                                     var dragging = false
                                     var accumX = 0f
                                     var accumY = 0f
+                                    val velocityTracker = VelocityTracker()
+                                    velocityTracker.addPosition(down.uptimeMillis, down.position)
+                                    // Pull-to-refresh — see pullDistance's
+                                    // own doc comment. Once any pull is
+                                    // outstanding, further vertical motion
+                                    // this gesture feeds entirely into the
+                                    // pull (grow on drag-down, shrink on
+                                    // drag-up) rather than the list, so the
+                                    // two never fight over the same frame's
+                                    // delta; only once pullDistance is back
+                                    // to exactly 0 does vertical motion
+                                    // resume driving listState normally.
+                                    // Real overscroll only exists once
+                                    // dispatchRawDelta can't consume the
+                                    // full requested amount *at the top* of
+                                    // the list — never at the bottom, where
+                                    // this function is simply a no-op.
+                                    fun applyVerticalDelta(dy: Float) {
+                                        if (pullDistance > 0f) {
+                                            pullDistance = (pullDistance + dy * PULL_RESISTANCE).coerceAtLeast(0f)
+                                            return
+                                        }
+                                        val requested = -dy
+                                        val consumed = listState.dispatchRawDelta(requested)
+                                        val overscroll = requested - consumed
+                                        // LazyListState (unlike ScrollState)
+                                        // has no single scalar `.value` —
+                                        // "at the very top" is item 0 with
+                                        // zero scroll offset into it.
+                                        val atTop = listState.firstVisibleItemIndex == 0 &&
+                                            listState.firstVisibleItemScrollOffset == 0
+                                        if (overscroll < 0f && atTop) {
+                                            pullDistance = -overscroll * PULL_RESISTANCE
+                                        }
+                                    }
                                     while (true) {
                                         val event = awaitPointerEvent(pass = PointerEventPass.Initial)
                                         val change = event.changes.firstOrNull { it.id == pointerId } ?: break
                                         if (!change.pressed) break
                                         if (!change.positionChanged()) continue
+                                        velocityTracker.addPosition(change.uptimeMillis, change.position)
                                         val delta = change.positionChange()
                                         if (dragging) {
                                             change.consume()
                                             horizontalScrollState.dispatchRawDelta(-delta.x)
-                                            listState.dispatchRawDelta(-delta.y)
+                                            applyVerticalDelta(delta.y)
                                         } else {
                                             accumX += delta.x
                                             accumY += delta.y
@@ -556,7 +765,71 @@ fun BrowserScreen(
                                                 dragging = true
                                                 change.consume()
                                                 horizontalScrollState.dispatchRawDelta(-accumX)
-                                                listState.dispatchRawDelta(-accumY)
+                                                applyVerticalDelta(accumY)
+                                            }
+                                        }
+                                    }
+                                    // Pull-to-refresh release — "let it
+                                    // snap": past the threshold, a real
+                                    // refresh fires; either way the pull
+                                    // indicator eases back to 0 rather than
+                                    // vanishing instantly. Takes priority
+                                    // over fling below — a released pull
+                                    // gesture was, by definition, at the
+                                    // very top of the list with no fling-
+                                    // worthy vertical motion left to carry.
+                                    if (pullDistance > 0f) {
+                                        val shouldRefresh = pullDistance > pullRefreshThresholdPx
+                                        scope.launch {
+                                            if (shouldRefresh) {
+                                                fetchStatus = PageFetchStatus.REFRESHING
+                                                refreshLive(alreadyShowingContent = true)
+                                            }
+                                        }
+                                        scope.launch {
+                                            val anim = Animatable(pullDistance)
+                                            anim.animateTo(0f, animationSpec = tween(PULL_SNAP_BACK_MS)) {
+                                                pullDistance = value
+                                            }
+                                        }
+                                        return@awaitEachGesture
+                                    }
+                                    // Fling — only a real drag that
+                                    // actually panned content earns one; a
+                                    // tap/link-click's sub-slop jitter has
+                                    // no meaningful velocity to carry
+                                    // forward anyway.
+                                    if (dragging) {
+                                        val velocity = velocityTracker.calculateVelocity()
+                                        flingJob = scope.launch {
+                                            // Two independent 1D decays
+                                            // (one per axis) running
+                                            // concurrently — a real 2D
+                                            // fling, not just "whichever
+                                            // axis had more speed."
+                                            // Animatable's own `block`
+                                            // callback hands back
+                                            // cumulative decayed distance
+                                            // each frame; only the *delta*
+                                            // since the last frame is what
+                                            // dispatchRawDelta wants, same
+                                            // sign convention as the live
+                                            // drag above (-delta).
+                                            launch {
+                                                val anim = Animatable(0f)
+                                                var last = 0f
+                                                anim.animateDecay(velocity.x, splineBasedDecay(density)) {
+                                                    horizontalScrollState.dispatchRawDelta(-(value - last))
+                                                    last = value
+                                                }
+                                            }
+                                            launch {
+                                                val anim = Animatable(0f)
+                                                var last = 0f
+                                                anim.animateDecay(velocity.y, splineBasedDecay(density)) {
+                                                    listState.dispatchRawDelta(-(value - last))
+                                                    last = value
+                                                }
                                             }
                                         }
                                     }
@@ -595,6 +868,25 @@ fun BrowserScreen(
                     // visual scrollbar of its own.
                     VerticalScrollIndicator(listState, modifier = Modifier.align(Alignment.CenterEnd).fillMaxHeight())
                     HorizontalScrollIndicator(horizontalScrollState, modifier = Modifier.align(Alignment.BottomStart).fillMaxWidth())
+                    // Pull-to-refresh indicator — see pullDistance's own
+                    // doc comment. Determinate (not spinning) while
+                    // pulling: the ring's own sweep shows how close to
+                    // pullRefreshThresholdPx the pull already is, same
+                    // "how far along" cue a native pull-to-refresh spinner
+                    // gives via its own arc.
+                    if (pullDistance > 0f) {
+                        Box(
+                            modifier = Modifier
+                                .align(Alignment.TopCenter)
+                                .padding(top = with(density) { (pullDistance * 0.6f).toDp() }),
+                        ) {
+                            CircularProgressIndicator(
+                                progress = { (pullDistance / pullRefreshThresholdPx).coerceIn(0f, 1f) },
+                                modifier = Modifier.size(28.dp),
+                                strokeWidth = 2.dp,
+                            )
+                        }
+                    }
                 }
                 else -> CircularProgressIndicator(modifier = Modifier.align(Alignment.Center))
             }

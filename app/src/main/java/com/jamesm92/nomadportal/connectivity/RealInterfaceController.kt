@@ -193,6 +193,28 @@ class RealInterfaceController(
         return result
     }
 
+    override fun interfaceByteStats(): Flow<Map<String, InterfaceByteStats>> = flow {
+        while (true) {
+            emit(fetchInterfaceByteStats())
+            delay(POLL_INTERVAL_MS)
+        }
+    }.flowOn(Dispatchers.IO)
+
+    private fun fetchInterfaceByteStats(): Map<String, InterfaceByteStats> {
+        val obj = JSONObject(orchestrator.callAttr("get_interface_byte_stats_json").toString())
+        val result = mutableMapOf<String, InterfaceByteStats>()
+        val keys = obj.keys()
+        while (keys.hasNext()) {
+            val key = keys.next()
+            val entry = obj.getJSONObject(key)
+            result[key] = InterfaceByteStats(
+                rxBytes = entry.optLong("rxb", 0L),
+                txBytes = entry.optLong("txb", 0L),
+            )
+        }
+        return result
+    }
+
     private fun fetchHasDownTcpConnection(): Boolean {
         val obj = JSONObject(orchestrator.callAttr("get_tcp_connections_json").toString())
         if (!obj.optBoolean("master_enabled", true)) return false

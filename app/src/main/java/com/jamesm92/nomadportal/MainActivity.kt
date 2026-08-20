@@ -47,8 +47,14 @@ class MainActivity : FragmentActivity() {
         setContent {
             val textScale by app.settingsRepository.textScale
                 .collectAsState(initial = SettingsRepository.DEFAULT_TEXT_SCALE)
+            // Matches SettingsRepository.themeMode's own real default
+            // (DARK, not SYSTEM — see that property's own doc comment) —
+            // this initial value only covers the single frame before the
+            // real DataStore-backed Flow first emits; using anything else
+            // here would flash the wrong theme for a frame on every cold
+            // start, not just first-ever launch.
             val themeMode by app.settingsRepository.themeMode
-                .collectAsState(initial = ThemeMode.SYSTEM)
+                .collectAsState(initial = ThemeMode.DARK)
             NomadPortalTheme(themeMode = themeMode, textScale = textScale) {
                 Surface(
                     modifier = Modifier.fillMaxSize(),
@@ -58,6 +64,7 @@ class MainActivity : FragmentActivity() {
                         interfaceController = app.interfaceController,
                         messagingRepository = app.messagingRepository,
                         browserRepository = app.browserRepository,
+                        pageCacheStore = app.pageCacheStore,
                         settingsRepository = app.settingsRepository,
                         tcpConnectionsRepository = app.tcpConnectionsRepository,
                         siteFileRepository = app.siteFileRepository,

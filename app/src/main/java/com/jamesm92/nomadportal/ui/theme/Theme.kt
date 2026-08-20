@@ -139,16 +139,19 @@ private val NomadLightColorScheme = lightColorScheme(
 )
 
 /**
- * @param themeMode [ThemeMode.SYSTEM] (the default) follows the OS's own
- * light/dark setting via [isSystemInDarkTheme]; [ThemeMode.LIGHT]/
- * [ThemeMode.DARK] pin it regardless of the OS. See
- * [com.jamesm92.nomadportal.data.SettingsRepository.themeMode].
+ * @param themeMode [ThemeMode.SYSTEM] follows the OS's own light/dark
+ * setting via [isSystemInDarkTheme]; [ThemeMode.LIGHT]/[ThemeMode.DARK]
+ * pin it regardless of the OS. Defaults to [ThemeMode.DARK] here — matches
+ * [com.jamesm92.nomadportal.data.SettingsRepository.themeMode]'s own real
+ * default (see that property's doc comment for why); MainActivity always
+ * passes an explicit value from that Flow in practice, so this default is
+ * only ever exercised by a caller that doesn't (a Preview, a future test).
  * @param textScale User-adjustable multiplier (Settings → text size) —
  * see [nomadTypography]/[com.jamesm92.nomadportal.data.SettingsRepository.textScale].
  */
 @Composable
 fun NomadPortalTheme(
-    themeMode: ThemeMode = ThemeMode.SYSTEM,
+    themeMode: ThemeMode = ThemeMode.DARK,
     textScale: Float = 1f,
     content: @Composable () -> Unit,
 ) {

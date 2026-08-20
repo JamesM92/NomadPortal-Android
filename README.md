@@ -48,8 +48,9 @@ for the full architecture and build sequencing.
   messages. Location is never requested, period.
 - **Wipe everything in an emergency** — a real panic-wipe gesture that
   securely erases identity, message, and contact data on-device.
-- **Reach another device's shell remotely** — a built-in `rnsh` client for
-  terminal access over Reticulum, no separate app required.
+- **Reach another device's shell remotely** — a built-in
+  [`rnsh`](https://github.com/acehoss/rnsh) client for terminal access over
+  Reticulum, no separate app required. See "Remote Shell (rnsh)" below.
 
 ## Getting Started
 
@@ -77,6 +78,49 @@ client and page-hosting protocol this app is compatible with: Micron
 (`.mu`) pages served directly off someone's own device, no web host
 involved. This app lets you browse, host, and edit those pages from your
 phone.
+
+## Remote Shell (rnsh)
+
+A client for [`rnsh`](https://github.com/acehoss/rnsh) — a real
+terminal/shell session to another device, carried entirely over Reticulum
+instead of SSH-over-IP. No separate app or extra network path needed: if a
+peer is reachable over RNS at all (TCP, Bluetooth mesh, RNode, Wi-Fi), its
+shell is reachable too, through the same mesh this app already speaks.
+
+This is a client only — it connects to an existing `rnsh` listener (e.g. a
+Raspberry Pi or any other machine running the real `rnsh` server), it
+doesn't host one. Verified end-to-end against a live Raspberry Pi listener,
+not just against a simulator. What's actually in the terminal:
+
+- A real interactive PTY session with live resize as you rotate/resize the
+  window, not a fixed-size text box.
+- Per-session connection history, kept device-local — nothing about who
+  you've shelled into leaves this device or gets sent over the link.
+- A [BiometricPrompt](https://developer.android.com/reference/androidx/biometric/BiometricPrompt)
+  device-credential gate before a saved session can be reopened, and an
+  automatic session lock when the app is backgrounded or you navigate away
+  — a remote root shell sitting unlocked in a backgrounded app is exactly
+  the kind of thing a panic-wipe-capable app shouldn't allow.
+- `FLAG_SECURE` on the terminal screen, so its contents can't be captured
+  by screenshots, screen recording, or the recent-apps thumbnail.
+
+## Roadmap
+
+Areas actively being worked on, not yet finished:
+
+- **Bluetooth mesh, broader verification.** The BLE mesh interface is real
+  and toggleable today (RNS traffic over actual Bluetooth LE advertising,
+  no internet or cell signal involved) and has been verified attaching and
+  advertising on a real device. What's still ahead: verifying genuine
+  multi-hop relay behavior across several real devices at once (so far
+  confirmed single-device), and broader interoperability testing against
+  other Reticulum-over-BLE implementations.
+- **Guided RNode setup.** A built-in flow for flashing
+  [RNode](https://unsigned.io/rnode/) firmware onto supported LoRa hardware
+  directly from the app, plus a guided connection/pairing setup screen —
+  closer to how [Columba](https://github.com/torlando-tech/columba) walks a
+  user through RNode setup today — instead of requiring a separate desktop
+  tool and manual configuration before an RNode interface can be used here.
 
 ## Architecture
 

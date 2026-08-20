@@ -78,16 +78,34 @@ class SettingsRepository(context: Context) {
     // persistence rationale: a privacy-protective toggle resetting to
     // permissive on restart would be a real footgun. See
     // AnnounceStatus.callsContactsOnly's own doc comment.
-    val callsContactsOnly: Flow<Boolean> = boolFlow(KEY_CALLS_CONTACTS_ONLY, default = false)
+    //
+    // Default **true**, deliberately diverging from messagesContactsOnly's
+    // own "off by default, nothing gets more restrictive without opting
+    // in" convention — per explicit direction: voice calls (unlike
+    // messages) are off by default (see callsEnabled below), so the
+    // first real decision a user makes is *turning calls on at all*.
+    // Defaulting the allowlist to on too means that first "yes" doesn't
+    // also silently mean "and anyone in the world can now ring me" —
+    // the safer combination is the default, not something to opt into
+    // after the fact.
+    val callsContactsOnly: Flow<Boolean> = boolFlow(KEY_CALLS_CONTACTS_ONLY, default = true)
 
     // Master "Allow incoming voice calls" toggle — a real Columba-parity
     // gap (its own real allowVoiceCalls setting, found via a direct
     // source audit) closed here per explicit direction. Independent of,
     // and enforced ahead of, callsContactsOnly above — this is "no calls
-    // at all," not "no calls from strangers." Default true (calls
-    // accepted), matching Columba's own real default. See
-    // AnnounceStatus.callsEnabled's own doc comment.
-    val callsEnabled: Flow<Boolean> = boolFlow(KEY_CALLS_ENABLED, default = true)
+    // at all," not "no calls from strangers."
+    //
+    // Default **false** — a deliberate departure from Columba's own real
+    // default (true, "preserves existing behaviour" per its own
+    // SettingsRepository doc comment), per explicit direction: voice
+    // calls are a genuinely new attack/annoyance surface (an unexpected
+    // incoming call rings and interrupts, unlike a message that just
+    // waits silently in an inbox), so this app treats it as something to
+    // opt into, not something that's already on the first time a user
+    // finds the toggle. See AnnounceStatus.callsEnabled's own doc
+    // comment.
+    val callsEnabled: Flow<Boolean> = boolFlow(KEY_CALLS_ENABLED, default = false)
 
     // User-adjustable app-wide text scale, applied by NomadPortalTheme to
     // NomadTypography (see Theme.kt) — a multiplier, not an absolute size,
@@ -100,19 +118,28 @@ class SettingsRepository(context: Context) {
         (it[KEY_TEXT_SCALE] ?: DEFAULT_TEXT_SCALE).coerceIn(MIN_TEXT_SCALE, MAX_TEXT_SCALE)
     }
 
-    /** [ThemeMode.SYSTEM] by default — matches the OS until the user
-     * explicitly picks otherwise, same "don't surprise the user with a
-     * new default" reasoning as this class's own doc comment. Corrupt/
-     * unrecognized stored values (a future enum-rename migration gap)
-     * fall back to [ThemeMode.SYSTEM] rather than crashing. */
+    /** [ThemeMode.DARK] by default (per explicit direction — a fresh
+     * install should open into this app's own real dark-first identity,
+     * not whatever a phone's own system theme happens to be; a light-
+     * system-theme first run was landing a brand-new user on a plain
+     * white screen instead of the actual designed-for-dark UI, logo, and
+     * brand colors this app has). Not [ThemeMode.SYSTEM] — a real,
+     * deliberate departure from this class's own "don't surprise the
+     * user with a new default" convention elsewhere, since here the
+     * *un*-opinionated default was itself the surprise. The user can
+     * still switch to System or Light at any time in Settings →
+     * Appearance; this only changes what a never-touched install opens
+     * into. Corrupt/unrecognized stored values (a future enum-rename
+     * migration gap) fall back to this same default rather than
+     * crashing. */
     val themeMode: Flow<ThemeMode> = dataStore.data.map { prefs ->
         prefs[KEY_THEME_MODE]?.let {
             try {
                 ThemeMode.valueOf(it)
             } catch (e: IllegalArgumentException) {
-                ThemeMode.SYSTEM
+                ThemeMode.DARK
             }
-        } ?: ThemeMode.SYSTEM
+        } ?: ThemeMode.DARK
     }
 
     // Real resource/bandwidth commitment (relaying strangers' mesh
@@ -135,6 +162,22 @@ class SettingsRepository(context: Context) {
      * Defaults true (Always-on) — the user's own explicit "Recommended"
      * pick when this choice was designed. */
     val notificationsAlwaysOn: Flow<Boolean> = boolFlow(KEY_NOTIFICATIONS_ALWAYS_ON, default = true)
+
+    // Stale-while-revalidate page browsing (per explicit direction) —
+    // BrowserScreen shows a locally cached copy of a page instantly (if
+    // one exists) while a real fetch for the current version runs in the
+    // background, rather than a blank spinner every single visit even to
+    // an already-seen page. Defaults true: unlike the contacts-only/
+    // calls-enabled toggles above, this isn't narrowing who can reach the
+    // user or what's exposed *to* the network — it only affects what
+    // this device remembers locally about pages *it* already fetched, no
+    // different in kind from any browser's own page cache. Still real
+    // local data about what this device has browsed, though, so
+    // PageCacheStore deliberately lives under Context.cacheDir (not
+    // noBackupFilesDir) — same directory PanicWipe.perform() already
+    // walks and securely wipes, so turning this off, or a panic wipe,
+    // both actually clear it, not just stop adding to it.
+    val pageCacheEnabled: Flow<Boolean> = boolFlow(KEY_PAGE_CACHE_ENABLED, default = true)
 
     suspend fun setTcpEnabled(enabled: Boolean) = setBool(KEY_TCP, enabled)
     suspend fun setBluetoothMeshEnabled(enabled: Boolean) = setBool(KEY_BLUETOOTH_MESH, enabled)
@@ -159,6 +202,7 @@ class SettingsRepository(context: Context) {
     suspend fun setTransportNodeEnabled(enabled: Boolean) = setBool(KEY_TRANSPORT_NODE, enabled)
     suspend fun setNotificationsEnabled(enabled: Boolean) = setBool(KEY_NOTIFICATIONS_ENABLED, enabled)
     suspend fun setNotificationsAlwaysOn(alwaysOn: Boolean) = setBool(KEY_NOTIFICATIONS_ALWAYS_ON, alwaysOn)
+    suspend fun setPageCacheEnabled(enabled: Boolean) = setBool(KEY_PAGE_CACHE_ENABLED, enabled)
 
     private fun boolFlow(key: androidx.datastore.preferences.core.Preferences.Key<Boolean>, default: Boolean): Flow<Boolean> =
         dataStore.data.map { it[key] ?: default }
@@ -187,5 +231,6 @@ class SettingsRepository(context: Context) {
         private val KEY_TRANSPORT_NODE = booleanPreferencesKey("transport_node_enabled")
         private val KEY_NOTIFICATIONS_ENABLED = booleanPreferencesKey("notifications_enabled")
         private val KEY_NOTIFICATIONS_ALWAYS_ON = booleanPreferencesKey("notifications_always_on")
+        private val KEY_PAGE_CACHE_ENABLED = booleanPreferencesKey("page_cache_enabled")
     }
 }

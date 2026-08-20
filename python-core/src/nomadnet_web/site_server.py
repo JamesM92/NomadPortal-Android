@@ -66,8 +66,59 @@ START_ANNOUNCE_DELAY = 6        # seconds after start before first announce
 # character is '-', unconditionally — confirmed real bullet points
 # can't start with a literal "-" for exactly that reason, hence '•'
 # below instead of "-" as this page's own list marker).
+#
+# _LOGO_ASCII_ART, below, is a real ASCII-art rendering of this app's
+# own TentPortalMark (AppLogo.kt) — generated offline via
+# github.com/JamesM92/Img2ContourAscii (contour/shape-matching, not
+# plain brightness-to-character mapping) against a from-source PIL
+# reproduction of that composable's exact Canvas geometry, at
+# --cols 32. Deliberately narrow (an earlier --cols 52 pass measured
+# noticeably wider than this app's own MIN_MICRON_CONTENT_WIDTH
+# 320.dp phone-width floor — see BrowserScreen.kt — per explicit
+# direction: "small enough the full width is visible on the phone,"
+# not forcing a horizontal scroll just to see the logo). That tool is
+# GPL-3.0 — same real license-conflict reasoning already documented on
+# DEFAULT_EXAMPLES_PAGE below applies here, so it's used purely as an
+# offline one-time generator, never imported or shipped as a runtime
+# dependency; only its plain-text *output* (not GPL-encumbered) is
+# embedded. `--exclude` dropped backtick and backslash from its
+# character palette specifically so the art is safe to embed as a
+# literal Python string *and* as literal Micron text — a raw backtick
+# in Micron source is always an escape-sequence opener, never a
+# literal character, so one surviving in the art would corrupt
+# whatever ran after it. Left-aligned, not `c-centered — Micron's
+# centering strips/recomputes leading whitespace per line, which would
+# destroy this art's column alignment.
+_LOGO_ASCII_ART = """               ..
+               <>
+              .!!.
+             .U~-&
+             dU~-Ub
+            dUU~-UUb
+          :-UUU~-UUU-:
+         .!vUUU~-UUUc!
+         !:UUUU~-UUUU:!
+        :-dUUUU~-UUUUb-:
+       .!uUUU|1uc||UUUe!.
+       !:UU}iiUUUUirAUU:!
+      v!dUUlUUUUUUUU|UU&!v
+     :-uUUUvUUUUUUUUcUUUb-:
+     !:UUUU|UUUUUUUUcUUUUr!
+    !!)UUUU|UUUUUUUUcUUUUL!v
+   :! )UUUU|UUUUUUUUcUUUUL !:
+  .!  )UUUU|UUUUUUUUcUUUUL  !
+  !!  )UUUU|UUUUUUUUcUUUUL  !v
+ :!   )UUUU|UUUUUUUUcUUUUL   !:
+.!                            !.
+!!                            -!
+!                              !"""
+
 _DEFAULT_INDEX = """>NomadPortal-Android
 `cA native Android app for Reticulum & NomadNet`a
+
+-
+
+""" + _LOGO_ASCII_ART + """
 
 -
 
