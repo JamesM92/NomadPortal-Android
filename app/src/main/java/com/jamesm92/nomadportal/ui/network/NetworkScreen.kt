@@ -49,6 +49,7 @@ import com.jamesm92.nomadportal.data.calling.CallRepository
 import com.jamesm92.nomadportal.data.messaging.AnnounceStatus
 import com.jamesm92.nomadportal.data.messaging.ConversationSummary
 import com.jamesm92.nomadportal.data.messaging.MessagingRepository
+import com.jamesm92.nomadportal.data.messaging.RelayNode
 import com.jamesm92.nomadportal.ui.browser.NodeRow
 import com.jamesm92.nomadportal.ui.components.AdaptiveTopAppBar
 import com.jamesm92.nomadportal.ui.components.SearchField
@@ -82,7 +83,18 @@ import kotlinx.coroutines.launch
  * Two filter dimensions were requested — "network" and "type":
  * - **Type** (Peers / Sites / All) is real and implemented — it's
  *   exactly the LXMF-peer-vs-NomadNet-node distinction this app already
- *   tracks natively.
+ *   tracks natively. Extended per a later, explicit request ("the
+ *   network page should also be able to sort by relays and audio
+ *   (phone announces)") with two more Type chips in the same row:
+ *   **Relays** shows [RelayNode]s — real `lxmf.propagation`-aspect
+ *   announces (store-and-forward mesh infrastructure, tracked by
+ *   `PropagationSyncService` and previously only summarized as a raw
+ *   count on this screen's own Interfaces block, never listed
+ *   individually) — and **Audio** narrows Peers down to
+ *   `isCallCapable` contacts only (LXST `lxst.telephony`-aspect
+ *   announces — see [com.jamesm92.nomadportal.data.messaging.Contact.isCallCapable]'s
+ *   own doc comment). Both reuse the existing sort/search/Network-filter
+ *   machinery below rather than needing dimensions of their own.
  * - **Network** (i.e. filtering by *which interface* currently has the
  *   best path to a given announce) is now also real and implemented —
  *   [InterfaceController.announceInterfaces] reads
@@ -349,7 +361,7 @@ private fun formatNetworkLabel(key: String?): String = when (key) {
 }
 
 private enum class AnnounceTypeFilter(val label: String) {
-    ALL("All"), PEERS("Peers"), SITES("Sites")
+    ALL("All"), PEERS("Peers"), SITES("Sites"), RELAYS("Relays"), AUDIO("Audio")
 }
 
 /** The network/interface filter dimension — see this file's own top doc
@@ -393,6 +405,26 @@ private sealed class AnnounceItem {
         override val lastAnnounceMillis get() = node.lastAnnounceMillis
         override val announceCount get() = node.announceCount
     }
+
+    /** See [RelayNode]'s own doc comment for why there's no real name —
+     * a hash prefix is the honest, best-available label here. */
+    data class Relay(val relay: RelayNode) : AnnounceItem() {
+        override val displayName get() = relay.hash.take(16)
+        override val hash get() = relay.hash
+        override val hopCount get() = relay.hopCount
+        override val lastAnnounceMillis get() = relay.lastAnnounceMillis
+        override val announceCount get() = relay.announceCount
+    }
+}
+
+/** Shared by every [AnnounceItem]'s stable-order/LazyColumn key — one
+ * hash can validly appear as more than one item kind at once (e.g. a
+ * relay is a different destination hash per aspect anyway, but this
+ * keeps the convention explicit rather than assuming it). */
+private fun AnnounceItem.stableKey(): String = hash + when (this) {
+    is AnnounceItem.Peer -> ":peer"
+    is AnnounceItem.Site -> ":site"
+    is AnnounceItem.Relay -> ":relay"
 }
 
 /**
@@ -425,9 +457,10 @@ private fun AnnouncesSection(
     Column(modifier = modifier) {
         val conversations by messagingRepository.conversations().collectAsState(initial = emptyList())
         val nodes by browserRepository.discoveredNodes().collectAsState(initial = emptyList())
+        val relays by messagingRepository.relayNodes().collectAsState(initial = emptyList())
         ExpandableSectionHeader(
             title = "Announces",
-            count = conversations.size + nodes.size,
+            count = conversations.size + nodes.size + relays.size,
             expanded = expanded,
             onToggle = onToggleExpanded,
         )
@@ -494,6 +527,7 @@ private fun AnnouncesSectionBody(
     // this does/doesn't prove. Keyed by hash; a hash with no entry has
     // no currently-known path at all.
     val announceInterfaces by interfaceController.announceInterfaces().collectAsState(initial = emptyMap())
+    val relays by messagingRepository.relayNodes().collectAsState(initial = emptyList())
     val scope = rememberCoroutineScope()
     var searchQuery by remember { mutableStateOf("") }
     var sortOption by remember { mutableStateOf(SortOption.RECENT) }
@@ -501,10 +535,21 @@ private fun AnnouncesSectionBody(
     var networkFilter by remember { mutableStateOf(NetworkFilter.ALL) }
     var infoTarget by remember { mutableStateOf<AnnounceItem?>(null) }
 
-    val combined: List<AnnounceItem> = remember(conversations, nodes, typeFilter) {
-        buildList {
-            if (typeFilter != AnnounceTypeFilter.SITES) addAll(conversations.map { AnnounceItem.Peer(it) })
-            if (typeFilter != AnnounceTypeFilter.PEERS) addAll(nodes.map { AnnounceItem.Site(it) })
+    // ALL still means "Peers + Sites" (not "everything including Relays"),
+    // matching the pre-existing behavior — Relays/Audio are their own
+    // dedicated chips a user opts into, not folded into the default view,
+    // since a propagation node isn't a "thing you'd chat with or browse
+    // to" the way a Peer/Site is, and Audio is a capability filter on
+    // Peers rather than a genuinely new item type.
+    val combined: List<AnnounceItem> = remember(conversations, nodes, relays, typeFilter) {
+        when (typeFilter) {
+            AnnounceTypeFilter.RELAYS -> relays.map { AnnounceItem.Relay(it) }
+            AnnounceTypeFilter.AUDIO -> conversations
+                .filter { it.contact.isCallCapable }
+                .map { AnnounceItem.Peer(it) }
+            AnnounceTypeFilter.PEERS -> conversations.map { AnnounceItem.Peer(it) }
+            AnnounceTypeFilter.SITES -> nodes.map { AnnounceItem.Site(it) }
+            AnnounceTypeFilter.ALL -> conversations.map { AnnounceItem.Peer(it) } + nodes.map { AnnounceItem.Site(it) }
         }
     }
     val searched = if (searchQuery.isBlank()) {
@@ -525,7 +570,7 @@ private fun AnnouncesSectionBody(
         SortOption.HOPS -> filtered.sortedBy { if (it.hopCount < 0) Int.MAX_VALUE else it.hopCount }
         SortOption.ANNOUNCES -> filtered.sortedByDescending { it.announceCount }
     }
-    val displayed = rememberStableOrder(sorted, key = { it.hash + (if (it is AnnounceItem.Peer) ":peer" else ":site") })
+    val displayed = rememberStableOrder(sorted, key = { it.stableKey() })
 
     fun toggleFavorite(item: AnnounceItem) {
         scope.launch {
@@ -533,6 +578,11 @@ private fun AnnouncesSectionBody(
                 when (item) {
                     is AnnounceItem.Peer -> messagingRepository.setFavorite(item.hash, !item.summary.contact.isFavorite)
                     is AnnounceItem.Site -> browserRepository.setFavorite(item.hash, !item.node.isFavorite)
+                    // A relay (propagation node) isn't a contact — see
+                    // RelayNode's own doc comment — nothing to favorite;
+                    // its row never offers the affordance that would call
+                    // this in the first place.
+                    is AnnounceItem.Relay -> {}
                 }
             } catch (e: Exception) {
                 // Not rethrown — matches every other favorite-toggle in this app.
@@ -602,7 +652,7 @@ private fun AnnouncesSectionBody(
         }
         items(
             displayed,
-            key = { it.hash + (if (it is AnnounceItem.Peer) ":peer" else ":site") },
+            key = { it.stableKey() },
         ) { item ->
             when (item) {
                 is AnnounceItem.Peer -> ConversationRow(
@@ -634,6 +684,10 @@ private fun AnnouncesSectionBody(
                     onClick = { infoTarget = item },
                     onToggleFavorite = { toggleFavorite(item) },
                 )
+                is AnnounceItem.Relay -> RelayRow(
+                    relay = item.relay,
+                    onClick = { infoTarget = item },
+                )
             }
             HorizontalDivider()
         }
@@ -649,9 +703,44 @@ private fun AnnouncesSectionBody(
                 when (item) {
                     is AnnounceItem.Peer -> onOpenConversation(item.hash)
                     is AnnounceItem.Site -> onOpenNode(item.hash)
+                    // A relay has nowhere to navigate to — see
+                    // AnnounceTechnicalInfoDialog's own doc comment for
+                    // why its confirmButton is omitted entirely for this
+                    // item type instead of wiring onOpen to a no-op.
+                    is AnnounceItem.Relay -> {}
                 }
             },
         )
+    }
+}
+
+/** [AnnounceItem.Relay]'s own row — deliberately not built on
+ * [ConversationRow]/[NodeRow] (both are contact/site-shaped, with a
+ * favorite star, icon, etc. that don't apply to mesh infrastructure) —
+ * a plain, minimal two-line row instead, same look as this file's own
+ * [InterfaceStatusRow]/[TcpConnectionStatusRow] rather than borrowing UI
+ * built for a different kind of entity. */
+@Composable
+private fun RelayRow(relay: RelayNode, onClick: () -> Unit) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onClick)
+            .padding(horizontal = 16.dp, vertical = 10.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(12.dp),
+    ) {
+        StatusDot(color = NomadAccent2)
+        Column(modifier = Modifier.weight(1f)) {
+            Text(text = relay.hash.take(16), style = MaterialTheme.typography.bodyLarge)
+            Text(
+                text = "Propagation node · " +
+                    (if (relay.hopCount < 0) "? hops" else "${relay.hopCount} hop" + (if (relay.hopCount == 1) "" else "s")) +
+                    " · last ${formatAnnounceTime(relay.lastAnnounceMillis)}",
+                style = MaterialTheme.typography.bodySmall,
+                color = NomadTextDim,
+            )
+        }
     }
 }
 
@@ -676,11 +765,24 @@ private fun AnnounceTechnicalInfoDialog(
         title = { Text(item.displayName) },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                InfoRow("Type", if (item is AnnounceItem.Peer) "LXMF peer" else "NomadNet site")
+                InfoRow(
+                    "Type",
+                    when (item) {
+                        is AnnounceItem.Peer -> "LXMF peer"
+                        is AnnounceItem.Site -> "NomadNet site"
+                        is AnnounceItem.Relay -> "Propagation node (relay)"
+                    },
+                )
                 InfoRow("Address", item.hash)
                 InfoRow("Network", formatNetworkLabel(networkKey))
                 InfoRow("Hops", if (item.hopCount < 0) "Unknown" else item.hopCount.toString())
-                InfoRow("Last announce", formatAnnounceTime(item.lastAnnounceMillis))
+                InfoRow(
+                    if (item is AnnounceItem.Relay) "First seen" else "Last announce",
+                    formatAnnounceTime(if (item is AnnounceItem.Relay) item.relay.firstSeenMillis else item.lastAnnounceMillis),
+                )
+                if (item is AnnounceItem.Relay) {
+                    InfoRow("Last seen", formatAnnounceTime(item.lastAnnounceMillis))
+                }
                 InfoRow("Announces heard", item.announceCount.toString())
                 when (item) {
                     is AnnounceItem.Peer -> {
@@ -699,12 +801,22 @@ private fun AnnounceTechnicalInfoDialog(
                         )
                         InfoRow("Favorite", if (item.node.isFavorite) "Yes" else "No")
                     }
+                    // No favorite/blocked/fetch concept for mesh
+                    // infrastructure — see RelayNode's own doc comment.
+                    is AnnounceItem.Relay -> {}
                 }
             }
         },
-        confirmButton = {
-            TextButton(onClick = onOpen) {
-                Text(if (item is AnnounceItem.Peer) "Open Chat" else "Go to Site")
+        // A relay has no chat/site to open — see this composable's own
+        // doc comment — so it gets only the dismiss button, not a
+        // confirmButton wired to a no-op onOpen.
+        confirmButton = if (item is AnnounceItem.Relay) {
+            {}
+        } else {
+            {
+                TextButton(onClick = onOpen) {
+                    Text(if (item is AnnounceItem.Peer) "Open Chat" else "Go to Site")
+                }
             }
         },
         dismissButton = {
