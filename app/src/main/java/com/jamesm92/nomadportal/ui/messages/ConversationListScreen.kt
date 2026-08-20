@@ -223,7 +223,15 @@ fun ConversationListScreen(
         key = { it.contact.lxmfHash },
     )
     val generalMessages = rememberStableOrder(
-        sortedConversations.filter { it.lastMessage != null },
+        // Real, on-device-confirmed bug: this used to filter only on
+        // "has a message," with no exclusion for favorited contacts —
+        // a favorited contact with messages showed up in *both*
+        // Favorites and General messages at once, double-counting its
+        // unread badge into General's own header total. Favorites and
+        // General are meant to be a strict partition (every conversation
+        // lives in exactly one), matching how favoritesUnread/generalUnread
+        // above are summed as if they never overlap.
+        sortedConversations.filter { it.lastMessage != null && !it.contact.isFavorite },
         key = { it.contact.lxmfHash },
     )
     val allUsers = rememberStableOrder(sortedConversations, key = { it.contact.lxmfHash })
