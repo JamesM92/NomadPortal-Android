@@ -13,6 +13,15 @@ name: Release
 # Triggered by pushing a tag matching v* (e.g. v0.0.1) — never runs on an
 # ordinary push/PR, so cutting a release is always a deliberate, separate
 # action from normal development.
+#
+# Per explicit direction: dev stays a loose, unprotected branch (nothing
+# there blocks a push), but main and releases both require the full
+# audit — main's own branch protection requires ci.yml + CodeQL to pass
+# before anything can merge into it, and the "Verify this tag is on main"
+# step below is what actually enforces that for a release, rather than
+# just documenting the expectation: it refuses to publish anything for a
+# tag that isn't reachable from main, so a tag accidentally cut against
+# an un-audited dev commit fails loudly instead of silently shipping.
 on:
   push:
     tags:
@@ -31,6 +40,19 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v7
+        with:
+          # Full history, not the default shallow clone — the ancestry
+          # check right below needs real commit-graph depth to reliably
+          # find (or correctly fail to find) a common ancestor.
+          fetch-depth: 0
+
+      - name: Verify this tag is on main (the audited branch)
+        run: |
+          git fetch origin main
+          if ! git merge-base --is-ancestor "${GITHUB_SHA}" origin/main; then
+            echo "::error::Tag ${GITHUB_REF_NAME} (commit ${GITHUB_SHA}) is not reachable from main. Releases must be cut from main, which requires the full CI/CodeQL audit to pass before anything merges in (see main's own branch protection) — dev itself is deliberately not gated. Merge this work into main via a reviewed PR first, then tag main's own tip."
+            exit 1
+          fi
 
       # See ci.yml's identical step for why this is needed, why `dev` is
       # pinned, and why `path` is a subdirectory not `../...`.
