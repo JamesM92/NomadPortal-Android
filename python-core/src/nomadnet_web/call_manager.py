@@ -166,7 +166,21 @@ class CallManager:
         # philosophy already established for rns_module/msgpack_module
         # above): orchestrator.py wires a real contact-lookup callable
         # in via set_contact_checker(), a fake one in tests.
-        self._contacts_only = False
+        #
+        # Defaults to **True** — a deliberate departure from this app's
+        # usual "nothing gets more restrictive without opting in"
+        # convention (per explicit direction): since _calls_enabled below
+        # itself now defaults to False, the very first time a user turns
+        # calls on at all, this being already-on means that decision
+        # doesn't *also* silently open the door to every stranger — the
+        # safer combination is the default, not something to discover
+        # and opt into afterward. Must match
+        # SettingsRepository.callsContactsOnly's own Kotlin-side default
+        # exactly, or the boot-replay in NomadPortalApp.kt (which only
+        # calls set_calls_contacts_only() when the persisted value
+        # *diverges* from this in-memory default, as an optimization)
+        # would silently desync on a fresh install.
+        self._contacts_only = True
         self._is_known_contact: Optional[Callable[[str], bool]] = None
 
         # Master "allow incoming voice calls at all" toggle — a real
@@ -174,11 +188,17 @@ class CallManager:
         # a source-verified audit of Columba's own VoiceCallPermissionsCard
         # turned up its allowVoiceCalls setting). Independent of, and
         # enforced *before*, _contacts_only above — this is "no calls at
-        # all", not "no calls from strangers". Defaults to True, matching
-        # Columba's own real default ("preserves existing behaviour" per
-        # its own SettingsRepository doc comment) — an opt-out, not an
-        # opt-in, unlike _contacts_only above.
-        self._calls_enabled = True
+        # all", not "no calls from strangers".
+        #
+        # Defaults to **False** — a deliberate departure from Columba's
+        # own real default (True, "preserves existing behaviour" per its
+        # own SettingsRepository doc comment), per explicit direction:
+        # voice calls are treated as an opt-in here, not something
+        # that's already on the first time a user finds the toggle. Must
+        # match SettingsRepository.callsEnabled's own Kotlin-side default
+        # exactly — same boot-replay-desync reasoning as _contacts_only
+        # above.
+        self._calls_enabled = False
 
         # Instance attributes (not bare module constants) specifically
         # so tests can shrink them — a real 15s path-wait would make

@@ -57,3 +57,14 @@ val NomadBorderLight = Color(0xFFD4D4D4)
 // soft cyan/teal, distinct in hue from every token above it, same muted
 // brightness range.
 val NomadIdenticonRingContact = Color(0xFF5BC8C8)
+
+// A 4th identicon "kind" ring — Relays (Network tab's own Relays filter,
+// AnnounceItem.Relay/RelayNode), per explicit direction that relay rows
+// should carry an identicon like every other announce-list row does, not
+// a bare status dot. Same "genuinely new hue, not already carrying a
+// different semantic elsewhere" reasoning as NomadIdenticonRingContact's
+// own doc comment: Purple is Sites, NomadAccent is rnsh, the cyan/teal
+// above is Contacts, Accent2/Warn/Error are all real status semantics —
+// a muted gold/yellow is the one hue in this same brightness family
+// nothing else here uses yet.
+val NomadIdenticonRingRelay = Color(0xFFC8C85B)

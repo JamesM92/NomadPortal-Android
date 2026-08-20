@@ -1,6 +1,5 @@
 package com.jamesm92.nomadportal.ui.network
 
-import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -12,7 +11,6 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ExpandLess
 import androidx.compose.material.icons.filled.ExpandMore
@@ -33,13 +31,13 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import com.jamesm92.nomadportal.connectivity.BluetoothMeshStatus
+import com.jamesm92.nomadportal.connectivity.InterfaceByteStats
 import com.jamesm92.nomadportal.connectivity.InterfaceController
 import com.jamesm92.nomadportal.connectivity.TcpConnection
 import com.jamesm92.nomadportal.connectivity.TcpConnectionsRepository
@@ -52,13 +50,17 @@ import com.jamesm92.nomadportal.data.messaging.MessagingRepository
 import com.jamesm92.nomadportal.data.messaging.RelayNode
 import com.jamesm92.nomadportal.ui.browser.NodeRow
 import com.jamesm92.nomadportal.ui.components.AdaptiveTopAppBar
+import com.jamesm92.nomadportal.ui.components.Identicon
 import com.jamesm92.nomadportal.ui.components.SearchField
 import com.jamesm92.nomadportal.ui.components.SortDropdown
 import com.jamesm92.nomadportal.ui.components.SortOption
+import com.jamesm92.nomadportal.ui.components.StatusDot
 import com.jamesm92.nomadportal.ui.components.dismissKeyboardOnTap
+import com.jamesm92.nomadportal.ui.components.hexToByteArray
 import com.jamesm92.nomadportal.ui.components.rememberStableOrder
 import com.jamesm92.nomadportal.ui.messages.ConversationRow
 import com.jamesm92.nomadportal.ui.theme.NomadAccent2
+import com.jamesm92.nomadportal.ui.theme.NomadIdenticonRingRelay
 import com.jamesm92.nomadportal.ui.theme.NomadTextDim
 import com.jamesm92.nomadportal.ui.theme.NomadWarn
 import kotlinx.coroutines.launch
@@ -134,6 +136,7 @@ fun NetworkScreen(
     val tcpConnections by tcpConnectionsRepository.connections().collectAsState(initial = emptyList())
     val bluetoothMeshStatus by interfaceController.bluetoothMeshStatus()
         .collectAsState(initial = BluetoothMeshStatus(neighborCount = 0, lastActivityAtMillis = null))
+    val interfaceByteStats by interfaceController.interfaceByteStats().collectAsState(initial = emptyMap())
 
     // Both default collapsed except Announces — per a real on-device
     // report ("a bunch of the hard written network stats at the top
@@ -200,6 +203,7 @@ fun NetworkScreen(
                         val configured = tcpConnections.count { it.enabled }
                         "$online of $configured connections online"
                     },
+                    byteStats = interfaceByteStats[AnnounceStatus.INTERFACE_TCP],
                 )
                 if (tcpEnabled) {
                     // Plain forEach, not lazy — a user-configured connection
@@ -221,13 +225,22 @@ fun NetworkScreen(
                             (if (bluetoothMeshStatus.neighborCount == 1) "" else "s") +
                             " seen · last ${formatRelativeTime(bluetoothMeshStatus.lastActivityAtMillis)}"
                     },
+                    byteStats = interfaceByteStats[AnnounceStatus.INTERFACE_BLUETOOTH],
                 )
                 HorizontalDivider()
 
-                InterfaceStatusRow(label = "RNode", enabled = rNodeEnabled)
+                InterfaceStatusRow(
+                    label = "RNode",
+                    enabled = rNodeEnabled,
+                    byteStats = interfaceByteStats[AnnounceStatus.INTERFACE_RNODE],
+                )
                 HorizontalDivider()
 
-                InterfaceStatusRow(label = "Local network discovery", enabled = wifiDiscoveryEnabled)
+                InterfaceStatusRow(
+                    label = "Local network discovery",
+                    enabled = wifiDiscoveryEnabled,
+                    byteStats = interfaceByteStats[AnnounceStatus.INTERFACE_WIFI_DISCOVERY],
+                )
                 HorizontalDivider()
             }
 
@@ -247,7 +260,20 @@ fun NetworkScreen(
 }
 
 @Composable
-private fun InterfaceStatusRow(label: String, enabled: Boolean, detail: String? = null) {
+private fun InterfaceStatusRow(
+    label: String,
+    enabled: Boolean,
+    detail: String? = null,
+    // Per explicit direction: every protocol shows its own real lifetime
+    // up/down total, not just the ones with live per-connection status
+    // above. Null (not zero) for "no history yet" — see
+    // InterfaceController.interfaceByteStats's own doc comment — and
+    // deliberately shown regardless of [enabled]: a real lifetime total
+    // stays meaningful even for an interface that's currently switched
+    // off, the same way a phone's own per-app data-usage stat doesn't
+    // reset just because that app isn't running right now.
+    byteStats: InterfaceByteStats? = null,
+) {
     Row(
         modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 10.dp),
         verticalAlignment = Alignment.CenterVertically,
@@ -261,8 +287,36 @@ private fun InterfaceStatusRow(label: String, enabled: Boolean, detail: String? 
                 style = MaterialTheme.typography.bodySmall,
                 color = NomadTextDim,
             )
+            // Only rendered once there's real data — a never-used
+            // interface showing "↓0 B ↑0 B" would just be noise, same
+            // "don't fabricate/pad a value that isn't real yet"
+            // convention this app already applies elsewhere (e.g.
+            // FetchStatusDot's own null-vs-false distinction).
+            if (byteStats != null && (byteStats.rxBytes > 0 || byteStats.txBytes > 0)) {
+                Text(
+                    text = "Lifetime: ↓${formatBytes(byteStats.rxBytes)} ↑${formatBytes(byteStats.txBytes)}",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = NomadTextDim,
+                )
+            }
         }
     }
+}
+
+/** Human-readable byte count (`"1.2 MB"`, `"340 KB"`, `"512 B"`) — no
+ * existing helper anywhere in this app to reuse yet; this is the first
+ * real byte-count display. Binary (1024) units, matching how Android's
+ * own Settings/Storage UI reports sizes, not decimal (1000) SI units. */
+private fun formatBytes(bytes: Long): String {
+    if (bytes < 1024) return "$bytes B"
+    val units = listOf("KB", "MB", "GB", "TB")
+    var value = bytes / 1024.0
+    var unitIndex = 0
+    while (value >= 1024 && unitIndex < units.lastIndex) {
+        value /= 1024
+        unitIndex++
+    }
+    return "%.1f %s".format(value, units[unitIndex])
 }
 
 /** Sub-row under TCP for each configured connection — same read-only
@@ -303,13 +357,6 @@ private fun TcpConnectionStatusRow(connection: TcpConnection) {
                 overflow = TextOverflow.Ellipsis,
             )
         }
-    }
-}
-
-@Composable
-private fun StatusDot(color: Color, size: androidx.compose.ui.unit.Dp = 10.dp) {
-    Canvas(modifier = Modifier.size(size).clip(CircleShape)) {
-        drawCircle(color = color)
     }
 }
 
@@ -716,10 +763,17 @@ private fun AnnouncesSectionBody(
 
 /** [AnnounceItem.Relay]'s own row — deliberately not built on
  * [ConversationRow]/[NodeRow] (both are contact/site-shaped, with a
- * favorite star, icon, etc. that don't apply to mesh infrastructure) —
- * a plain, minimal two-line row instead, same look as this file's own
- * [InterfaceStatusRow]/[TcpConnectionStatusRow] rather than borrowing UI
- * built for a different kind of entity. */
+ * favorite star, a per-row menu, etc. that don't apply to mesh
+ * infrastructure) — a plain, minimal two-line row instead. Still gets
+ * the same [Identicon] treatment every other row in this shared announce
+ * list gets, though (per explicit direction) — a bare [StatusDot] made a
+ * relay look like a different, lesser kind of thing instead of just a
+ * different *color* of the same visual language; [NomadIdenticonRingRelay]
+ * is what actually carries "this one's a relay" now, same job
+ * [NomadPortalPurple]/[NomadAccent]/[NomadIdenticonRingContact] already do
+ * for Sites/rnsh/Contacts. 40.dp matches [ConversationRow]/[NodeRow]'s own
+ * row-icon size, so the list reads as one consistent size, not relays
+ * looking smaller. */
 @Composable
 private fun RelayRow(relay: RelayNode, onClick: () -> Unit) {
     Row(
@@ -730,7 +784,11 @@ private fun RelayRow(relay: RelayNode, onClick: () -> Unit) {
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(12.dp),
     ) {
-        StatusDot(color = NomadAccent2)
+        Identicon(
+            hash = remember(relay.hash) { relay.hash.hexToByteArray() },
+            size = 40.dp,
+            ringColor = NomadIdenticonRingRelay,
+        )
         Column(modifier = Modifier.weight(1f)) {
             Text(text = relay.hash.take(16), style = MaterialTheme.typography.bodyLarge)
             Text(

@@ -594,10 +594,31 @@ def set_node_hosting_enabled(enabled: bool) -> None:
                 return  # already on
             if not is_ready():
                 raise RuntimeError("Cannot start hosting — RNS is not ready yet")
-            from nomadnet_web.site_server import SiteServer
+            from nomadnet_web.site_server import SiteServer, seed_starter_content
             site_dir = os.path.join(_base_dir, "site")
+            pages_dir = os.path.join(site_dir, "pages")
+            # Real bug found+fixed here: SiteServer.start() itself only
+            # ever does os.makedirs() on pages_dir, never seeds it — the
+            # *only* place that ever wrote index.mu/examples.mu was
+            # _site_pages_dir() (the file-nav/editor bridge below), which
+            # is exclusively reached from the Site Files management
+            # screen. A user who flips the hosting toggle on without ever
+            # opening that screen first got a real, running SiteServer
+            # with a genuinely empty pages directory — "Registered 0
+            # page(s)" forever, and any fetch of its own index.mu (e.g.
+            # this device's own hosted node shown in the Sites list, 0
+            # hops) just hangs until the real 120s/hard-cap timeouts in
+            # browser.py's fetch_page fire, since there's nothing wrong
+            # with the Link itself, just nothing behind it to serve. Same
+            # seed call _site_pages_dir() already made, made here too —
+            # os.makedirs(exist_ok=True) + seed_starter_content are both
+            # already idempotent (a second call on an existing install is
+            # a no-op), so this is safe to call unconditionally on every
+            # enable, not just first-ever.
+            os.makedirs(pages_dir, exist_ok=True)
+            seed_starter_content(pages_dir)
             server = SiteServer(
-                pages_dir=os.path.join(site_dir, "pages"),
+                pages_dir=pages_dir,
                 files_dir=os.path.join(site_dir, "files"),
                 identity_file=os.path.join(_base_dir, "reticulum", "site_identity.id"),
             )
@@ -1841,6 +1862,52 @@ def _interface_key_for(iface) -> str:
     if name == "AutoInterface":
         return "wifi_discovery"
     return None
+
+
+def get_interface_byte_stats_json() -> str:
+    """Session + lifetime (across restarts) up/down byte totals, grouped
+    by this app's own 4 interface keys (tcp/bluetooth_mesh/rnode/
+    wifi_discovery — see `_interface_key_for`'s own doc comment) rather
+    than by individual raw RNS interface name, since e.g. every TCP
+    connection should sum into one "tcp" total, not report separately.
+    Real backing for the Network tab's own "lifetime up/down per
+    protocol" stat display (per explicit direction).
+
+    Reuses browser.py's own already-real byte-accounting — each RNS
+    interface object's own `rxb`/`txb` counters, plus the persisted
+    lifetime base `NodeBrowser.__init__` already loads into
+    `_iface_base` from `iface_stats.json` (see that constructor's own
+    doc comment) — this function is purely the missing "group by
+    protocol key" aggregation on top of data that was already being
+    tracked correctly but had never actually been exposed to the UI at
+    all (confirmed via a direct read of `get_status()`'s own real
+    `life_rxb`/`life_txb` computation, which already exists per-
+    interface-name — this just re-groups that by protocol instead).
+
+    Returns `{"tcp": {"rxb": int, "txb": int}, "bluetooth_mesh": {...},
+    "rnode": {...}, "wifi_discovery": {...}}` — a key is present only if
+    at least one currently- or ever-attached interface of that type has
+    contributed bytes; a missing key means "no history yet", not an
+    error (Kotlin side treats it as 0/0)."""
+    import json
+    totals: dict = {}
+    if _browser is not None and getattr(_browser, "_rns", None) is not None:
+        RNS = _browser._rns
+        try:
+            for iface in RNS.Transport.interfaces:
+                key = _interface_key_for(iface)
+                if key is None:
+                    continue
+                name = getattr(iface, "name", str(iface))
+                sess_rxb = getattr(iface, "rxb", getattr(iface, "rx_bytes", 0)) or 0
+                sess_txb = getattr(iface, "txb", getattr(iface, "tx_bytes", 0)) or 0
+                base = _browser._iface_base.get(name, {"rxb": 0, "txb": 0})
+                bucket = totals.setdefault(key, {"rxb": 0, "txb": 0})
+                bucket["rxb"] += base.get("rxb", 0) + sess_rxb
+                bucket["txb"] += base.get("txb", 0) + sess_txb
+        except Exception as exc:
+            log.warning("get_interface_byte_stats_json failed: %s", exc)
+    return json.dumps(totals)
 
 
 def get_announce_interfaces_json() -> str:

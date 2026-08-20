@@ -12,6 +12,7 @@ import com.jamesm92.nomadportal.data.SettingsRepository
 import com.jamesm92.nomadportal.data.calling.CallRepository
 import com.jamesm92.nomadportal.data.calling.RealCallRepository
 import com.jamesm92.nomadportal.data.browsing.BrowserRepository
+import com.jamesm92.nomadportal.data.browsing.PageCacheStore
 import com.jamesm92.nomadportal.data.browsing.RealBrowserRepository
 import com.jamesm92.nomadportal.data.hosting.RealSiteFileRepository
 import com.jamesm92.nomadportal.data.hosting.SiteFileRepository
@@ -50,6 +51,8 @@ class NomadPortalApp : Application() {
     lateinit var messagingRepository: MessagingRepository
         private set
     lateinit var browserRepository: BrowserRepository
+        private set
+    lateinit var pageCacheStore: PageCacheStore
         private set
     lateinit var siteFileRepository: SiteFileRepository
         private set
@@ -176,19 +179,27 @@ class NomadPortalApp : Application() {
             // set_calls_contacts_only() only flips an in-memory flag on
             // it — independent of when its contact-checker gets wired
             // up by _start_call_manager() on the deferred-setup thread.
-            if (settingsRepository.callsContactsOnly.first()) {
-                orchestrator.callAttr("set_calls_contacts_only", true)
+            //
+            // This one now defaults **true** on both sides (CallManager's
+            // own _contacts_only already starts True, matching this
+            // property's own default) — so, unlike the old false-default
+            // shape, only a persisted *false* (the user deliberately
+            // opened calls up to non-contacts) needs an explicit replay
+            // call here.
+            if (!settingsRepository.callsContactsOnly.first()) {
+                orchestrator.callAttr("set_calls_contacts_only", false)
             }
             // Same replay, for the master "Allow incoming voice calls"
             // toggle — see SettingsRepository.callsEnabled's own doc
-            // comment. Unlike the other toggles above (which default
-            // false and only need replaying when true), this one
-            // defaults true on both sides — CallManager's own
-            // _calls_enabled already starts True, matching this
-            // property's own default — so only a persisted *false*
-            // needs an explicit replay call here.
-            if (!settingsRepository.callsEnabled.first()) {
-                orchestrator.callAttr("set_calls_enabled", false)
+            // comment.
+            //
+            // This one now defaults **false** on both sides (CallManager's
+            // own _calls_enabled already starts False, matching this
+            // property's own default) — so only a persisted *true* (the
+            // user deliberately opted in) needs an explicit replay call
+            // here.
+            if (settingsRepository.callsEnabled.first()) {
+                orchestrator.callAttr("set_calls_enabled", true)
             }
         }
 
@@ -204,6 +215,7 @@ class NomadPortalApp : Application() {
         // still None.
         messagingRepository = RealMessagingRepository(settingsRepository)
         browserRepository = RealBrowserRepository()
+        pageCacheStore = PageCacheStore(this)
         // Phase 1a/1b of a real voice-call feature (signalling +
         // audio — see python-core's call_manager.py). Same
         // safe-before-orchestrator.start()-finishes reasoning as the two
@@ -231,7 +243,7 @@ class NomadPortalApp : Application() {
         // repositories above; every bridge function it calls degrades
         // to a clear "not ready yet" failure rather than erroring while
         // _identity_store is still None.
-        identityRepository = RealIdentityRepository()
+        identityRepository = RealIdentityRepository(pageCacheStore)
 
         // Notifications' boot-time replay — same pattern as the four
         // interface toggles above, placed after messagingRepository is

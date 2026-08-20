@@ -30,6 +30,7 @@ import com.jamesm92.nomadportal.connectivity.TcpConnectionsRepository
 import com.jamesm92.nomadportal.data.SettingsRepository
 import com.jamesm92.nomadportal.data.browsing.BrowserRepository
 import com.jamesm92.nomadportal.data.browsing.PageAddress
+import com.jamesm92.nomadportal.data.browsing.PageCacheStore
 import com.jamesm92.nomadportal.data.calling.CallRepository
 import com.jamesm92.nomadportal.data.calling.CallState
 import com.jamesm92.nomadportal.data.hosting.SiteFileRepository
@@ -113,6 +114,7 @@ fun NomadNavHost(
     interfaceController: InterfaceController,
     messagingRepository: MessagingRepository,
     browserRepository: BrowserRepository,
+    pageCacheStore: PageCacheStore,
     settingsRepository: SettingsRepository,
     tcpConnectionsRepository: TcpConnectionsRepository,
     siteFileRepository: SiteFileRepository,
@@ -305,6 +307,9 @@ fun NomadNavHost(
             } else {
                 BrowserScreen(
                     repository = browserRepository,
+                    pageCacheStore = pageCacheStore,
+                    identityRepository = identityRepository,
+                    settingsRepository = settingsRepository,
                     startAddress = PageAddress(nodeHash),
                     onBack = { navController.popBackStack() },
                 )

@@ -3,6 +3,7 @@ package com.jamesm92.nomadportal.data.identity
 import androidx.compose.ui.graphics.Color
 import com.chaquo.python.PyException
 import com.chaquo.python.Python
+import com.jamesm92.nomadportal.data.browsing.PageCacheStore
 import com.jamesm92.nomadportal.data.messaging.ContactIcon
 import com.jamesm92.nomadportal.data.messaging.parseHexColor
 import com.jamesm92.nomadportal.data.messaging.toHexString
@@ -26,7 +27,13 @@ import org.json.JSONObject
  * that class's own doc comment for why (no push mechanism exists on the
  * Python side for any of this).
  */
-class RealIdentityRepository : IdentityRepository {
+class RealIdentityRepository(
+    // Required, not optional — deleteIdentity()'s own cascade-delete
+    // contract (see IdentityRepository's own doc comment) now includes
+    // the page cache; a missing store here would silently leave a
+    // deleted identity's cached pages behind instead of failing loudly.
+    private val pageCacheStore: PageCacheStore,
+) : IdentityRepository {
     private val orchestrator by lazy {
         Python.getInstance().getModule("nomadportal_core.orchestrator")
     }
@@ -108,6 +115,16 @@ class RealIdentityRepository : IdentityRepository {
             } catch (e: PyException) {
                 throw IOException(e.message, e)
             }
+            // Page cache is purely Kotlin-side (never touches Python —
+            // see PageCacheStore's own doc comment), so it's not part of
+            // orchestrator.py's own delete_identity() cascade above;
+            // torn down here instead so the *whole* cascade this
+            // function promises (per IdentityRepository's own doc
+            // comment) actually holds. Runs even though delete_identity
+            // already succeeded by this point — a stale page cache left
+            // behind for an identity that no longer exists is a real,
+            // if minor, leak either way.
+            pageCacheStore.deleteForIdentity(identityId)
         }
     }
 

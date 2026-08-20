@@ -46,6 +46,24 @@ data class BluetoothMeshStatus(
 )
 
 /**
+ * Real lifetime (across app restarts, not just this session) up/down byte
+ * totals for one interface key — the backing for the Network tab's own
+ * "lifetime up/down per protocol" stat display, per explicit direction.
+ * Not fabricated: orchestrator.py's `get_interface_byte_stats_json` reuses
+ * each RNS interface object's own real `rxb`/`txb` counters plus the
+ * persisted lifetime base `NodeBrowser` already tracks in
+ * `iface_stats.json` (that byte-accounting has existed for a long time —
+ * this is the first time it's actually reached the UI). Zero for an
+ * interface key with no history yet, never null — there's no meaningful
+ * "unknown" state for a byte counter the way there is for e.g. a
+ * not-yet-arrived announce timestamp.
+ */
+data class InterfaceByteStats(
+    val rxBytes: Long,
+    val txBytes: Long,
+)
+
+/**
  * The single authoritative control point for which RNS interfaces are
  * actually live, and whether this device hosts a NomadNet node.
  *
@@ -174,4 +192,16 @@ interface InterfaceController {
      * bigger feature, not a corner cut by accident).
      */
     fun announceInterfaces(): Flow<Map<String, String>>
+
+    /**
+     * Real lifetime up/down byte totals, keyed by the same 4 interface
+     * keys as [announceInterfaces]'s own values (`INTERFACE_TCP`/
+     * `_BLUETOOTH`/`_RNODE`/`_WIFI_DISCOVERY`) — the Network tab's own
+     * Interfaces section shows one of these per protocol, per explicit
+     * direction. A key absent from the map means no interface of that
+     * type has ever contributed bytes yet, equivalent to
+     * [InterfaceByteStats] `(0, 0)` — callers should default a missing
+     * key to that rather than treating it as an error.
+     */
+    fun interfaceByteStats(): Flow<Map<String, InterfaceByteStats>>
 }

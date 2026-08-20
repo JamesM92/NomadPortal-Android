@@ -230,6 +230,19 @@ def manager():
     # is testing the *timeout duration* itself, so there's no reason for
     # any of it to run at real-world speed.
     m.path_wait_timeout_s = 0.05
+    # _calls_enabled now defaults to False (see CallManager's own doc
+    # comment — a deliberate opt-in departure from Columba's own True
+    # default). Almost everything in this suite is exercising *other*
+    # behavior (hangup, history, audio frames, state notifications) and
+    # would otherwise have every incoming call rejected before it even
+    # got going — explicitly enabled here so the fixture itself, not
+    # every individual test, carries that assumption. The master
+    # toggle's own real default is covered separately, against a fresh
+    # unmodified CallManager(), by
+    # TestCallsEnabledMasterToggle.test_disabled_by_default below —
+    # same "construct a raw instance directly rather than trust this
+    # fixture" precedent TestNotYetStarted already established.
+    m.set_calls_enabled(True)
     return m
 
 
@@ -401,8 +414,13 @@ class TestCallsEnabledMasterToggle:
         manager._incoming_link_established(link)
         return link
 
-    def test_enabled_by_default(self, manager):
-        assert manager.get_calls_enabled() is True
+    def test_disabled_by_default(self):
+        # Deliberately not the shared `manager` fixture — that fixture
+        # now force-enables calls for every *other* test's convenience
+        # (see its own doc comment), which would make this assertion
+        # meaningless. A fresh, unmodified CallManager() is the only way
+        # to actually observe the class's own real default.
+        assert CallManager().get_calls_enabled() is False
 
     def test_disabled_call_rejected_before_identification(self, manager):
         manager.set_calls_enabled(False)
@@ -780,6 +798,11 @@ class TestStateChangeNotification:
         m._rns = FakeRNSModule
         m._msgpack = FakeMsgpack
         m._identity = FakeIdentity("11" * 16)
+        # Constructed directly rather than via the `manager` fixture (this
+        # test wants its own dedicated on_state_change callback), so it
+        # needs the same explicit calls-enabled opt-in the fixture itself
+        # would otherwise provide — see that fixture's own doc comment.
+        m.set_calls_enabled(True)
 
         remote_dest = FakeDestination(FakeIdentity("99" * 16), FakeDestination.IN, FakeDestination.SINGLE, "lxst", "telephony")
         link = FakeLink(remote_dest)
