@@ -192,9 +192,9 @@ private fun IdentityStep(messagingRepository: MessagingRepository) {
         Text(announceStatus?.displayName ?: "…", style = MaterialTheme.typography.titleMedium)
         Spacer(Modifier.height(16.dp))
         Text(
-            "This name and icon were generated just for you — deterministic, " +
-                "not random each time, and yours alone. Change either anytime " +
-                "from Settings.",
+            "This name and icon are derived from your unique identity hash — " +
+                "deterministic, not random each time, and yours alone. Change " +
+                "either anytime from Settings.",
             style = MaterialTheme.typography.bodyMedium,
             textAlign = TextAlign.Center,
             color = NomadTextDim,

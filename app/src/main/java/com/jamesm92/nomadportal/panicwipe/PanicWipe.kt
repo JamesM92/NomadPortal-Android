@@ -1,8 +1,8 @@
 package com.jamesm92.nomadportal.panicwipe
 
 import android.content.Context
-import android.content.Intent
 import com.jamesm92.nomadportal.security.SecureKeystore
+import com.jamesm92.nomadportal.util.AppRestart
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.io.File
@@ -59,12 +59,7 @@ object PanicWipe {
     }
 
     /** Relaunches the app as a fresh process so no in-memory state (old identity, old ViewModels) survives the wipe. */
-    fun restartApp(context: Context) {
-        val launchIntent = context.packageManager.getLaunchIntentForPackage(context.packageName)
-        val restartIntent = Intent.makeRestartActivityTask(launchIntent?.component)
-        context.startActivity(restartIntent)
-        Runtime.getRuntime().exit(0)
-    }
+    fun restartApp(context: Context) = AppRestart.restart(context)
 
     private fun regenerateIdentity() {
         // TODO(core extraction, nomadportal_android_handoff.md sequencing

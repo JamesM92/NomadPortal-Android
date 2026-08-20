@@ -13,6 +13,7 @@ import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.produceState
@@ -32,6 +33,7 @@ import com.jamesm92.nomadportal.data.browsing.PageAddress
 import com.jamesm92.nomadportal.data.calling.CallRepository
 import com.jamesm92.nomadportal.data.calling.CallState
 import com.jamesm92.nomadportal.data.hosting.SiteFileRepository
+import com.jamesm92.nomadportal.data.identity.IdentityRepository
 import com.jamesm92.nomadportal.data.messaging.MessagingRepository
 import com.jamesm92.nomadportal.data.rnsh.RnshHistoryRepository
 import com.jamesm92.nomadportal.data.rnsh.RnshRepository
@@ -42,10 +44,13 @@ import com.jamesm92.nomadportal.ui.components.MessagesIconWithBadge
 import com.jamesm92.nomadportal.ui.components.SettingsIconWithBadge
 import com.jamesm92.nomadportal.ui.hosting.SiteFilesScreen
 import com.jamesm92.nomadportal.ui.hosting.SitePageEditorScreen
+import com.jamesm92.nomadportal.ui.messages.BlockedContactsScreen
 import com.jamesm92.nomadportal.ui.messages.ConversationListScreen
 import com.jamesm92.nomadportal.ui.messages.ConversationScreen
 import com.jamesm92.nomadportal.ui.network.NetworkScreen
 import com.jamesm92.nomadportal.ui.onboarding.OnboardingScreen
+import com.jamesm92.nomadportal.ui.settings.AboutScreen
+import com.jamesm92.nomadportal.ui.settings.IdentitiesScreen
 import com.jamesm92.nomadportal.ui.settings.SettingsScreen
 import com.jamesm92.nomadportal.ui.terminal.RnshTerminalScreen
 import kotlinx.coroutines.flow.first
@@ -86,6 +91,16 @@ private object Routes {
     // Advanced-section-only, reached from Settings — see
     // RnshRepository's own doc comment for the client-only scope.
     const val RNSH_TERMINAL = "rnsh_terminal"
+    // Reached from Settings' own "Identities" entry — see
+    // IdentityRepository's own doc comment for the single-active-
+    // identity model this screen manages.
+    const val IDENTITIES = "identities"
+    // Reached from Settings' own "Privacy" section — see
+    // BlockedContactsScreen's own doc comment.
+    const val BLOCKED_CONTACTS = "blocked_contacts"
+    // Reached from a plain row at the bottom of Settings — see
+    // AboutScreen's own doc comment.
+    const val ABOUT = "about"
     // Deliberately absent from TOP_LEVEL_ROUTES -- renders without the
     // bottom nav bar, same as SITE_FILES/CONVERSATION. See NomadNavHost's
     // own start-destination gating for why this isn't just "the first
@@ -104,6 +119,14 @@ fun NomadNavHost(
     callRepository: CallRepository,
     rnshRepository: RnshRepository,
     rnshHistoryRepository: RnshHistoryRepository,
+    identityRepository: IdentityRepository,
+    // Notification-tap deep link — see MainActivity's own doc comment
+    // for why this is threaded down as plain state rather than a real
+    // Navigation-Compose deep link (this app's nav graph has no
+    // registered deep-link URIs anywhere; a LaunchedEffect-driven
+    // one-shot navigate() was the smaller addition for one real target).
+    pendingConversationHash: String? = null,
+    onConsumedPendingConversation: () -> Unit = {},
     navController: NavHostController = rememberNavController(),
 ) {
     // Overlaid on top of everything below, including the bottom nav bar
@@ -133,6 +156,19 @@ fun NomadNavHost(
         value = settingsRepository.hasCompletedOnboarding.first()
     }
     if (hasCompletedOnboarding == null) return
+
+    // Notification-tap deep link — only acted on once onboarding is
+    // resolved (the check above already guarantees that by this point)
+    // and only for a genuinely new hash (keyed on the value itself, not
+    // Unit, so a second real tap on a different conversation while the
+    // app is already open navigates again too).
+    LaunchedEffect(pendingConversationHash) {
+        val hash = pendingConversationHash
+        if (hash != null) {
+            navController.navigate(Routes.conversation(hash))
+            onConsumedPendingConversation()
+        }
+    }
 
     Box(modifier = Modifier.fillMaxSize()) {
     Scaffold(
@@ -170,9 +206,29 @@ fun NomadNavHost(
                 settingsRepository = settingsRepository,
                 messagingRepository = messagingRepository,
                 tcpConnectionsRepository = tcpConnectionsRepository,
+                identityRepository = identityRepository,
+                rnshHistoryRepository = rnshHistoryRepository,
                 onManageHostedPages = { navController.navigate(Routes.SITE_FILES) },
                 onOpenRnshTerminal = { navController.navigate(Routes.RNSH_TERMINAL) },
+                onOpenIdentities = { navController.navigate(Routes.IDENTITIES) },
+                onOpenBlockedContacts = { navController.navigate(Routes.BLOCKED_CONTACTS) },
+                onOpenAbout = { navController.navigate(Routes.ABOUT) },
             )
+        }
+        composable(Routes.IDENTITIES) {
+            IdentitiesScreen(
+                repository = identityRepository,
+                onBack = { navController.popBackStack() },
+            )
+        }
+        composable(Routes.BLOCKED_CONTACTS) {
+            BlockedContactsScreen(
+                repository = messagingRepository,
+                onBack = { navController.popBackStack() },
+            )
+        }
+        composable(Routes.ABOUT) {
+            AboutScreen(onBack = { navController.popBackStack() })
         }
         composable(Routes.RNSH_TERMINAL) {
             RnshTerminalScreen(
