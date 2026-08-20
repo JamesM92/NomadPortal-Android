@@ -1,6 +1,8 @@
 package com.jamesm92.nomadportal.audio
 
+import android.Manifest
 import android.content.Context
+import android.content.pm.PackageManager
 import android.media.AudioAttributes
 import android.media.AudioFormat
 import android.media.AudioManager
@@ -12,6 +14,7 @@ import android.media.MediaRecorder
 import android.media.audiofx.AcousticEchoCanceler
 import android.media.audiofx.NoiseSuppressor
 import android.util.Log
+import androidx.core.content.ContextCompat
 import com.chaquo.python.Python
 import com.jamesm92.nomadportal.data.calling.CallRepository
 import com.jamesm92.nomadportal.data.calling.CallStatusValue
@@ -170,6 +173,25 @@ class CallAudioEngine(
         )
         if (minBuffer <= 0) {
             Log.w(TAG, "AudioRecord.getMinBufferSize failed ($minBuffer) -- skipping capture")
+            return
+        }
+
+        // Real lint finding (MissingPermission), not a suppressed one:
+        // the hasRecordAudioPermission(context) guard above already makes
+        // this call safe, but it's a custom wrapper in a different file
+        // — lint's MissingPermission check only recognizes a direct
+        // ContextCompat.checkSelfPermission(...) == PERMISSION_GRANTED
+        // test in the same function as the AudioRecord.Builder() call it
+        // guards, not one behind an indirection like that. Duplicating
+        // the check inline here (rather than @SuppressLint) is the real
+        // fix, not a false-positive exception — it's also a genuine
+        // extra safety margin against the (narrow but real) window where
+        // the permission could be revoked between the early-return check
+        // above and this actual construction.
+        if (ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) !=
+            PackageManager.PERMISSION_GRANTED
+        ) {
+            Log.w(TAG, "RECORD_AUDIO not granted -- this call is receive-only")
             return
         }
 

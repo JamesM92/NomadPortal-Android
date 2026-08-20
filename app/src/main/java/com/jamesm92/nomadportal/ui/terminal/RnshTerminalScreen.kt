@@ -1,6 +1,7 @@
 package com.jamesm92.nomadportal.ui.terminal
 
 import android.view.WindowManager
+import androidx.activity.compose.LocalActivity
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -268,7 +269,13 @@ fun RnshTerminalScreen(
     // cast is expected to always succeed for how this screen is actually
     // hosted (NomadNavHost, inside MainActivity's setContent), same
     // assumption every other Activity-context cast in this codebase makes.
-    val hostActivity = LocalContext.current as? FragmentActivity
+    // Real lint fix (ContextCastToActivity), not a suppression: casting
+    // LocalContext.current to an Activity type is flagged because a
+    // Context isn't always an Activity (it can be wrapped/themed/etc.) —
+    // androidx.activity.compose.LocalActivity resolves the real hosting
+    // Activity directly instead, exactly the case this lint check exists
+    // to steer toward.
+    val hostActivity = LocalActivity.current as? FragmentActivity
     // Plain Context (not the FragmentActivity-typed hostActivity above) —
     // PanicWipe.perform()/restartApp() just need a real Context, matching
     // every other screen's own `val context = LocalContext.current` that
