@@ -157,6 +157,29 @@ class CallManager:
         self._on_state_change = on_state_change
         self.last_announce_at: Optional[float] = None
 
+        # Real Columba-parity gap closed here (per explicit direction:
+        # "the privacy tab should have a separate toggle for messages
+        # and phone calls") — same shape as MessagingService's own
+        # set_contacts_only_messages, but this class stays decoupled
+        # from ContactStoreManager directly (consistent with its own
+        # "inject dependencies, don't import them" testability
+        # philosophy already established for rns_module/msgpack_module
+        # above): orchestrator.py wires a real contact-lookup callable
+        # in via set_contact_checker(), a fake one in tests.
+        self._contacts_only = False
+        self._is_known_contact: Optional[Callable[[str], bool]] = None
+
+        # Master "allow incoming voice calls at all" toggle — a real
+        # Columba-parity gap closed here (per explicit direction, after
+        # a source-verified audit of Columba's own VoiceCallPermissionsCard
+        # turned up its allowVoiceCalls setting). Independent of, and
+        # enforced *before*, _contacts_only above — this is "no calls at
+        # all", not "no calls from strangers". Defaults to True, matching
+        # Columba's own real default ("preserves existing behaviour" per
+        # its own SettingsRepository doc comment) — an opt-out, not an
+        # opt-in, unlike _contacts_only above.
+        self._calls_enabled = True
+
         # Instance attributes (not bare module constants) specifically
         # so tests can shrink them — a real 15s path-wait would make
         # the "no path found" test suite take 15 real seconds otherwise.
@@ -230,6 +253,62 @@ class CallManager:
         if self._destination:
             self._destination.announce()
             self.last_announce_at = time.time()
+
+    def set_calls_enabled(self, enabled: bool) -> None:
+        """Master "Allow incoming voice calls" toggle — see this class's
+        own __init__ doc comment for why it's independent of, and
+        enforced ahead of, set_contacts_only() below. Matches Columba's
+        own real allowVoiceCalls setting (verified directly against its
+        source), including hanging up any call already in progress the
+        instant this flips off — mirrors NativeCallManager.disableIncoming()'s
+        own "hang up before the destination goes away" behavior, even
+        though this implementation doesn't tear down the underlying
+        RNS.Destination itself (this codebase's own long-established
+        "an RNS object, once created, isn't cheaply reconstructed"
+        constraint — see orchestrator.py's own Reticulum-singleton doc
+        comments). The destination stays registered and announced;
+        instead, every incoming link is rejected at
+        _incoming_link_established, before identification, so no call
+        ever gets far enough to ring."""
+        self._calls_enabled = bool(enabled)
+        if not self._calls_enabled:
+            self.hang_up()
+
+    def get_calls_enabled(self) -> bool:
+        """Current in-memory state — orchestrator.py's own status getter
+        reads this, same shape as get_contacts_only() below."""
+        return self._calls_enabled
+
+    def set_contacts_only(self, enabled: bool) -> None:
+        """"Calls from contacts only" — the calls-specific counterpart
+        to MessagingService.set_contacts_only_messages(). In-memory
+        only, same as that method (the real persisted source of truth
+        lives in Kotlin's DataStore, replayed at boot — see
+        orchestrator.py's own set_calls_contacts_only())."""
+        self._contacts_only = bool(enabled)
+
+    def get_contacts_only(self) -> bool:
+        """Current in-memory state — orchestrator.py's own status getter
+        reads this, same shape as MessagingService.get_contacts_only_messages()."""
+        return self._contacts_only
+
+    def set_contact_checker(self, is_known_contact: Optional[Callable[[str], bool]]) -> None:
+        """Injects the real "is this identity hash a known contact"
+        lookup — orchestrator.py wires this to ContactStoreManager once,
+        at start-up time (see its own set_calls_contacts_only() and
+        _register_call_manager())."""
+        self._is_known_contact = is_known_contact
+
+    def _allows_caller(self, identity_hash_hex: str) -> bool:
+        """True unless contacts-only mode is on and this caller isn't a
+        known contact — mirrors MessagingService's own _allows_sender
+        exactly (same "known contact" definition: a real ContactStore
+        entry, not merely "has called before")."""
+        if not self._contacts_only:
+            return True
+        if self._is_known_contact is None:
+            return True  # Fail open — no checker wired means enforcement can't run.
+        return self._is_known_contact(identity_hash_hex)
 
     # ------------------------------------------------------------------
     # Outbound
@@ -377,6 +456,18 @@ class CallManager:
                 self._send_signal(link, Signalling.STATUS_BUSY)
                 link.teardown()
                 return
+            if not self._calls_enabled:
+                # Rejected before identification — the master toggle
+                # blocks everyone, not just non-contacts, so there's no
+                # need to wait for the caller's identity to decide (unlike
+                # _allows_caller()'s own contacts-only check, which
+                # genuinely needs to know who's calling first). Same
+                # "dropped outright, never surfaced" BUSY-signal contract
+                # as every other real rejection path in this class.
+                log.info("Incoming call link established while voice calls disabled, signalling BUSY")
+                self._send_signal(link, Signalling.STATUS_BUSY)
+                link.teardown()
+                return
             link.set_remote_identified_callback(self._caller_identified)
             link.set_link_closed_callback(self._link_closed)
             link.set_packet_callback(self._packet_received)
@@ -387,6 +478,24 @@ class CallManager:
             self._clear_terminal_state_locked()
             if self.status != CallStatus.IDLE:
                 log.info("Caller identified while line busy, signalling BUSY")
+                self._send_signal(link, Signalling.STATUS_BUSY)
+                link.teardown()
+                return
+            caller_hash_hex = identity.hash.hex()
+            if not self._allows_caller(caller_hash_hex):
+                # Signals BUSY rather than a distinct "rejected" status —
+                # deliberately indistinguishable from "the callee is
+                # genuinely on another call" from the caller's own side,
+                # same privacy reasoning messaging.py's own contacts-only
+                # enforcement already applies (a filtered sender sees no
+                # different outcome than a real delivery failure would
+                # produce). Never rings, never surfaces to the UI at all
+                # — the "dropped outright" contract this app's other
+                # contacts-only enforcement already established.
+                log.info(
+                    "Incoming call from non-contact %s, contacts-only calls is on — signalling BUSY",
+                    self._rns.prettyhexrep(identity.hash),
+                )
                 self._send_signal(link, Signalling.STATUS_BUSY)
                 link.teardown()
                 return

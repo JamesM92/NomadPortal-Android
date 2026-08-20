@@ -436,10 +436,26 @@ class MessagingService:
     # Delivery setup
     # ------------------------------------------------------------------
 
-    def setup_delivery(self, identity_store) -> None:
-        """Register a delivery identity + LXMRouter for every stored user identity."""
+    def setup_delivery(self, identity_store, only_user_sub: Optional[str] = None) -> None:
+        """Register a delivery identity + LXMRouter.
+
+        [only_user_sub] is None by default — registers every stored
+        identity, the original multi-tenant-web-app behavior (every
+        logged-in user's router comes up at server start, since any of
+        them might be offline from the UI but still needs to receive).
+
+        nomadportal-android's real multi-identity feature passes its
+        active identity's user_sub explicitly instead: this app's own
+        model is single-active-identity (see `deactivate_user`'s own
+        doc comment) — only the currently-active identity should have a
+        live router at boot, not every identity ever created on this
+        device. Any identity matching [only_user_sub] gets initialized;
+        every other stored identity is left inactive until switched to.
+        """
         self._identity_store = identity_store
         for entry in identity_store.list_identities():
+            if only_user_sub is not None and entry.get("user_sub", "") != only_user_sub:
+                continue
             self._init_user_router(entry)
 
     def _init_user_router(self, entry: dict) -> Optional[dict]:
@@ -554,9 +570,68 @@ class MessagingService:
 
         Call after the user's RNS identity is regenerated (e.g. admin reset)
         so the new keypair's LXMF address takes effect immediately.
+
+        Note: unlike `deactivate_user` below, this does NOT call the
+        popped router's own `exit_handler()` — it was written for the
+        "this identity's keypair no longer exists, a fresh one is about
+        to replace it" case, where the old router's own background
+        threads/links being left running was never actually exercised
+        for long (the identity behind it was gone). Multi-identity
+        switching is a different case — the deactivated identity is
+        still real and may be reactivated later — so it needs the real
+        teardown `deactivate_user` does instead of this method.
         """
         with self._lock:
             self._user_routers.pop(user_sub, None)
+
+    def deactivate_user(self, user_sub: str) -> None:
+        """Cleanly stops one identity's LXMRouter — the real mechanism
+        behind multi-identity's single-active-identity switch (see the
+        nomadportal-android multi-identity plan/memory for the full
+        design). `LXMRouter.exit_handler()` (verified directly against
+        the installed LXMF/LXMRouter.py source) tears down that
+        router's own delivery destination/links and flips
+        `exit_handler_running`, which its own background job-loop
+        threads check to stop themselves — it only touches that
+        router's own state, so this is safe to call while
+        `RNS.Reticulum()` and any other identity's router keep running.
+
+        A no-op if this user_sub has no live router (e.g. it was never
+        activated this run, or is already deactivated) — same
+        "tolerates being called on nothing" contract as
+        `reset_user_router`.
+
+        Does NOT delete the identity or its stored messages/contacts —
+        those live in `IdentityStore`/`ContactStoreManager`/`MessageStore`
+        independent of whether a router is currently running for it, so
+        the identity can be reactivated later via `_init_user_router`
+        with its full history intact. `register_delivery_identity`
+        refuses a second identity on an already-used router instance,
+        so reactivation always builds a fresh `LXMRouter` rather than
+        resuming this exited one — `_init_user_router` already does
+        exactly that once this user_sub is gone from `_user_routers`.
+        """
+        with self._lock:
+            data = self._user_routers.pop(user_sub, None)
+        if data is None:
+            return
+        try:
+            data["router"].exit_handler()
+        except Exception:
+            log.exception(
+                "deactivate_user: exit_handler() raised for %s — "
+                "router is still removed from the active set either way",
+                user_sub[:16] if user_sub else "anon",
+            )
+
+    def activate_user(self, entry: dict) -> Optional[dict]:
+        """Public wrapper over `_init_user_router` — the other half of
+        `deactivate_user`'s pair, for the multi-identity switch flow
+        (orchestrator.py's `switch_active_identity`). [entry] is an
+        `IdentityStore` entry dict (has "id"/"user_sub"/"name"). Safe to
+        call for an identity that's already active — `_init_user_router`
+        itself already tolerates that (returns the existing router)."""
+        return self._init_user_router(entry)
 
     def active_routers(self) -> list:
         """Return a snapshot list of currently-registered routers as
@@ -618,13 +693,28 @@ class MessagingService:
             return False
         if not self._identity_store.rename(entry["id"], name):
             return False
+        self.refresh_router_display_name(user_sub, name)
+        return True
+
+    def refresh_router_display_name(self, user_sub: str, name: str) -> None:
+        """Applies a rename to the *live* router's destination
+        immediately (if one is running for [user_sub]) — the same
+        "an announce made right after doesn't still carry the old
+        name" fix [set_display_name]'s own doc comment describes,
+        factored out so a caller that persists a rename through a
+        different path (orchestrator.py's `rename_identity()`, for
+        multi-identity support — it calls `IdentityStore.rename()`
+        directly rather than through this method) can still get the
+        same live-refresh guarantee for whichever identity happens to
+        be active. No-op if no live router exists for [user_sub] (e.g.
+        renaming an identity that isn't currently active — nothing live
+        to refresh)."""
         data = self._user_routers.get(user_sub)
         if data is not None:
             try:
                 data["dest"].display_name = name
             except Exception as exc:
                 log.warning("Renamed identity but couldn't update live display_name: %s", exc)
-        return True
 
     def set_icon_appearance(self, glyph: str, fg_hex: str, bg_hex: str, user_sub: str = "") -> bool:
         """Sets this user's own FIELD_ICON_APPEARANCE descriptor —
@@ -763,14 +853,22 @@ class MessagingService:
             image_format=image_format,
         )
 
-    def sent_messages(self) -> list:
+    def sent_messages(self, user_sub: Optional[str] = None) -> list:
+        """[user_sub] is None by default — preserves the original
+        "every message, every identity" behavior for any existing
+        caller. Multi-identity support passes the active identity's
+        user_sub explicitly (see orchestrator.py's `_conversation_entries()`)
+        to get that identity's own sent messages only — see
+        `message_store.MessageStore.sent_messages`'s own doc comment for
+        the underlying filter."""
         if self._msg_store:
-            return self._msg_store.sent_messages()
+            return self._msg_store.sent_messages(owner=user_sub)
         return []
 
-    def received_messages(self) -> list:
+    def received_messages(self, user_sub: Optional[str] = None) -> list:
+        """See `sent_messages`'s own doc comment — same contract."""
         if self._msg_store:
-            return self._msg_store.received_messages()
+            return self._msg_store.received_messages(owner=user_sub)
         return []
 
     def mark_read(self, msg_id: str, owner: str = "") -> None:
@@ -803,6 +901,25 @@ class MessagingService:
             if m.get("source") == hash_hex and (not user_sub or m.get("owner") == user_sub):
                 self._delete_attachment_file(m.get("attachment"))
         return self._msg_store.delete_conversation(hash_hex, owner=user_sub)
+
+    def delete_identity_data(self, user_sub: str) -> int:
+        """Permanently deletes ALL of one identity's message history
+        (every conversation, not just one counterparty — see
+        `delete_conversation`'s own doc comment for that narrower,
+        per-counterparty operation) plus the attachment files those
+        messages left on disk. The real backing for multi-identity's
+        "deleting an identity also deletes its message history" cascade
+        (orchestrator.py's `delete_identity()`, which separately handles
+        the identity's own contacts/favorites via
+        `ContactStoreManager.delete_user()` — this method's job is only
+        the message-history half). Returns how many messages were
+        removed. A no-op (returns 0) if message storage isn't ready."""
+        if self._msg_store is None:
+            return 0
+        removed = self._msg_store.delete_owner(user_sub)
+        for m in removed:
+            self._delete_attachment_file(m.get("attachment"))
+        return len(removed)
 
     @staticmethod
     def _delete_attachment_file(attachment: Optional[dict]) -> None:

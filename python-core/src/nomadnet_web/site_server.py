@@ -258,7 +258,22 @@ class SiteServer:
             "nomadnetwork",
             "node",
         )
-        self._dest.set_proof_strategy(RNS.Destination.PROVE_ALL)
+        # No explicit set_proof_strategy() call, deliberately — verified
+        # directly against markqvist/NomadNet's own real Node.py, which
+        # doesn't set one either, leaving RNS's own default
+        # (Destination.PROVE_NONE). An earlier version of this line set
+        # PROVE_ALL, an unexplained deviation from the reference this app
+        # otherwise mirrors closely; removing it fixed a real reported bug
+        # ("other clients see the announce but the link times out") —
+        # confirmed by the reporter reaching the hosted site successfully
+        # from another client immediately after this change, on a build
+        # with no other change made. RNS's own Destination.py source
+        # shows proof_strategy is read only by outbound proof-of-delivery
+        # replies to plain Packets, never consulted by
+        # incoming_link_request()/Link.validate_request() — so the real
+        # mechanism connecting PROVE_ALL to a broken Link handshake isn't
+        # fully understood, but the fix is real and verified, not
+        # theoretical.
         self._dest.set_link_established_callback(self._peer_connected)
 
         self._node_hash = self._dest.hexhash

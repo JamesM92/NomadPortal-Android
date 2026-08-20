@@ -255,3 +255,23 @@ class ContactStoreManager:
         with self._lock:
             self._stores[user_sub] = store
         return store
+
+    def delete_user(self, user_sub: str) -> None:
+        """Permanently deletes this user's entire contact store — file
+        on disk and cached instance both — the real backing for
+        multi-identity's "deleting an identity also deletes its
+        contacts/favorites" cascade (orchestrator.py's
+        `delete_identity()`). A no-op if no store file exists yet for
+        this user_sub (e.g. an identity that was never used to save a
+        contact). Uses the identical [key] derivation `for_user` does,
+        so this always targets the exact file that identity's contacts
+        actually live in."""
+        key = hashlib.sha256(user_sub.encode()).hexdigest()[:16]
+        path = os.path.join(self._contacts_dir, f"u_{key}.yml")
+        with self._lock:
+            self._stores.pop(user_sub, None)
+        if os.path.exists(path):
+            try:
+                os.remove(path)
+            except OSError as exc:
+                log.warning("Could not delete contact store for a deleted identity: %s", exc)

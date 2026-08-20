@@ -385,6 +385,58 @@ class TestInboundCallFlow:
         assert success is False
 
 
+class TestCallsEnabledMasterToggle:
+    """Columba-parity gap: the real allowVoiceCalls master toggle,
+    verified against Columba's own source and added per explicit
+    direction. Independent of, and enforced ahead of, contacts-only
+    (TestContactsOnly doesn't exist as a separate class here either —
+    contacts-only has never had dedicated unit tests, verified via
+    on-device testing instead; this class exists anyway since it's a
+    genuinely new rejection code path worth covering directly, not just
+    a value passed through)."""
+
+    def _incoming_link(self, manager):
+        remote_dest = FakeDestination(FakeIdentity("99" * 16), FakeDestination.IN, FakeDestination.SINGLE, "lxst", "telephony")
+        link = FakeLink(remote_dest)
+        manager._incoming_link_established(link)
+        return link
+
+    def test_enabled_by_default(self, manager):
+        assert manager.get_calls_enabled() is True
+
+    def test_disabled_call_rejected_before_identification(self, manager):
+        manager.set_calls_enabled(False)
+        link = self._incoming_link(manager)
+        assert Signalling.STATUS_BUSY in link.sent_signals
+        assert link.status == FakeLink.CLOSED
+        # Never even reached AVAILABLE/identification.
+        assert Signalling.STATUS_AVAILABLE not in link.sent_signals
+        assert manager.status == CallStatus.IDLE
+
+    def test_re_enabling_allows_calls_again(self, manager):
+        manager.set_calls_enabled(False)
+        manager.set_calls_enabled(True)
+        link = self._incoming_link(manager)
+        assert Signalling.STATUS_AVAILABLE in link.sent_signals
+
+    def test_disabling_hangs_up_a_call_already_in_progress(self, manager):
+        link = self._incoming_link(manager)
+        link.fire_remote_identified(make_remote_identity())
+        assert manager.status == CallStatus.RINGING_INCOMING
+
+        manager.set_calls_enabled(False)
+        # Same real hang_up() path/outcome as TestHangUp's own
+        # test_hangup_incoming_ringing_unanswered_sends_rejected — a
+        # ringing-unanswered call ends as REJECTED, not a bare IDLE.
+        assert manager.status == CallStatus.ENDED
+        assert Signalling.STATUS_REJECTED in link.sent_signals
+        assert link.status == FakeLink.CLOSED
+
+    def test_disabling_with_no_active_call_is_a_safe_no_op(self, manager):
+        manager.set_calls_enabled(False)  # must not raise
+        assert manager.status == CallStatus.IDLE
+
+
 class TestHangUp:
     def test_hangup_incoming_ringing_unanswered_sends_rejected(self, manager):
         remote_dest = FakeDestination(FakeIdentity("99" * 16), FakeDestination.IN, FakeDestination.SINGLE, "lxst", "telephony")

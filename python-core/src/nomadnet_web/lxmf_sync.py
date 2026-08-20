@@ -272,6 +272,31 @@ class PropagationSyncService:
             "transfer_last_result": transfer_last_result,
         }
 
+    def get_known_nodes(self) -> list:
+        """Every propagation node currently known from a real
+        ``lxmf.propagation`` announce — the real backing for the Network
+        tab's "Relays" filter (`NetworkScreen.kt`'s own
+        `AnnounceTypeFilter.RELAYS`), same "expose the tracker's live
+        state as a plain list" shape as
+        ``call_tracker.CallPeerTracker.get_peers()``. There's no name to
+        report (a propagation node's `app_data` isn't a display name the
+        way an LXMF delivery peer's is — see this class's own doc
+        comment), so the hash alone is what the UI has to show; no
+        favorite/blocked concept applies here either, since a
+        propagation node is mesh infrastructure, not a contact.
+        """
+        with self._known_nodes_lock:
+            return [
+                {
+                    "hash": h.hex(),
+                    "hops": e["hops"],
+                    "first_seen": e["first_seen"],
+                    "last_seen": e["last_seen"],
+                    "announce_count": e.get("announce_count", 1),
+                }
+                for h, e in self._known_nodes.items()
+            ]
+
     def snapshot(self) -> dict:
         """Return a JSON-serialisable view of current state, for
         ``/api/_debug/state``.
@@ -339,6 +364,7 @@ class PropagationSyncService:
                     "first_seen": now,
                     "last_seen": now,
                     "app_data": app_data,
+                    "announce_count": 1,
                 }
                 log.info(
                     "PropagationSyncService: new propagation node "
@@ -349,6 +375,13 @@ class PropagationSyncService:
                 entry["hops"] = hops
                 entry["last_seen"] = now
                 entry["app_data"] = app_data
+                # Total announces heard from this node — same convention
+                # as lxmf_tracker.py's/browser.py's own announce_count,
+                # only added once get_known_nodes() gave it somewhere to
+                # be read from; entries created before this field existed
+                # (a pre-upgrade run still in memory) fall back to 1 via
+                # .get() in get_known_nodes() rather than KeyError.
+                entry["announce_count"] = entry.get("announce_count", 1) + 1
 
     # ------------------------------------------------------------------
     # Sync loop

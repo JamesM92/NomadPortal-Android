@@ -5,6 +5,7 @@ import logging
 import os
 import threading
 import time
+from typing import Optional
 
 log = logging.getLogger(__name__)
 MAX_MESSAGES = 500
@@ -32,13 +33,29 @@ class MessageStore:
             snapshot = self._snapshot()
         self._persist(snapshot)
 
-    def sent_messages(self) -> list:
+    def sent_messages(self, owner: Optional[str] = None) -> list:
+        """[owner] is a user_sub — None (the default) returns every
+        message ever stored, across every identity, matching this
+        method's original behavior (kept so existing single-identity
+        callers/tests need no change). Pass an explicit owner to scope
+        to one identity's own sent messages only — the real fix
+        multi-identity support needed: every entry already carries its
+        own `owner` field (see `delete_conversation`'s/`mark_read`'s own
+        owner filtering below), this method just never filtered by it
+        before now."""
         with self._lock:
-            return list(self._sent)
+            all_sent = list(self._sent)
+        if owner is None:
+            return all_sent
+        return [m for m in all_sent if m.get("owner") == owner]
 
-    def received_messages(self) -> list:
+    def received_messages(self, owner: Optional[str] = None) -> list:
+        """See `sent_messages`'s own doc comment — same contract."""
         with self._lock:
-            return list(self._received)
+            all_received = list(self._received)
+        if owner is None:
+            return all_received
+        return [m for m in all_received if m.get("owner") == owner]
 
     def update_sent(
         self,
@@ -111,6 +128,26 @@ class MessageStore:
             self._sent     = [m for m in self._sent     if _keep_sent(m)]
             self._received = [m for m in self._received if _keep_recv(m)]
             removed = before - len(self._sent) - len(self._received)
+            snapshot = self._snapshot()
+        self._persist(snapshot)
+        return removed
+
+    def delete_owner(self, owner: str) -> list:
+        """Removes every sent+received message belonging to [owner],
+        regardless of counterparty — the real backing for multi-identity's
+        "deleting an identity also deletes its message history" cascade
+        (orchestrator.py's `delete_identity()`), a genuinely different
+        operation from `delete_conversation` above (that one is scoped
+        to a single counterparty; this one is scoped to a single
+        identity's entire history). Returns the removed entries, same
+        "caller cleans up attachment files" contract as `purge_expired`
+        — this module has no concept of attachment files on disk, that's
+        `messaging.py`'s job."""
+        with self._lock:
+            removed = [m for m in self._sent if m.get("owner") == owner]
+            removed += [m for m in self._received if m.get("owner") == owner]
+            self._sent = [m for m in self._sent if m.get("owner") != owner]
+            self._received = [m for m in self._received if m.get("owner") != owner]
             snapshot = self._snapshot()
         self._persist(snapshot)
         return removed

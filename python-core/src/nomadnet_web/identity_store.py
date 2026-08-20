@@ -41,14 +41,32 @@ def _dest_hash_hex(identity) -> str:
     per explicit design direction — a genuinely different value from
     the identity's own raw hash (identity.hexhash) — see
     AnnounceStatus.identityHash's own doc comment on the Kotlin side for
-    why those two are kept distinct elsewhere in this app too."""
-    try:
-        import RNS
-        full_name = RNS.Destination.app_and_aspects_to_name("lxmf", "delivery")
-        dest_hash = RNS.Destination.hash_from_name_and_identity(full_name, identity)
-        return RNS.hexrep(dest_hash, delimit=False)
-    except Exception:
-        return identity.hexhash
+    why those two are kept distinct elsewhere in this app too.
+
+    Real, found-and-fixed bug (2026-08-19): this used to call
+    `RNS.Destination.app_and_aspects_to_name(...)`, which doesn't exist
+    on the installed RNS 1.3.9's `Destination` class at all (confirmed
+    directly against its source — no such method) — every call silently
+    raised `AttributeError`, caught by this function's own broad
+    `except Exception`, and fell through to the `identity.hexhash`
+    fallback below. That fallback made this function *look* like it was
+    working (it always returned a stable, valid-looking 32-hex-char
+    string) while actually always returning the wrong value — the
+    identity's own raw hash, not its LXMF address — for every identity
+    ever created or imported. `RNS.Destination.hash(identity, app_name,
+    *aspects)` is the real, correct API (confirmed as exactly what
+    `Destination.__init__` itself calls to compute `self.hash`), used
+    directly here instead of round-tripping through a name string at
+    all. Harmless in practice for this function's own two callers
+    (`_default_display_name`/`_default_icon_appearance` only need *some*
+    stable per-identity hex string to pick nibbles from, not
+    specifically the real address) — but genuinely wrong for any caller
+    that actually wants the real LXMF address, which is exactly what
+    surfaced this: `list_identities_json()`'s `dest_hash_hex` field
+    could never show a correct address until this was found."""
+    import RNS
+    dest_hash = RNS.Destination.hash(identity, "lxmf", "delivery")
+    return RNS.hexrep(dest_hash, delimit=False)
 
 
 # Fun, deterministic identity flavor — every new identity gets a name and
@@ -167,6 +185,8 @@ class IdentityStore:
         self._dir = os.path.join(base_dir, "identities")
         self._store_file = os.path.join(self._dir, "store.yml")
         self._data: dict = {}
+        # See get_active_user_sub()/_load()'s own doc comments.
+        self._active_user_sub: str = ""
         os.makedirs(self._dir, exist_ok=True)
         self._load()
 
@@ -180,7 +200,7 @@ class IdentityStore:
     def get(self, identity_id: str) -> Optional[dict]:
         return self._data.get(identity_id)
 
-    def create(self, name: str = "", user_sub: str = "") -> dict:
+    def create(self, name: str = "", user_sub: Optional[str] = "") -> dict:
         """Generate a new RNS keypair, store it, return the metadata entry.
 
         If `name` is empty, defaults to a fun "<Verb>-<Adjective>-
@@ -190,12 +210,24 @@ class IdentityStore:
         rather than left unset. Both are just *initial* values — renaming
         or picking a different icon later overwrites them exactly like
         any other edit would.
+
+        [user_sub] of `None` (distinct from the default `""`) means "use
+        this new identity's own hexhash as its user_sub" — multi-identity
+        support's real convention for every identity beyond this app's
+        original single default one (see orchestrator.py's
+        `_active_user_sub` doc comment): a natural, collision-free key
+        that decouples `user_sub` from any real multi-tenant meaning.
+        Resolved here (not by the caller reaching into this store's own
+        internals afterward) since the value isn't known until the
+        keypair is actually generated below.
         """
         import RNS
         identity = RNS.Identity()
         key_file = os.path.join(self._dir, f"{identity.hexhash}.id")
         identity.to_file(key_file)
         dest_hash_hex = _dest_hash_hex(identity)
+        if user_sub is None:
+            user_sub = identity.hexhash
         if not name:
             name = _default_display_name(identity)
         entry = {
@@ -233,6 +265,86 @@ class IdentityStore:
         self._save()
         log.info("Created identity '%s' (%s)", name, identity.hexhash[:16])
         return entry
+
+    def import_identity(self, key_bytes: bytes, name: str = "", user_sub: Optional[str] = None) -> dict:
+        """Import an existing RNS keypair from raw bytes (a `.identity`
+        file's real on-disk contents, or bytes read from another
+        device's export). Same on-disk format `RNS.Identity.to_file()`
+        writes and `create()` already uses — confirmed cross-compatible
+        with Columba's own `.identity` export/import (its
+        `IdentityFileReader.kt` expects the identical raw private-key
+        byte layout), so a file exported from either app imports
+        cleanly into the other.
+
+        Raises ValueError if [key_bytes] isn't a valid RNS identity
+        (wrong size / unparseable) — same "let the caller find out"
+        contract as this module's other real-failure paths, so the
+        Kotlin-side importIdentity() call can surface a real reason
+        rather than silently no-opping on a corrupt/wrong file.
+
+        If an identity with this exact hexhash already exists, its
+        existing entry is returned unchanged rather than creating a
+        duplicate — importing a file you already have is a no-op, not
+        an error.
+        """
+        import RNS
+        identity = RNS.Identity.from_bytes(key_bytes)
+        if identity is None:
+            raise ValueError("Not a valid Reticulum identity file")
+        if user_sub is None:
+            user_sub = identity.hexhash
+
+        existing = self._data.get(identity.hexhash)
+        if existing is not None:
+            return existing
+
+        key_file = os.path.join(self._dir, f"{identity.hexhash}.id")
+        identity.to_file(key_file)
+        dest_hash_hex = _dest_hash_hex(identity)
+        entry = {
+            "id":            identity.hexhash,
+            "name":          name or _default_display_name(identity),
+            "icon":          _default_icon_appearance(identity),
+            "key_file":      key_file,
+            "nodes":         [],
+            "created":       time.time(),
+            "dest_hash_hex": dest_hash_hex,
+            "user_sub":      user_sub,
+        }
+        self._data[identity.hexhash] = entry
+        self._save()
+        log.info("Imported identity '%s' (%s)", entry["name"], identity.hexhash[:16])
+        return entry
+
+    def export_key_bytes(self, identity_id: str) -> Optional[bytes]:
+        """Raw bytes of this identity's own `.id` key file, for sharing
+        as a real `.identity` export — the counterpart to
+        `import_identity` above. None if the identity or its key file
+        doesn't exist."""
+        entry = self._data.get(identity_id)
+        if not entry:
+            return None
+        key_file = entry.get("key_file", "")
+        if not key_file or not os.path.exists(key_file):
+            return None
+        with open(key_file, "rb") as fh:
+            return fh.read()
+
+    def get_active_user_sub(self) -> str:
+        """The user_sub of the identity multi-identity switching should
+        treat as active on this and future app starts — persisted here
+        (not Kotlin-side DataStore) since every other piece of
+        identity-related persisted state already lives in this same
+        store.yml. Defaults to "" (this app's original single-identity
+        default) for any store that predates this field, so an existing
+        install's one identity is still correctly "active" with no
+        migration step needed — see _load()'s own doc comment for the
+        actual on-disk migration."""
+        return self._active_user_sub
+
+    def set_active_user_sub(self, user_sub: str) -> None:
+        self._active_user_sub = user_sub
+        self._save()
 
     def ensure_for_user(self, user_sub: str, display_name: str = "") -> dict:
         """Return the identity for this user, creating one if none exists yet.
@@ -326,6 +438,22 @@ class IdentityStore:
         except Exception as exc:
             log.error("Could not load identity %s: %s", identity_id[:16], exc)
             return None
+
+    def get_dest_hash_hex(self, identity_id: str) -> Optional[str]:
+        """The real LXMF delivery address for a stored identity — loads
+        it (`load_rns_identity`) and computes it live (`_dest_hash_hex`)
+        rather than trusting `entry["dest_hash_hex"]`, which is real but
+        stale for any identity created before that helper's own bug fix
+        (see its own doc comment) and is never retroactively corrected
+        on disk. The real public entry point for anything outside this
+        module that needs an identity's LXMF address —
+        orchestrator.py's `list_identities_json()` is the one real
+        caller so far. None if the identity doesn't exist or its key
+        file can't be loaded."""
+        identity = self.load_rns_identity(identity_id)
+        if identity is None:
+            return None
+        return _dest_hash_hex(identity)
 
     def check_cooldown(self, identity_id: str) -> tuple[bool, str, float]:
         """Check the announce cooldown and update last_announced if allowed.
@@ -454,10 +582,27 @@ class IdentityStore:
     # ------------------------------------------------------------------
 
     def _load(self) -> None:
-        if os.path.exists(self._store_file):
-            with open(self._store_file, "r", encoding="utf-8") as fh:
-                self._data = yaml.safe_load(fh) or {}
+        if not os.path.exists(self._store_file):
+            return
+        with open(self._store_file, "r", encoding="utf-8") as fh:
+            raw = yaml.safe_load(fh) or {}
+        if "identities" in raw and isinstance(raw.get("identities"), dict):
+            # Current on-disk shape: {"identities": {hexhash: entry,
+            # ...}, "active_user_sub": "..."}.
+            self._data = raw["identities"]
+            self._active_user_sub = raw.get("active_user_sub", "") or ""
+        else:
+            # Every store.yml written before active-identity tracking
+            # existed is just the flat {hexhash: entry, ...} dict
+            # directly at the top level — [raw] itself, no wrapper.
+            # Loaded as-is (no explicit migration step needed);
+            # _active_user_sub stays "" (this app's original
+            # single-identity default, __init__'s own initial value),
+            # and the next _save() call naturally rewrites the file in
+            # the current wrapped shape.
+            self._data = raw
+            self._active_user_sub = ""
 
     def _save(self) -> None:
         with open(self._store_file, "w", encoding="utf-8") as fh:
-            yaml.dump(self._data, fh)
+            yaml.dump({"identities": self._data, "active_user_sub": self._active_user_sub}, fh)

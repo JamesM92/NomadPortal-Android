@@ -140,6 +140,16 @@ _started = False
 _base_dir: str = ""
 _site_server = None  # nomadnet_web.site_server.SiteServer instance, only while hosting is on
 
+# Multi-identity support — the user_sub of whichever identity is
+# currently active (see IdentityStore.get_active_user_sub()'s own doc
+# comment for why this is persisted there, not here). Every function
+# below that used to hardcode user_sub="" now reads this instead — ""
+# remains the correct value for every existing install's one identity,
+# since IdentityStore.create()'s own default first identity is always
+# user_sub="". See switch_active_identity() for the real activate/
+# deactivate mechanics.
+_active_user_sub: str = ""
+
 # Multiple, independently addressable TCP connections — replaces the
 # original single hardcoded-hub design (see RealInterfaceController.kt's
 # old TODO). Each entry: {"id", "name", "host", "port", "enabled"}.
@@ -167,7 +177,52 @@ _tcp_master_enabled = True
 _tcp_default_seeded = False
 
 
-def start(base_dir: str) -> None:
+def _write_transport_config(rns_dir: str, enable_transport: bool) -> None:
+    """Ensures `<rns_dir>/config` has the requested `enable_transport`
+    value, written/patched *before* `RNS.Reticulum()` is ever
+    constructed (see `start()`'s own doc comment for why this can't be
+    a live toggle). Two cases, both via `config_gen.py`'s own real
+    text-patching helpers (never previously invoked by this Android
+    app — see that module's own file):
+
+    - No config file yet (fresh install / fresh identity dir): seed one
+      from `config_gen._DEFAULT_CONFIG`, patched to the requested value.
+      RNS would otherwise auto-generate its own default config on first
+      run (real, but with `enable_transport = False` baked in, which
+      this function is specifically here to override before that
+      happens).
+    - A config file already exists (returning install): read it, patch
+      just the `enable_transport` line via `config_gen._set_transport`
+      (a pure text transform — every other line is left untouched), and
+      write it back.
+
+    Best-effort: a read/write failure here is logged, not raised — this
+    app already ran for a long time with no config-file involvement at
+    all (RNS's own auto-generated default), so falling through to that
+    same behavior on an I/O error is a safe, already-proven fallback,
+    not a new failure mode.
+    """
+    from nomadnet_web.config_gen import _DEFAULT_CONFIG, _set_transport
+    config_path = os.path.join(rns_dir, "config")
+    try:
+        if os.path.exists(config_path):
+            with open(config_path, "r", encoding="utf-8") as fh:
+                text = fh.read()
+        else:
+            text = _DEFAULT_CONFIG
+        patched = _set_transport(text, enable_transport)
+        with open(config_path, "w", encoding="utf-8") as fh:
+            fh.write(patched)
+        log.info("RNS config: enable_transport=%s", enable_transport)
+    except Exception:
+        log.exception(
+            "Could not write enable_transport=%s to RNS config — "
+            "falling through to RNS's own default config generation",
+            enable_transport,
+        )
+
+
+def start(base_dir: str, enable_transport: bool = False) -> None:
     """One-time startup. Idempotent — a second call is a no-op and logs
     instead of raising, since Android may call this more than once
     across Activity/Application lifecycle events.
@@ -180,9 +235,23 @@ def start(base_dir: str) -> None:
     favorites.json/etc. (NodeBrowser's own state) land directly under
     `base_dir`, matching the original Docker layout's
     config_dir/reticulum convention.
+
+    `enable_transport` — RNS's own transport-node mode ("relay other
+    people's mesh traffic, not just your own"), the real backing for
+    Settings' "Advanced" transport-node toggle. This is an init-time-
+    only RNS decision — like everything else about `RNS.Reticulum()`,
+    it can't be flipped live once constructed (this module's own
+    singleton-constraint doc comment above), so the config file needs
+    the right value written *before* NodeBrowser (and therefore
+    RNS.Reticulum()) is ever constructed below. Uses `config_gen.py`'s
+    own real `_set_transport`/`_DEFAULT_CONFIG` — that module predates
+    this Android app's own extraction (ported from the original
+    multi-user Flask app) and was never actually invoked here until
+    this, its own first real caller.
     """
     global _browser, _identity_store, _message_store, _contact_store
     global _messaging, _lxmf_tracker, _call_tracker, _call_manager, _prop_sync, _started, _base_dir
+    global _active_user_sub
 
     with _lock:
         if _started:
@@ -195,6 +264,7 @@ def start(base_dir: str) -> None:
 
     rns_dir = os.path.join(base_dir, "reticulum")
     os.makedirs(rns_dir, exist_ok=True)
+    _write_transport_config(rns_dir, enable_transport)
 
     from nomadnet_web.browser import NodeBrowser
     from nomadnet_web.identity_store import IdentityStore
@@ -215,16 +285,22 @@ def start(base_dir: str) -> None:
     _browser = NodeBrowser(config_dir=rns_dir)
 
     _identity_store = IdentityStore(rns_dir)
-    # Single local user (user_sub=""), no auth — the only value every
-    # method across browser.py/messaging.py/contact_store.py actually
-    # defaults to, and the only one anything here ever passes. Must
-    # happen before setup_delivery() below: LXMRouter registration is
-    # per-identity, and without an identity existing yet,
-    # list_identities() is empty and zero routers get created, silently
-    # breaking send/receive until something happens to call this later.
-    # Pure local keypair generation — no RNS.Reticulum()/network
-    # dependency, safe to do here rather than gating on wait_ready().
+    # Bootstraps this app's original default identity (user_sub="") if
+    # this is a fresh install with no identity at all yet — every
+    # existing install already has this one from before multi-identity
+    # existed. Must happen before setup_delivery() below: LXMRouter
+    # registration is per-identity, and without an identity existing
+    # yet, list_identities() is empty and zero routers get created,
+    # silently breaking send/receive until something happens to call
+    # this later. Pure local keypair generation — no
+    # RNS.Reticulum()/network dependency, safe to do here rather than
+    # gating on wait_ready().
     _identity_store.ensure_for_user("")
+    # Which identity setup_delivery() below should actually bring up —
+    # persisted by IdentityStore itself (see its own doc comment),
+    # defaulting to "" for any store that predates active-identity
+    # tracking, so an existing install's one identity is unaffected.
+    _active_user_sub = _identity_store.get_active_user_sub()
     _message_store = MessageStore(base_dir)
     _contact_store = ContactStoreManager(base_dir)
     _messaging = MessagingService(
@@ -282,7 +358,10 @@ def _run_deferred_setup() -> None:
         # start_announce_loop() below, plus a send-time staleness check
         # in send_message() — see this module's announce-section doc
         # comment for the full design.
-        ("LXMF delivery setup", lambda: _messaging.setup_delivery(_identity_store)),
+        (
+            "LXMF delivery setup",
+            lambda: _messaging.setup_delivery(_identity_store, only_user_sub=_active_user_sub),
+        ),
         ("LXMF auto-announce loop", start_announce_loop),
         ("LXMF propagation sync service", _prop_sync.start),
         ("LXMF tracker registration", _register_lxmf_tracker),
@@ -351,7 +430,7 @@ def _start_call_manager() -> None:
     """
     if _identity_store is None or _call_manager is None:
         return
-    entry = _identity_store.get_for_user("")
+    entry = _identity_store.get_for_user(_active_user_sub)
     if entry is None:
         log.warning("Call engine startup skipped — no local identity yet")
         return
@@ -362,6 +441,16 @@ def _start_call_manager() -> None:
     import RNS
     _call_manager.start(RNS, identity)
     _call_manager.announce()
+    # "Calls from contacts only" real enforcement wiring — see
+    # set_calls_contacts_only()'s own doc comment. Re-wired on every
+    # call-manager start (including a future identity switch, if this
+    # ever needs to restart) so the checker always reflects the
+    # currently-active identity's own contact store, not a stale one
+    # captured at import time.
+    if _contact_store is not None:
+        _call_manager.set_contact_checker(
+            lambda hash_hex: _contact_store.for_user(_active_user_sub).get(hash_hex) is not None
+        )
 
 
 # Matches LXST's own real Telephone.ANNOUNCE_INTERVAL/ANNOUNCE_INTERVAL_MIN
@@ -1009,7 +1098,7 @@ def _seed_default_tcp_connection_if_needed() -> None:
         # got a chance to run) — don't second-guess either case.
         return
 
-    entry = _identity_store.get_for_user("") if _identity_store else None
+    entry = _identity_store.get_for_user(_active_user_sub) if _identity_store else None
     dest_hash_hex = (entry or {}).get("dest_hash_hex")
     if not dest_hash_hex:
         log.info("No LXMF address hash available yet — skipping default TCP seeding for now")
@@ -1234,7 +1323,7 @@ def get_nodes_json() -> str:
     import json
     if _browser is None:
         return "[]"
-    return json.dumps(_browser.get_nodes(user_sub=""))
+    return json.dumps(_browser.get_nodes(user_sub=_active_user_sub))
 
 
 def fetch_page_text(destination_hash_hex: str, path: str, identify: bool = False) -> str:
@@ -1261,7 +1350,7 @@ def fetch_page_text(destination_hash_hex: str, path: str, identify: bool = False
         raise RuntimeError("Browser not initialized yet")
     identify_with = None
     if identify and _identity_store is not None:
-        entry = _identity_store.get_for_user("")
+        entry = _identity_store.get_for_user(_active_user_sub)
         if entry is not None:
             identify_with = _identity_store.load_rns_identity(entry["id"])
     content, error = _browser.fetch_page(destination_hash_hex, path, identify_with=identify_with)
@@ -1278,7 +1367,7 @@ def set_node_favorite(hash_hex: str, value: bool) -> bool:
     yet; revisit if that gap starts mattering in practice."""
     if _browser is None:
         return False
-    return _browser.set_favorite(hash_hex, value, user_sub="")
+    return _browser.set_favorite(hash_hex, value, user_sub=_active_user_sub)
 
 
 # ---------------------------------------------------------------------------
@@ -1357,9 +1446,9 @@ def _conversation_entries() -> list:
     above) → the hash prefix, as an absolute last resort."""
     if _messaging is None:
         return []
-    sent = _messaging.sent_messages()
-    received = _messaging.received_messages()
-    contacts = _contact_store.for_user("") if _contact_store else None
+    sent = _messaging.sent_messages(user_sub=_active_user_sub)
+    received = _messaging.received_messages(user_sub=_active_user_sub)
+    contacts = _contact_store.for_user(_active_user_sub) if _contact_store else None
     contact_list = contacts.list_contacts() if contacts else []
     peers = _lxmf_tracker.get_peers() if _lxmf_tracker else []
     peers_by_hash = {p["hash"]: p for p in peers}
@@ -1598,7 +1687,7 @@ def set_contact_favorite(hash_hex: str, value: bool) -> bool:
     contacts showed their hash instead of their set display name."""
     if _contact_store is None:
         return False
-    store = _contact_store.for_user("")
+    store = _contact_store.for_user(_active_user_sub)
     if store.get(hash_hex) is None:
         best_name = ""
         if _lxmf_tracker is not None:
@@ -1618,7 +1707,7 @@ def set_contact_blocked(hash_hex: str, value: bool) -> bool:
     flips the stored flag those checks read."""
     if _contact_store is None:
         return False
-    store = _contact_store.for_user("")
+    store = _contact_store.for_user(_active_user_sub)
     if store.get(hash_hex) is None:
         best_name = ""
         if _lxmf_tracker is not None:
@@ -1670,6 +1759,46 @@ def set_messages_contacts_only(enabled: bool) -> None:
     ephemeral like that one."""
     if _messaging is not None:
         _messaging.set_contacts_only_messages(enabled)
+
+
+def set_calls_enabled(enabled: bool) -> None:
+    """Master "Allow incoming voice calls" toggle — a real Columba-parity
+    gap closed here (per explicit direction, after a source-verified
+    audit of Columba's own VoiceCallPermissionsCard turned up its
+    `allowVoiceCalls` setting, which this app hadn't built). Independent
+    of, and enforced *before*, [set_calls_contacts_only] below — this is
+    "no calls at all", not "no calls from strangers". Real enforcement
+    lives in call_manager.py's own `_incoming_link_established` — see
+    that method's own doc comment; a filtered call signals BUSY and
+    hangs up any call already in progress, same "dropped outright"
+    contract as every other privacy-protective toggle in this app.
+
+    In-memory on the Python side (same shape as
+    `set_calls_contacts_only`) — the real persisted copy lives in
+    Kotlin's DataStore (SettingsRepository), replayed at app startup via
+    the same boot-sequence pattern every other privacy-protective toggle
+    already uses."""
+    if _call_manager is not None:
+        _call_manager.set_calls_enabled(enabled)
+
+
+def set_calls_contacts_only(enabled: bool) -> None:
+    """"Calls from contacts only" — the calls-specific counterpart to
+    [set_messages_contacts_only] above, per explicit direction ("the
+    privacy tab should have a separate toggle for messages and phone
+    calls"). Real enforcement lives in call_manager.py's own
+    `_caller_identified`/`_allows_caller` — see that method's own doc
+    comment for why a filtered call signals BUSY rather than a distinct
+    "rejected" status (same privacy reasoning messages' own contacts-
+    only enforcement already applies).
+
+    In-memory on the Python side (same shape as
+    `set_messages_contacts_only`) — the real persisted copy lives in
+    Kotlin's DataStore (SettingsRepository), replayed at app startup via
+    the same boot-sequence pattern every other privacy-protective toggle
+    already uses."""
+    if _call_manager is not None:
+        _call_manager.set_contacts_only(enabled)
 
 
 def set_retry_via_relay(enabled: bool) -> None:
@@ -1755,7 +1884,7 @@ def get_announce_interfaces_json() -> str:
         for p in _lxmf_tracker.get_peers():
             hashes.add(p["hash"])
     if _browser is not None:
-        for n in _browser.get_nodes(user_sub=""):
+        for n in _browser.get_nodes(user_sub=_active_user_sub):
             hashes.add(n["hash"])
 
     result = {}
@@ -1810,7 +1939,7 @@ def rnsh_connect(destination_hash_hex: str) -> str:
     identity = None
     try:
         for user_sub, data in _messaging.active_routers():
-            if user_sub == "":
+            if user_sub == _active_user_sub:
                 identity = data.get("identity")
                 break
     except Exception:
@@ -1891,7 +2020,7 @@ def mark_conversation_unread(contact_hash: str) -> None:
     contact, or a conversation of only messages *we* sent)."""
     if _messaging is None:
         return
-    my_received = [m for m in _messaging.received_messages() if m["source"] == contact_hash]
+    my_received = [m for m in _messaging.received_messages(user_sub=_active_user_sub) if m["source"] == contact_hash]
     if not my_received:
         return
     most_recent = max(my_received, key=lambda m: m["received_at"])
@@ -1927,7 +2056,28 @@ def get_propagation_sync_status_json() -> str:
             "last_synced_at": None, "consecutive_failures": 0, "last_error": None,
             "transfer_state": "idle", "transfer_progress": 0.0, "transfer_last_result": None,
         })
-    return json.dumps(_prop_sync.sync_status(user_sub=""))
+    return json.dumps(_prop_sync.sync_status(user_sub=_active_user_sub))
+
+
+def get_propagation_nodes_json() -> str:
+    """Every propagation node currently known from a real
+    `lxmf.propagation` announce — the "Relays" filter on the Network
+    tab's unified Announces browser (`NetworkScreen.kt`'s
+    `AnnounceTypeFilter.RELAYS`) is backed by this, not by
+    `_conversation_entries()`: a propagation node is a genuinely
+    different kind of destination (its own aspect, its own hash per
+    identity — see call_tracker.py's own doc comment for why aspect
+    changes the hash) from an LXMF delivery peer, so it was never part
+    of that union and needs its own listing.
+
+    `{"nodes": [{"hash", "hops", "first_seen", "last_seen",
+    "announce_count"}, ...]}` — see
+    `PropagationSyncService.get_known_nodes()`'s own doc comment for why
+    there's no name/favorite/blocked field: a propagation node is mesh
+    infrastructure heard via announce, not a saved contact."""
+    import json
+    nodes = _prop_sync.get_known_nodes() if _prop_sync else []
+    return json.dumps({"nodes": nodes})
 
 
 def trigger_propagation_sync() -> str:
@@ -1946,7 +2096,7 @@ def trigger_propagation_sync() -> str:
     are for; poll that after calling this to show live progress."""
     if _prop_sync is None:
         raise RuntimeError("Propagation sync isn't running yet — try again shortly")
-    ok, message = _prop_sync.sync_now(user_sub="")
+    ok, message = _prop_sync.sync_now(user_sub=_active_user_sub)
     if not ok:
         raise RuntimeError(message)
     return message
@@ -1964,7 +2114,7 @@ def set_disappearing_timer(hash_hex: str, seconds: int) -> bool:
     messages already stored."""
     if _contact_store is None:
         return False
-    store = _contact_store.for_user("")
+    store = _contact_store.for_user(_active_user_sub)
     if store.get(hash_hex) is None:
         best_name = ""
         if _lxmf_tracker is not None:
@@ -1982,7 +2132,7 @@ def set_contact_name(hash_hex: str, name: str) -> bool:
     blank."""
     if _contact_store is None:
         return False
-    return _contact_store.for_user("").set_custom_name(hash_hex, name)
+    return _contact_store.for_user(_active_user_sub).set_custom_name(hash_hex, name)
 
 
 def delete_conversation(hash_hex: str) -> bool:
@@ -1996,9 +2146,9 @@ def delete_conversation(hash_hex: str) -> bool:
     metadata about them, not "block" or "forget they exist on the
     network," which isn't a real operation LXMF supports anyway."""
     if _messaging is not None:
-        _messaging.delete_conversation(hash_hex, user_sub="")
+        _messaging.delete_conversation(hash_hex, user_sub=_active_user_sub)
     if _contact_store is not None:
-        _contact_store.for_user("").delete(hash_hex)
+        _contact_store.for_user(_active_user_sub).delete(hash_hex)
     return True
 
 
@@ -2108,7 +2258,7 @@ def _active_announce_configs() -> list:
 def _seconds_since_last_announce() -> Optional[float]:
     if _messaging is None:
         return None
-    last = _messaging.get_announce_status(user_sub="").get("last_announce_at")
+    last = _messaging.get_announce_status(user_sub=_active_user_sub).get("last_announce_at")
     return None if last is None else time.time() - last
 
 
@@ -2142,7 +2292,7 @@ def _check_send_allowed() -> tuple:
 
     any_auto_enabled = any(c["auto_announce_interval_seconds"] > 0 for c in configs)
     if any_auto_enabled:
-        _messaging.do_announce(user_sub="")
+        _messaging.do_announce(user_sub=_active_user_sub)
         return True, None
 
     return False, (
@@ -2164,7 +2314,7 @@ def _announce_loop() -> None:
             continue
         since = _seconds_since_last_announce()
         if since is None or since >= min(c["auto_announce_interval_seconds"] for c in due):
-            _messaging.do_announce(user_sub="")
+            _messaging.do_announce(user_sub=_active_user_sub)
 
 
 def start_announce_loop() -> None:
@@ -2229,6 +2379,13 @@ def get_announce_status_json() -> str:
     announce — see import_scanned_contact()'s own doc comment),
     contacts_only_messages (bool — the live, enforced allowlist-mode
     state; see set_messages_contacts_only()'s own doc comment),
+    calls_contacts_only (bool — the live, enforced allowlist-mode state
+    for incoming voice calls; see set_calls_contacts_only()'s own doc
+    comment — deliberately a separate toggle from contacts_only_messages,
+    not shared),
+    calls_enabled (bool — the live, enforced master "allow incoming
+    voice calls at all" state; see set_calls_enabled()'s own doc comment
+    — independent of, and enforced ahead of, calls_contacts_only above),
     retry_via_relay (bool — the live, enforced retry-on-failure state;
     see set_retry_via_relay()'s own doc comment),
     identity_hash (nullable — the raw RNS Identity hash,
@@ -2247,8 +2404,10 @@ def get_announce_status_json() -> str:
     public_key = None
     contacts_only_messages = False
     retry_via_relay = False
+    calls_contacts_only = _call_manager.get_contacts_only() if _call_manager is not None else False
+    calls_enabled = _call_manager.get_calls_enabled() if _call_manager is not None else True
     if _messaging is not None:
-        status = _messaging.get_announce_status(user_sub="")
+        status = _messaging.get_announce_status(user_sub=_active_user_sub)
         lxmf_address = status.get("lxmf_address")
         last_announce_at = status.get("last_announce_at")
         public_key = status.get("public_key")
@@ -2260,11 +2419,11 @@ def get_announce_status_json() -> str:
     icon_fg = None
     icon_bg = None
     if _identity_store is not None:
-        entry = _identity_store.get_for_user("")
+        entry = _identity_store.get_for_user(_active_user_sub)
         if entry is not None:
             display_name = entry.get("name")
             identity_hash = entry.get("id")
-        icon = _identity_store.get_icon_appearance_for_user("")
+        icon = _identity_store.get_icon_appearance_for_user(_active_user_sub)
         if icon is not None:
             icon_glyph = icon.get("glyph")
             icon_fg = icon.get("fg")
@@ -2299,6 +2458,8 @@ def get_announce_status_json() -> str:
         "lxmf_address": lxmf_address,
         "public_key": public_key,
         "contacts_only_messages": contacts_only_messages,
+        "calls_contacts_only": calls_contacts_only,
+        "calls_enabled": calls_enabled,
         "retry_via_relay": retry_via_relay,
         "identity_hash": identity_hash,
         "hosted_node_hash": hosted_node_hash,
@@ -2317,7 +2478,7 @@ def set_display_name(name: str) -> bool:
     persisted-vs-live-app_data split."""
     if _messaging is None:
         return False
-    return _messaging.set_display_name(name, user_sub="")
+    return _messaging.set_display_name(name, user_sub=_active_user_sub)
 
 
 def set_icon_appearance(glyph: str, fg_hex: str, bg_hex: str) -> bool:
@@ -2328,7 +2489,248 @@ def set_icon_appearance(glyph: str, fg_hex: str, bg_hex: str) -> bool:
     Extended mapping (IconAppearance.kt), fg_hex/bg_hex are '#rrggbb'."""
     if _messaging is None:
         return False
-    return _messaging.set_icon_appearance(glyph, fg_hex, bg_hex, user_sub="")
+    return _messaging.set_icon_appearance(glyph, fg_hex, bg_hex, user_sub=_active_user_sub)
+
+
+## ---------------------------------------------------------------------
+## Multi-identity management (Settings → Identities) — single-active-
+## identity model, matching Columba's own real IdentityRepository
+## (verified against its source, not guessed): exactly one identity's
+## LXMRouter runs at a time; switching cleanly deactivates the previous
+## one via MessagingService.deactivate_user() (LXMRouter.exit_handler())
+## and activates the target via MessagingService.activate_user(). Every
+## other identity-scoped function in this module (conversations,
+## contacts, announce status/display-name/icon above, etc.) reads
+## _active_user_sub, so switching here is what makes those functions'
+## next call reflect a different identity — no separate invalidation
+## needed on the Kotlin side, which already polls all of them.
+## ---------------------------------------------------------------------
+
+def list_identities_json() -> str:
+    """`{"identities": [{"id", "name", "user_sub", "lxmf_address",
+    "icon_glyph", "icon_fg", "icon_bg", "created_at", "is_active"},
+    ...]}`, ordered oldest-created-first (IdentityStore.list_identities()'s
+    own order). `lxmf_address` is the real LXMF delivery address, not
+    `id` (that's identity.hexhash, a different value — see
+    AnnounceStatus.identityHash's own doc comment for why these two are
+    kept distinct everywhere else in this app too) — computed live via
+    `identity_store._dest_hash_hex()`, deliberately NOT read from
+    `entry["dest_hash_hex"]`: that field was found to be permanently
+    wrong for every identity created before `_dest_hash_hex()`'s own
+    real bug was fixed (see that function's own doc comment — it was
+    silently falling back to `identity.hexhash` for every identity ever
+    created). Recomputing live here self-heals every existing install
+    the moment this screen is viewed, with no migration step needed,
+    rather than leaving already-wrong stored values wrong forever."""
+    import json
+    if _identity_store is None:
+        return json.dumps({"identities": []})
+    out = []
+    for entry in _identity_store.list_identities():
+        try:
+            lxmf_address = _identity_store.get_dest_hash_hex(entry["id"])
+        except Exception:
+            log.warning("list_identities_json: could not compute LXMF address for %s", entry["id"][:16], exc_info=True)
+            lxmf_address = None
+        public_key_hex = None
+        identity = _identity_store.load_rns_identity(entry["id"])
+        if identity is not None:
+            try:
+                # A static property of the keypair itself, not tied to
+                # whether this identity has a live router right now — so
+                # unlike AnnounceStatus.publicKeyHex (only ever populated
+                # for the *active* identity, since it's read off a live
+                # LXMRouter), this works for every identity in the list.
+                # Lets IdentitiesScreen.kt offer QR sharing for any
+                # identity, not just the active one.
+                public_key_hex = identity.get_public_key().hex()
+            except Exception:
+                log.warning("list_identities_json: could not read public key for %s", entry["id"][:16], exc_info=True)
+        else:
+            log.warning("list_identities_json: could not load RNS identity for %s", entry["id"][:16])
+        icon = entry.get("icon") or {}
+        out.append({
+            "id": entry["id"],
+            "name": entry.get("name", ""),
+            "user_sub": entry.get("user_sub", ""),
+            "lxmf_address": lxmf_address,
+            "public_key_hex": public_key_hex,
+            "icon_glyph": icon.get("glyph"),
+            "icon_fg": icon.get("fg"),
+            "icon_bg": icon.get("bg"),
+            "created_at": entry.get("created"),
+            "is_active": entry.get("user_sub", "") == _active_user_sub,
+        })
+    return json.dumps({"identities": out})
+
+
+def create_identity(name: str) -> str:
+    """Creates a brand-new identity (fresh RNS keypair) — does NOT
+    switch to it; call switch_active_identity() separately, same
+    "create, then explicitly activate" split Columba's own
+    IdentityManagerViewModel uses. `user_sub` is the new identity's own
+    `identity.hexhash` (see this module's `_active_user_sub` doc
+    comment for why — decouples "user_sub" from any real multi-tenant
+    meaning going forward, every new identity just uses its own hash as
+    its storage-scoping key). Returns the new identity's id (hexhash) on
+    success; raises RuntimeError if identity storage isn't ready yet."""
+    if _identity_store is None:
+        raise RuntimeError("Identity storage is not ready yet")
+    entry = _identity_store.create(name, user_sub=None)
+    return entry["id"]
+
+
+def switch_active_identity(identity_id: str) -> str:
+    """Deactivates the current identity's router (real teardown —
+    MessagingService.deactivate_user(), see its own doc comment) and
+    activates [identity_id]'s (MessagingService.activate_user()) —
+    true single-active-identity switching, matching Columba's real
+    IdentityRepository.switchActiveIdentity() ("deactivate all others,
+    activate the specified one"). Persists the new active user_sub via
+    IdentityStore.set_active_user_sub() so it survives an app restart.
+
+    Raises RuntimeError if [identity_id] doesn't exist or messaging
+    isn't ready yet, same "let the caller find out" contract as this
+    module's other real-failure bridge functions. A no-op (returns
+    immediately, no teardown/reactivation) if [identity_id] is already
+    active — switching to yourself shouldn't drop and rebuild a
+    perfectly good live router."""
+    global _active_user_sub
+    if _identity_store is None or _messaging is None:
+        raise RuntimeError("Not ready yet")
+    entry = _identity_store.get(identity_id)
+    if entry is None:
+        raise RuntimeError("Identity not found")
+    target_user_sub = entry.get("user_sub", "")
+    if target_user_sub == _active_user_sub:
+        return target_user_sub
+
+    _messaging.deactivate_user(_active_user_sub)
+    _messaging.activate_user(entry)
+    _active_user_sub = target_user_sub
+    _identity_store.set_active_user_sub(_active_user_sub)
+    log.info("Switched active identity to %s", identity_id[:16])
+    return _active_user_sub
+
+
+def rename_identity(identity_id: str, name: str) -> bool:
+    """Renames any identity, active or not. If [identity_id] happens to
+    be the currently-active one, also refreshes the *live* router's
+    announce name immediately (MessagingService.refresh_router_display_name)
+    — same "an announce made right after doesn't still carry the old
+    name" guarantee set_display_name() already gave the old
+    single-identity Appearance-section editor, now preserved for the
+    identity that replaced it (IdentitiesScreen.kt)."""
+    if _identity_store is None or not name:
+        return False
+    entry = _identity_store.get(identity_id)
+    if not _identity_store.rename(identity_id, name):
+        return False
+    if entry is not None and entry.get("user_sub", "") == _active_user_sub and _messaging is not None:
+        _messaging.refresh_router_display_name(_active_user_sub, name)
+    return True
+
+
+def set_identity_icon(identity_id: str, glyph: str, fg_hex: str, bg_hex: str) -> bool:
+    if _identity_store is None:
+        return False
+    return _identity_store.set_icon_appearance(identity_id, glyph, fg_hex, bg_hex)
+
+
+def delete_identity(identity_id: str) -> str:
+    """Deletes an identity's keypair/metadata AND its own message
+    history/contacts/favorites — a real, permanent cascade delete,
+    matching Columba's own real IdentityRepository.deleteIdentity()
+    ("cascade delete will remove all associated data: conversations,
+    contacts, etc."). Per explicit direction, this replaced an earlier
+    "history stays recoverable via re-import" design — deleting an
+    identity now means its history is genuinely gone, not just orphaned.
+    `.identity` export (import_identity_file()/export_identity_file_bytes())
+    is the only way to preserve a copy of the *keypair* going
+    forward — it was never a message/contact backup mechanism, only an
+    identity-transfer one.
+
+    If it was the active one, falls back to a freshly-created
+    replacement identity and switches to it immediately — mirrors
+    IdentityStore.reset()'s own "always have at least one identity"
+    shape, since this app has no concept of "no identity at all"
+    anywhere else (every other function here assumes _active_user_sub
+    resolves to something real).
+
+    Returns the (possibly new, if a fallback was created) active
+    identity's id. Raises RuntimeError if identity storage isn't ready
+    yet."""
+    global _active_user_sub
+    if _identity_store is None:
+        raise RuntimeError("Identity storage is not ready yet")
+    entry = _identity_store.get(identity_id)
+    if entry is None:
+        raise RuntimeError("Identity not found")
+    was_active = entry.get("user_sub", "") == _active_user_sub
+    deleted_user_sub = entry.get("user_sub", "")
+
+    if was_active and _messaging is not None:
+        _messaging.deactivate_user(_active_user_sub)
+
+    _identity_store.delete(identity_id)
+
+    # Cascade: this identity's own message history and contacts/
+    # favorites, keyed by its user_sub — independent of whether it was
+    # the active one. Best-effort (log, don't raise) so a storage
+    # hiccup here doesn't leave the identity itself half-deleted.
+    if _messaging is not None:
+        try:
+            _messaging.delete_identity_data(deleted_user_sub)
+        except Exception:
+            log.exception("delete_identity: failed to purge message history for %s", identity_id[:16])
+    if _contact_store is not None:
+        try:
+            _contact_store.delete_user(deleted_user_sub)
+        except Exception:
+            log.exception("delete_identity: failed to purge contacts for %s", identity_id[:16])
+
+    if not was_active:
+        return _active_user_sub
+
+    remaining = _identity_store.list_identities()
+    fallback = remaining[0] if remaining else _identity_store.create("", user_sub=None)
+
+    if _messaging is not None:
+        _messaging.activate_user(fallback)
+    _active_user_sub = fallback.get("user_sub", "")
+    _identity_store.set_active_user_sub(_active_user_sub)
+    log.info("Deleted active identity %s, fell back to %s", identity_id[:16], fallback["id"][:16])
+    return _active_user_sub
+
+
+def import_identity_file(key_bytes, name: str) -> str:
+    """Imports a raw `.identity` key file's bytes (from Kotlin's own
+    file-picker read, or a Columba-exported file — see
+    IdentityStore.import_identity()'s own doc comment for the confirmed
+    cross-app byte-format compatibility) as a new, inactive identity.
+    Does NOT switch to it — same "import, then explicitly activate"
+    split as create_identity(). Raises ValueError (bad file) or
+    RuntimeError (storage not ready) with a UI-displayable reason."""
+    if _identity_store is None:
+        raise RuntimeError("Identity storage is not ready yet")
+    # Chaquopy hands a Kotlin ByteArray across as a Python `bytes`-like
+    # proxy in most call shapes, but bytes() here makes the actual type
+    # explicit/safe regardless — same defensive cast this app's call-
+    # audio path already needed once for a real ByteArray→bytes gotcha
+    # (see the competitor-research memory's Phase 1a/1b bug list).
+    entry = _identity_store.import_identity(bytes(key_bytes), name=name, user_sub=None)
+    return entry["id"]
+
+
+def export_identity_file_bytes(identity_id: str):
+    """Raw bytes of one identity's `.id` key file, for Kotlin to hand to
+    a FileProvider share-sheet intent (same pattern
+    AttachmentFileProvider.kt already established for sharing app-owned
+    files) — the real `.identity` export. None if the identity doesn't
+    exist."""
+    if _identity_store is None:
+        return None
+    return _identity_store.export_key_bytes(identity_id)
 
 
 def set_auto_announce_master(enabled: bool) -> None:
@@ -2391,7 +2793,7 @@ def announce_now() -> str:
     import json
     if _messaging is None:
         return json.dumps({"success": False, "message": "Messaging not initialized yet"})
-    success, message = _messaging.do_announce(user_sub="")
+    success, message = _messaging.do_announce(user_sub=_active_user_sub)
     return json.dumps({"success": success, "message": message})
 
 
@@ -2449,7 +2851,7 @@ def mark_conversation_read(contact_hash: str) -> None:
     per currently-unread message in the conversation."""
     if _messaging is None:
         return
-    for m in _messaging.received_messages():
+    for m in _messaging.received_messages(user_sub=_active_user_sub):
         if m["source"] == contact_hash and not m.get("read", False):
             _messaging.mark_read(m["id"])
 
