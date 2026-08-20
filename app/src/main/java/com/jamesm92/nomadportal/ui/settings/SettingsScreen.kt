@@ -1,6 +1,12 @@
 package com.jamesm92.nomadportal.ui.settings
 
+import android.Manifest
+import android.content.ActivityNotFoundException
 import android.content.ClipData
+import android.content.Intent
+import android.net.Uri
+import android.os.Build
+import android.provider.Settings
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.Image
@@ -12,6 +18,7 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxHeight
@@ -30,22 +37,41 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowForward
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Badge
+import androidx.compose.material.icons.filled.Bluetooth
+import androidx.compose.material.icons.filled.Call
+import androidx.compose.material.icons.filled.Campaign
 import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Dns
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.ExpandLess
 import androidx.compose.material.icons.filled.ExpandMore
+import androidx.compose.material.icons.filled.Info
+import androidx.compose.material.icons.filled.Notifications
+import androidx.compose.material.icons.filled.Palette
 import androidx.compose.material.icons.filled.PowerSettingsNew
 import androidx.compose.material.icons.filled.QrCode
+import androidx.compose.material.icons.filled.Router
+import androidx.compose.material.icons.filled.Security
+import androidx.compose.material.icons.filled.SettingsInputAntenna
+import androidx.compose.material.icons.filled.Tune
+import androidx.compose.material.icons.filled.Wifi
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Badge
 import androidx.compose.material3.BadgedBox
 import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -73,11 +99,13 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.ClipEntry
 import androidx.compose.ui.platform.LocalClipboard
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
@@ -89,16 +117,23 @@ import com.jamesm92.nomadportal.connectivity.InterfaceController
 import com.jamesm92.nomadportal.connectivity.TcpConnection
 import com.jamesm92.nomadportal.connectivity.TcpConnectionsRepository
 import com.jamesm92.nomadportal.data.SettingsRepository
+import com.jamesm92.nomadportal.data.ThemeMode
+import com.jamesm92.nomadportal.data.identity.IdentityRepository
 import com.jamesm92.nomadportal.data.messaging.AnnounceStatus
+import com.jamesm92.nomadportal.data.rnsh.RnshHistoryRepository
 import com.jamesm92.nomadportal.data.messaging.ContactIcon
 import com.jamesm92.nomadportal.data.messaging.ICON_APPEARANCE_NAMES
 import com.jamesm92.nomadportal.data.messaging.InterfaceAnnounceConfig
 import com.jamesm92.nomadportal.data.messaging.MdiIconRepository
 import com.jamesm92.nomadportal.data.messaging.MessagingRepository
 import com.jamesm92.nomadportal.data.messaging.materialIconFor
+import com.jamesm92.nomadportal.notifications.MessageNotificationController
 import com.jamesm92.nomadportal.panicwipe.PanicWipe
 import com.jamesm92.nomadportal.permissions.BLUETOOTH_PERMISSIONS
 import com.jamesm92.nomadportal.permissions.hasBluetoothPermissions
+import com.jamesm92.nomadportal.permissions.hasPostNotificationsPermission
+import com.jamesm92.nomadportal.permissions.hasRecordAudioPermission
+import com.jamesm92.nomadportal.permissions.isIgnoringBatteryOptimizations
 import com.jamesm92.nomadportal.ui.components.AdaptiveTopAppBar
 import com.jamesm92.nomadportal.ui.components.CompactTextField
 import com.jamesm92.nomadportal.ui.components.MicronColorPicker
@@ -108,12 +143,14 @@ import com.jamesm92.nomadportal.ui.components.SearchField
 import com.jamesm92.nomadportal.ui.components.VerticalScrollIndicator
 import com.jamesm92.nomadportal.ui.components.buildIdentityQrPayload
 import com.jamesm92.nomadportal.ui.components.generateQrBitmap
+import com.jamesm92.nomadportal.util.AppRestart
 import com.jamesm92.nomadportal.ui.theme.NomadAccent
 import com.jamesm92.nomadportal.ui.theme.NomadBg3
 import com.jamesm92.nomadportal.ui.theme.NomadMono
 import com.jamesm92.nomadportal.ui.theme.NomadTextDim
 import com.jamesm92.nomadportal.ui.theme.NomadWarn
 import kotlin.math.roundToInt
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
 /**
@@ -156,17 +193,26 @@ fun SettingsScreen(
     settingsRepository: SettingsRepository,
     messagingRepository: MessagingRepository,
     tcpConnectionsRepository: TcpConnectionsRepository,
+    identityRepository: IdentityRepository,
+    rnshHistoryRepository: RnshHistoryRepository,
     onManageHostedPages: () -> Unit,
     onOpenRnshTerminal: () -> Unit,
+    onOpenIdentities: () -> Unit,
+    onOpenBlockedContacts: () -> Unit,
+    onOpenAbout: () -> Unit,
 ) {
     val context = LocalContext.current
     val focusManager = LocalFocusManager.current
     val scope = rememberCoroutineScope()
 
     val textScale by settingsRepository.textScale.collectAsState(initial = SettingsRepository.DEFAULT_TEXT_SCALE)
+    val themeMode by settingsRepository.themeMode.collectAsState(initial = ThemeMode.SYSTEM)
     val announceStatus by messagingRepository.announceStatus().collectAsState(initial = null)
+    val conversations by messagingRepository.conversations().collectAsState(initial = emptyList())
     val hostedNodeStatus by interfaceController.hostedNodeStatus().collectAsState(initial = null)
     val tcpConnections by tcpConnectionsRepository.connections().collectAsState(initial = emptyList())
+    val identities by identityRepository.identities().collectAsState(initial = emptyList())
+    val rnshHistory by rnshHistoryRepository.history().collectAsState(initial = emptyList())
 
     val tcpEnabled by interfaceController.tcpEnabled.collectAsState()
     val bluetoothMeshEnabled by interfaceController.bluetoothMeshEnabled.collectAsState()
@@ -265,7 +311,18 @@ fun SettingsScreen(
                 .pointerInput(Unit) { detectTapGestures(onTap = { focusManager.clearFocus() }) }
                 .padding(innerPadding),
         ) {
-            LazyColumn(modifier = Modifier.fillMaxSize(), state = listState) {
+            LazyColumn(
+                modifier = Modifier.fillMaxSize(),
+                state = listState,
+                // Columba's own real Settings screen (verified directly
+                // against its source) puts every section in a rounded
+                // Card with 16dp gaps and 16dp outer padding, no dividers
+                // — this list now matches that shape exactly, replacing
+                // the flat divided-list layout each CollapsibleSection
+                // used to render on its own.
+                contentPadding = PaddingValues(16.dp),
+                verticalArrangement = Arrangement.spacedBy(16.dp),
+            ) {
                 item {
                     // TCP: duplicate master toggle (on the header, visible
                     // collapsed), the full connection list (add/remove/
@@ -273,6 +330,7 @@ fun SettingsScreen(
                     // Message/Auto announce policy.
                     CollapsibleSection(
                         title = "TCP",
+                        icon = Icons.Filled.Router,
                         expanded = SettingsSection.TCP in expandedSections,
                         onToggleExpanded = { toggleSection(SettingsSection.TCP) },
                         headerTrailing = {
@@ -333,6 +391,7 @@ fun SettingsScreen(
                 item {
                     CollapsibleSection(
                         title = "Bluetooth mesh",
+                        icon = Icons.Filled.Bluetooth,
                         expanded = SettingsSection.BLUETOOTH in expandedSections,
                         onToggleExpanded = { toggleSection(SettingsSection.BLUETOOTH) },
                         headerTrailing = {
@@ -371,6 +430,7 @@ fun SettingsScreen(
                 item {
                     CollapsibleSection(
                         title = "RNode",
+                        icon = Icons.Filled.SettingsInputAntenna,
                         expanded = SettingsSection.RNODE in expandedSections,
                         onToggleExpanded = { toggleSection(SettingsSection.RNODE) },
                         headerTrailing = {
@@ -401,6 +461,7 @@ fun SettingsScreen(
                 item {
                     CollapsibleSection(
                         title = "Local network discovery",
+                        icon = Icons.Filled.Wifi,
                         expanded = SettingsSection.LAN in expandedSections,
                         onToggleExpanded = { toggleSection(SettingsSection.LAN) },
                         headerTrailing = {
@@ -433,12 +494,18 @@ fun SettingsScreen(
                 item {
                     // Rename/announce-interval/manual-announce/manage-pages
                     // — moved here from the now-removed Home screen's own
-                    // HostedNodeSection. The site's address/hash already
-                    // has its own row in Addresses below, so this only
-                    // covers what that doesn't: the site's *name* and its
-                    // actions.
+                    // HostedNodeSection. The site's own address/hash now
+                    // lives here too (AddressRow below) — it used to have
+                    // its own row in a separate "Addresses" section, but
+                    // that section was removed once identity addresses
+                    // moved into IdentitiesScreen (per explicit
+                    // direction), and the site address was never
+                    // identity-related to begin with — its own hosting
+                    // section is a more sensible home for it than a
+                    // resurrected Addresses section would be.
                     CollapsibleSection(
                         title = "Hosting",
+                        icon = Icons.Filled.Dns,
                         expanded = SettingsSection.HOSTING in expandedSections,
                         onToggleExpanded = { toggleSection(SettingsSection.HOSTING) },
                         headerTrailing = {
@@ -459,12 +526,18 @@ fun SettingsScreen(
                                 onManagePages = onManageHostedPages,
                             )
                         }
+                        AddressRow(
+                            label = "Site address",
+                            value = announceStatus?.hostedNodeHash,
+                            placeholder = "Not currently hosting a site",
+                        )
                     }
                 }
 
                 item {
                     CollapsibleSection(
                         title = "Auto Announce",
+                        icon = Icons.Filled.Campaign,
                         expanded = SettingsSection.ANNOUNCE in expandedSections,
                         onToggleExpanded = { toggleSection(SettingsSection.ANNOUNCE) },
                         headerTrailing = {
@@ -502,19 +575,30 @@ fun SettingsScreen(
                 }
 
                 item {
-                    // Per the Columba-parity-audit's own "Messages from
-                    // contacts only" finding (PrivacyCard.kt, confirmed
-                    // during a fresh audit pass) — a proactive allowlist,
-                    // complementing (not replacing) per-contact blocking
-                    // elsewhere in this app. Header-level Switch, same
-                    // "visible even while collapsed" shape as Auto
-                    // Announce's own master toggle above.
+                    // Matches Columba's own real PrivacyCard.kt exactly
+                    // (fetched and verified directly against its source,
+                    // not recalled from memory): messages-contacts-only,
+                    // then calls-contacts-only, then blocked users — all
+                    // three in one Privacy card. An earlier pass had moved
+                    // the calls toggle out into a separate section; that
+                    // was this session's own invented interpretation, not
+                    // what Columba actually does, and got corrected back
+                    // per explicit direction.
                     CollapsibleSection(
                         title = "Privacy",
+                        icon = Icons.Filled.Security,
                         expanded = SettingsSection.PRIVACY in expandedSections,
                         onToggleExpanded = { toggleSection(SettingsSection.PRIVACY) },
-                        headerTrailing = {
-                            announceStatus?.let { status ->
+                    ) {
+                        announceStatus?.let { status ->
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(start = 16.dp, end = 16.dp, top = 4.dp),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically,
+                            ) {
+                                Text(text = "Messages from contacts only", style = MaterialTheme.typography.bodyMedium)
                                 Switch(
                                     checked = status.messagesContactsOnly,
                                     onCheckedChange = {
@@ -522,14 +606,6 @@ fun SettingsScreen(
                                     },
                                 )
                             }
-                        },
-                    ) {
-                        announceStatus?.let { status ->
-                            Text(
-                                text = "Messages from contacts only",
-                                style = MaterialTheme.typography.bodyMedium,
-                                modifier = Modifier.padding(start = 16.dp, end = 16.dp, top = 4.dp),
-                            )
                             Text(
                                 text = if (status.messagesContactsOnly) {
                                     "Only contacts can message you. Messages from unknown " +
@@ -541,64 +617,464 @@ fun SettingsScreen(
                                 color = NomadTextDim,
                                 modifier = Modifier.padding(start = 16.dp, end = 16.dp, bottom = 4.dp),
                             )
+                            HorizontalDivider(modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp))
+                            // Calls-specific counterpart, independent of
+                            // the messages toggle above — matches
+                            // PrivacyCard.kt's own "Calls-from-contacts-
+                            // only toggle row (independent of
+                            // block_unknown_senders)" comment exactly.
+                            // Description text describes our own actual
+                            // enforcement (a real BUSY signal — see
+                            // AnnounceStatus.callsContactsOnly's own doc
+                            // comment) rather than copying Columba's "link
+                            // attempts are silently dropped" wording,
+                            // which describes a different real backend
+                            // behavior than ours.
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(start = 16.dp, end = 16.dp, top = 4.dp),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically,
+                            ) {
+                                Text(text = "Calls from contacts only", style = MaterialTheme.typography.bodyMedium)
+                                Switch(
+                                    checked = status.callsContactsOnly,
+                                    onCheckedChange = {
+                                        scope.launch { messagingRepository.setCallsContactsOnly(it) }
+                                    },
+                                )
+                            }
+                            Text(
+                                text = if (status.callsContactsOnly) {
+                                    "Only contacts can call you. Calls from unknown " +
+                                        "identities get a busy signal, and never ring."
+                                } else {
+                                    "Anyone can call you, including unknown identities."
+                                },
+                                style = MaterialTheme.typography.bodySmall,
+                                color = NomadTextDim,
+                                modifier = Modifier.padding(start = 16.dp, end = 16.dp, bottom = 4.dp),
+                            )
+                            HorizontalDivider(modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp))
+                            // Columba's own real PrivacyCard also carries a
+                            // "blocked users list" (verified against its
+                            // source during this session's own Columba
+                            // settings audit) — this is that. Blocking
+                            // itself already existed (per-contact, via each
+                            // row's own long-press menu); this just adds
+                            // somewhere to see/manage everyone blocked.
+                            val blockedCount = conversations.count { it.contact.isBlocked }
+                            Text(
+                                text = "$blockedCount blocked contact${if (blockedCount == 1) "" else "s"}",
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = NomadTextDim,
+                                modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
+                            )
+                            TextButton(
+                                onClick = onOpenBlockedContacts,
+                                modifier = Modifier.padding(start = 8.dp),
+                            ) { Text("Manage blocked contacts") }
                         }
                     }
                 }
 
                 item {
-                    var showQrDialog by remember { mutableStateOf(false) }
+                    // Matches Columba's own real VoiceCallPermissionsCard.kt
+                    // (fetched and verified directly against its source):
+                    // a card entirely about *device* permission status for
+                    // calling — separate from Privacy's contacts-only
+                    // allowlisting, which is a different concern (who's
+                    // allowed to reach you vs. what the OS lets the app
+                    // do). Columba's real card also tracks "display over
+                    // other apps" and (on Android 14+) "full-screen
+                    // notifications" — both there because Columba launches
+                    // its call UI from a background notification. This
+                    // app's own CallOverlay only ever shows while already
+                    // foregrounded (see its own doc comment), so neither
+                    // permission is real here; only Microphone applies.
+                    // Columba's own card also carries an "allow voice
+                    // calls at all" master toggle (separate from its own
+                    // contacts-only setting) — this app has no such
+                    // feature built, so no toggle is fabricated here
+                    // either; this card is status-only, matching what
+                    // functionality actually exists.
+                    var hasRecordAudioPermission by remember {
+                        mutableStateOf(hasRecordAudioPermission(context))
+                    }
+                    // Columba's own real grant action is a plain
+                    // context.startActivity(intent) to this device's
+                    // app-details Settings page — verified directly
+                    // against VoiceCallPermissionsCard.kt's actual source,
+                    // not a rememberLauncherForActivityResult launcher.
+                    // That distinction matters here, not just for fidelity:
+                    // MainActivity is a FragmentActivity (for BiometricPrompt
+                    // — see its own doc comment), and FragmentActivity's own
+                    // startActivityForResult override enforces a "request
+                    // code must fit in 16 bits" check that every
+                    // ActivityResultRegistry-generated code deliberately
+                    // violates by design (confirmed via ActivityResultRegistry's
+                    // own real source: it always allocates from the upper
+                    // 16 bits, specifically to avoid colliding with
+                    // hand-picked legacy codes) — a genuine upstream
+                    // AndroidX incompatibility, not a flaky one, confirmed
+                    // by reproducing it 6/6 times via a temporary debug
+                    // log. A launcher-based approach here would deterministically
+                    // throw on every tap, caught only by the same defensive
+                    // try/catch already covering other launchers in this
+                    // file. Plain startActivity() never allocates a request
+                    // code at all, so it sidesteps the incompatibility
+                    // entirely instead of merely catching it.
+                    LaunchedEffect(Unit) {
+                        // Matches Columba's own real polling shape exactly
+                        // (an initial 500ms delay, then a 3s loop) — this
+                        // is how it detects the user granting the
+                        // permission via Settings and coming back, since
+                        // plain startActivity() has no result callback to
+                        // react to instead.
+                        delay(500)
+                        hasRecordAudioPermission = hasRecordAudioPermission(context)
+                        while (true) {
+                            delay(3000)
+                            hasRecordAudioPermission = hasRecordAudioPermission(context)
+                        }
+                    }
+                    fun openRecordAudioSettings() {
+                        try {
+                            context.startActivity(
+                                Intent(
+                                    Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
+                                    Uri.parse("package:${context.packageName}"),
+                                ),
+                            )
+                        } catch (e: ActivityNotFoundException) {
+                            // Best-effort — a device with no Settings app
+                            // to open shouldn't crash this screen.
+                        }
+                    }
+
                     CollapsibleSection(
-                        title = "Addresses",
-                        expanded = SettingsSection.ADDRESSES in expandedSections,
-                        onToggleExpanded = { toggleSection(SettingsSection.ADDRESSES) },
-                    ) {
-                        announceStatus?.let { status ->
-                            val canShowQr = status.lxmfAddress != null && status.publicKeyHex != null
-                            AddressRow(
-                                label = "LXMF address",
-                                value = status.lxmfAddress,
-                                onShowQr = if (canShowQr) { { showQrDialog = true } } else null,
-                            )
-                            AddressRow(label = "Identity hash", value = status.identityHash)
-                            AddressRow(
-                                label = "Site address",
-                                value = status.hostedNodeHash,
-                                placeholder = "Not currently hosting a site",
-                            )
-                            if (showQrDialog && canShowQr) {
-                                AddressQrDialog(
-                                    address = status.lxmfAddress,
-                                    publicKeyHex = status.publicKeyHex,
-                                    identityHash = status.identityHash,
-                                    onDismiss = { showQrDialog = false },
+                        title = "Voice Call Permissions",
+                        icon = Icons.Filled.Call,
+                        expanded = SettingsSection.VOICE_CALL_PERMISSIONS in expandedSections,
+                        onToggleExpanded = { toggleSection(SettingsSection.VOICE_CALL_PERMISSIONS) },
+                        headerTrailing = {
+                            // Master "Allow incoming voice calls" toggle —
+                            // matches Columba's own real
+                            // VoiceCallPermissionsCard header layout
+                            // exactly (Switch + chevron together, visible
+                            // even while collapsed). See
+                            // AnnounceStatus.callsEnabled's own doc
+                            // comment; independent of, and enforced ahead
+                            // of, the Calls-from-contacts-only toggle in
+                            // Privacy above.
+                            announceStatus?.let { status ->
+                                Switch(
+                                    checked = status.callsEnabled,
+                                    onCheckedChange = {
+                                        scope.launch { messagingRepository.setCallsEnabled(it) }
+                                    },
                                 )
+                            }
+                        },
+                    ) {
+                        if (announceStatus?.callsEnabled == false) {
+                            // Matches Columba's own real copy for this
+                            // exact state, shown ahead of the permission-
+                            // status content below so the user understands
+                            // why it might not matter right now.
+                            Text(
+                                text = "Incoming voice calls are currently disabled. Outgoing calls still work.",
+                                style = MaterialTheme.typography.bodyMedium,
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(horizontal = 16.dp, vertical = 4.dp),
+                            )
+                        }
+                        // Columba's own card color-codes its whole body
+                        // (secondaryContainer when all-granted,
+                        // errorContainer otherwise) — reproduced here as a
+                        // tinted background behind this section's content,
+                        // without restyling every other section's shared
+                        // CollapsibleSection shell.
+                        val containerColor = if (hasRecordAudioPermission) {
+                            MaterialTheme.colorScheme.secondaryContainer
+                        } else {
+                            MaterialTheme.colorScheme.errorContainer
+                        }
+                        val contentColor = if (hasRecordAudioPermission) {
+                            MaterialTheme.colorScheme.onSecondaryContainer
+                        } else {
+                            MaterialTheme.colorScheme.onErrorContainer
+                        }
+                        Column(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 16.dp)
+                                .clip(RoundedCornerShape(12.dp))
+                                .background(containerColor)
+                                .padding(12.dp),
+                        ) {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            ) {
+                                Icon(
+                                    imageVector = if (hasRecordAudioPermission) {
+                                        Icons.Filled.CheckCircle
+                                    } else {
+                                        Icons.Filled.Close
+                                    },
+                                    contentDescription = if (hasRecordAudioPermission) "Granted" else "Not granted",
+                                    tint = contentColor,
+                                )
+                                Text(
+                                    text = "Microphone",
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    color = contentColor,
+                                )
+                            }
+                            Text(
+                                text = "Required to capture audio during voice calls.",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = contentColor,
+                                modifier = Modifier.padding(start = 28.dp, top = 2.dp),
+                            )
+                            if (!hasRecordAudioPermission) {
+                                Button(
+                                    onClick = { openRecordAudioSettings() },
+                                    modifier = Modifier.padding(start = 28.dp, top = 8.dp),
+                                    colors = ButtonDefaults.buttonColors(
+                                        containerColor = MaterialTheme.colorScheme.error,
+                                    ),
+                                ) { Text("Open Settings") }
                             }
                         }
                     }
                 }
 
                 item {
-                    // Name + icon editing — moved here from the now-removed
-                    // Home screen's own IdentitySection. The identity's
-                    // address/hash already has its own row in Addresses
-                    // above and "Announce now" already has its own row in
-                    // Announce above, so this only covers what neither of
-                    // those does: the identity's *display name* and *icon
-                    // appearance*.
+                    // Columba's own real NotificationSettingsCard
+                    // (verified during this session's own Columba
+                    // settings audit) — this app had no notifications at
+                    // all before. Dual-mode per explicit direction: the
+                    // user gets a real choice between Always-on (a
+                    // foreground service, reliable, persistent
+                    // notification) and Battery-friendly (WorkManager,
+                    // no persistent notification, but Android may delay/
+                    // skip checks under Doze) — see
+                    // MessageNotificationController's own doc comment
+                    // for how the two modes are reconciled.
+                    val notificationsEnabled by settingsRepository.notificationsEnabled
+                        .collectAsState(initial = false)
+                    val notificationsAlwaysOn by settingsRepository.notificationsAlwaysOn
+                        .collectAsState(initial = true)
+                    var hasNotificationPermission by remember {
+                        mutableStateOf(hasPostNotificationsPermission(context))
+                    }
+                    val notificationPermissionLauncher = rememberLauncherForActivityResult(
+                        ActivityResultContracts.RequestPermission(),
+                    ) { granted -> hasNotificationPermission = granted }
+                    var isIgnoringBatteryOpt by remember {
+                        mutableStateOf(isIgnoringBatteryOptimizations(context))
+                    }
+                    val batteryOptLauncher = rememberLauncherForActivityResult(
+                        ActivityResultContracts.StartActivityForResult(),
+                    ) { isIgnoringBatteryOpt = isIgnoringBatteryOptimizations(context) }
+                    // Real, on-device-confirmed crash (same root cause
+                    // already found+fixed once this session for
+                    // IdentitiesScreen's own file-picker launch):
+                    // IllegalArgumentException("Can only use lower 16
+                    // bits for requestCode") — a known AndroidX
+                    // ActivityResultRegistry issue where its internal
+                    // request-code counter can exceed 16 bits on a
+                    // long-lived Activity, unrelated to anything this
+                    // screen does wrong. Every real launcher.launch()
+                    // call in this section goes through these two
+                    // wrappers instead of calling launch() directly, so
+                    // a permission/settings-intent request can't crash
+                    // the whole app over it.
+                    fun requestNotificationPermission() {
+                        try {
+                            notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+                        } catch (e: IllegalArgumentException) {
+                            // Best-effort — nothing more to do than leave
+                            // the existing "permission not granted"
+                            // status row visible; a crash here would be
+                            // far worse than a request that silently
+                            // didn't open.
+                        }
+                    }
+                    fun requestBatteryOptExemption() {
+                        try {
+                            batteryOptLauncher.launch(
+                                Intent(
+                                    Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS,
+                                    Uri.parse("package:${context.packageName}"),
+                                ),
+                            )
+                        } catch (e: IllegalArgumentException) {
+                            // Same best-effort reasoning as above.
+                        }
+                    }
+
+                    CollapsibleSection(
+                        title = "Notifications",
+                        icon = Icons.Filled.Notifications,
+                        expanded = SettingsSection.NOTIFICATIONS in expandedSections,
+                        onToggleExpanded = { toggleSection(SettingsSection.NOTIFICATIONS) },
+                        headerTrailing = {
+                            Switch(
+                                checked = notificationsEnabled,
+                                onCheckedChange = { enabled ->
+                                    scope.launch {
+                                        settingsRepository.setNotificationsEnabled(enabled)
+                                        if (enabled && !hasNotificationPermission &&
+                                            Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU
+                                        ) {
+                                            requestNotificationPermission()
+                                        }
+                                        MessageNotificationController.apply(context, enabled, notificationsAlwaysOn)
+                                    }
+                                },
+                            )
+                        },
+                    ) {
+                        Text(
+                            text = if (notificationsEnabled) {
+                                "Notified about new messages, even while the app is closed."
+                            } else {
+                                "No notifications for new messages."
+                            },
+                            style = MaterialTheme.typography.bodySmall,
+                            color = NomadTextDim,
+                            modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
+                        )
+                        if (notificationsEnabled) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp),
+                                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            ) {
+                                FilterChip(
+                                    selected = notificationsAlwaysOn,
+                                    onClick = {
+                                        scope.launch {
+                                            settingsRepository.setNotificationsAlwaysOn(true)
+                                            MessageNotificationController.apply(context, true, true)
+                                        }
+                                    },
+                                    label = { Text("Always-on") },
+                                )
+                                FilterChip(
+                                    selected = !notificationsAlwaysOn,
+                                    onClick = {
+                                        scope.launch {
+                                            settingsRepository.setNotificationsAlwaysOn(false)
+                                            MessageNotificationController.apply(context, true, false)
+                                        }
+                                    },
+                                    label = { Text("Battery-friendly") },
+                                )
+                            }
+                            Text(
+                                text = if (notificationsAlwaysOn) {
+                                    "A persistent notification keeps the app connected so messages " +
+                                        "arrive in real time."
+                                } else {
+                                    "No persistent notification — Android may delay checks by 15+ " +
+                                        "minutes, or skip them, while the app is backgrounded."
+                                },
+                                style = MaterialTheme.typography.labelSmall,
+                                color = NomadTextDim,
+                                modifier = Modifier.padding(start = 16.dp, end = 16.dp, bottom = 4.dp),
+                            )
+                            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU && !hasNotificationPermission) {
+                                Text(
+                                    text = "Notification permission not granted — nothing will show.",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.error,
+                                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
+                                )
+                                TextButton(
+                                    onClick = { requestNotificationPermission() },
+                                    modifier = Modifier.padding(start = 8.dp),
+                                ) { Text("Grant permission") }
+                            }
+                            if (notificationsAlwaysOn && !isIgnoringBatteryOpt) {
+                                Text(
+                                    text = "For the most reliable delivery, exempt NomadPortal from " +
+                                        "battery optimization too.",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = NomadTextDim,
+                                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
+                                )
+                                TextButton(
+                                    onClick = { requestBatteryOptExemption() },
+                                    modifier = Modifier.padding(start = 8.dp),
+                                ) { Text("Don't optimize") }
+                            }
+                        }
+                    }
+                }
+
+                item {
+                    // Columba's own real IdentityCard → IdentityManagerScreen
+                    // shape (verified against its source) — a compact
+                    // summary here, real create/switch/rename/delete/
+                    // import/export management on its own screen
+                    // (IdentitiesScreen.kt). Distinct from "Appearance"
+                    // below: this section is about *which* identity is
+                    // active; Appearance edits the active one's own
+                    // name/icon, same split Columba draws between its
+                    // IdentityManagerScreen and its per-identity editing.
+                    CollapsibleSection(
+                        title = "Identities",
+                        icon = Icons.Filled.Badge,
+                        expanded = SettingsSection.IDENTITIES in expandedSections,
+                        onToggleExpanded = { toggleSection(SettingsSection.IDENTITIES) },
+                    ) {
+                        val activeName = identities.firstOrNull { it.isActive }?.name
+                        Text(
+                            text = if (activeName != null) {
+                                "${identities.size} identit${if (identities.size == 1) "y" else "ies"} · active: $activeName"
+                            } else {
+                                "${identities.size} identit${if (identities.size == 1) "y" else "ies"}"
+                            },
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = NomadTextDim,
+                            modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
+                        )
+                        Button(
+                            onClick = onOpenIdentities,
+                            modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
+                        ) {
+                            Text("Manage identities")
+                        }
+                    }
+                }
+
+                item {
+                    // Name/icon editing for the active identity used to
+                    // live here (IdentityAppearanceRow) — moved to the
+                    // Identities screen instead (each identity's own row
+                    // there already offers rename + icon editing,
+                    // including the active one), per explicit direction:
+                    // it was redundant to edit the same thing in two
+                    // places. This section is now just what's left that
+                    // isn't identity-specific.
                     CollapsibleSection(
                         title = "Appearance",
+                        icon = Icons.Filled.Palette,
                         expanded = SettingsSection.APPEARANCE in expandedSections,
                         onToggleExpanded = { toggleSection(SettingsSection.APPEARANCE) },
                     ) {
-                        announceStatus?.let { status ->
-                            IdentityAppearanceRow(
-                                status = status,
-                                onRename = { name -> scope.launch { messagingRepository.setDisplayName(name) } },
-                                onSaveIcon = { glyph, fg, bg ->
-                                    scope.launch { messagingRepository.setIconAppearance(glyph, fg, bg) }
-                                },
-                            )
-                        }
+                        // Real Columba-parity gap closed here — this app was
+                        // dark-only before (see Theme.kt's own doc comment
+                        // for the light palette this now offers).
+                        ThemeModeRow(
+                            mode = themeMode,
+                            onModeChange = { scope.launch { settingsRepository.setThemeMode(it) } },
+                        )
                         TextScaleRow(
                             scale = textScale,
                             onScaleChange = { scope.launch { settingsRepository.setTextScale(it) } },
@@ -627,6 +1103,7 @@ fun SettingsScreen(
                     // none should ever be added).
                     CollapsibleSection(
                         title = "Advanced",
+                        icon = Icons.Filled.Tune,
                         expanded = SettingsSection.ADVANCED in expandedSections,
                         onToggleExpanded = { toggleSection(SettingsSection.ADVANCED) },
                     ) {
@@ -642,10 +1119,120 @@ fun SettingsScreen(
                             color = NomadTextDim,
                             modifier = Modifier.padding(start = 16.dp, end = 16.dp, top = 2.dp, bottom = 4.dp),
                         )
-                        TextButton(
+                        // Same "summary line + Manage button" shape as
+                        // the Identities section above, per explicit
+                        // direction — RnshTerminalScreen is already the
+                        // real management surface for remembered
+                        // sessions (rename/delete on its own idle-state
+                        // list), same as it's also where a new
+                        // connection gets started.
+                        val rnshCount = rnshHistory.size
+                        Text(
+                            text = if (rnshCount == 0) {
+                                "No remembered connections yet"
+                            } else {
+                                "$rnshCount remembered connection${if (rnshCount == 1) "" else "s"}"
+                            },
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = NomadTextDim,
+                            modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
+                        )
+                        Button(
                             onClick = onOpenRnshTerminal,
-                            modifier = Modifier.padding(start = 8.dp),
-                        ) { Text("Open remote shell") }
+                            modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
+                        ) { Text("Manage rnsh sessions") }
+
+                        HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
+
+                        // Columba's own real AdvancedCard groups "transport
+                        // node" alongside crash reporting/shared-instance
+                        // hosting (verified during this session's own
+                        // Columba settings audit) — this app has neither of
+                        // those (no telemetry; no shared-RNS-daemon
+                        // concept), so transport mode is the one real piece
+                        // that applies here, grouped the same way.
+                        val transportNodeEnabled by settingsRepository.transportNodeEnabled
+                            .collectAsState(initial = false)
+                        Text(
+                            text = "Transport node",
+                            style = MaterialTheme.typography.bodyLarge,
+                            modifier = Modifier.padding(start = 16.dp, end = 16.dp, top = 4.dp),
+                        )
+                        Text(
+                            text = "Act as a relay for other people's mesh traffic, not just " +
+                                "your own — helps the mesh as a whole, at the cost of some " +
+                                "extra battery/bandwidth. Takes effect after the app restarts.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = NomadTextDim,
+                            modifier = Modifier.padding(start = 16.dp, end = 16.dp, top = 2.dp, bottom = 4.dp),
+                        )
+                        Row(
+                            modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Text(
+                                text = if (transportNodeEnabled) "On" else "Off",
+                                style = MaterialTheme.typography.bodyMedium,
+                                modifier = Modifier.weight(1f),
+                            )
+                            Switch(
+                                checked = transportNodeEnabled,
+                                onCheckedChange = { enabled ->
+                                    scope.launch {
+                                        settingsRepository.setTransportNodeEnabled(enabled)
+                                        AppRestart.restart(context)
+                                    }
+                                },
+                            )
+                        }
+                    }
+                }
+
+                item {
+                    // A single non-collapsible nav row, not a
+                    // CollapsibleSection — About is one nav target, not a
+                    // details panel with its own content to show/hide.
+                    // Still wrapped in the same Card treatment as every
+                    // other section below though (icon, bold title,
+                    // rounded surfaceVariant background) — a bare flat Row
+                    // would look out of place sitting among rounded cards
+                    // now that the rest of this list matches Columba's
+                    // own real card-per-section shape.
+                    Card(
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(12.dp),
+                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
+                    ) {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable(onClick = onOpenAbout)
+                                .padding(horizontal = 16.dp, vertical = 12.dp),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Filled.Info,
+                                    contentDescription = null,
+                                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                                Text(
+                                    text = "About",
+                                    style = MaterialTheme.typography.titleMedium,
+                                    fontWeight = FontWeight.Bold,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                            }
+                            Icon(
+                                imageVector = Icons.AutoMirrored.Filled.ArrowForward,
+                                contentDescription = null,
+                                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
                     }
                 }
             }
@@ -664,66 +1251,100 @@ fun SettingsScreen(
  * single scrollable page — see that function's own doc comment for why
  * this isn't an accordion (multiple sections can be open at once). */
 private enum class SettingsSection {
-    TCP, BLUETOOTH, RNODE, LAN, HOSTING, ANNOUNCE, PRIVACY, ADDRESSES, APPEARANCE, ADVANCED
+    TCP, BLUETOOTH, RNODE, LAN, HOSTING, ANNOUNCE, PRIVACY, VOICE_CALL_PERMISSIONS, NOTIFICATIONS, IDENTITIES, APPEARANCE, ADVANCED
 }
 
 /**
- * One collapsible section of [SettingsScreen]'s single scrollable page.
- * [headerTrailing] renders on the header row itself, to the right of the
- * title — visible even while collapsed, since it's the section's own
- * quick action/status (an enable [Switch]), not part of the expandable
- * detail. Deliberately laid out as two separate tap zones (title+chevron
- * vs. [headerTrailing]) rather than
- * one big clickable row, so tapping a header [Switch] toggles *that
- * interface*, never also expands/collapses the section as a side effect.
+ * One collapsible section of [SettingsScreen]'s single scrollable page —
+ * a real Material3 [Card] with a leading semantic icon per section, per
+ * Columba's own real `CollapsibleSettingsCard.kt` (verified directly
+ * against its source, not recalled/invented — this app's own Settings
+ * screen was a flat divided list before this pass, a real aesthetic gap
+ * closed here per explicit direction). [headerTrailing] renders on the
+ * header row itself, to the right of the title — visible even while
+ * collapsed, since it's the section's own quick action/status (an enable
+ * [Switch]), not part of the expandable detail. Deliberately laid out as
+ * two separate tap zones (icon+title vs. [headerTrailing]+chevron)
+ * rather than one big clickable row, so tapping a header [Switch]
+ * toggles *that interface*, never also expands/collapses the section as
+ * a side effect — the chevron itself gets its own [IconButton] for the
+ * same reason (matches Columba's own real layout, which separately wraps
+ * its chevron rather than leaving it a bare decorative [Icon]).
+ *
+ * The header row insets to exactly 16dp each side, matching every
+ * existing body-content row throughout this file (all already self-pad
+ * to 16dp horizontally — confirmed via a full pass over this file, not
+ * assumed) — deliberately so, rather than also wrapping [content] in its
+ * own 16dp [Card] padding: doing that would double the inset and
+ * visibly misalign expanded body rows from the header's own icon/title,
+ * undermining the exact polish this redesign is for.
  */
 @Composable
 private fun CollapsibleSection(
     title: String,
+    icon: ImageVector,
     expanded: Boolean,
     onToggleExpanded: () -> Unit,
     modifier: Modifier = Modifier,
     headerTrailing: @Composable () -> Unit = {},
     content: @Composable ColumnScope.() -> Unit,
 ) {
-    Column(modifier = modifier.fillMaxWidth()) {
-        Row(
-            modifier = Modifier.fillMaxWidth().padding(start = 8.dp, end = 8.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.SpaceBetween,
-        ) {
+    Card(
+        modifier = modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(12.dp),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
+    ) {
+        Column(modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp)) {
             Row(
-                modifier = Modifier
-                    .weight(1f)
-                    .clickable(onClick = onToggleExpanded)
-                    .padding(vertical = 12.dp, horizontal = 8.dp),
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
                 verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(4.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
             ) {
-                Icon(
-                    imageVector = if (expanded) Icons.Filled.ExpandLess else Icons.Filled.ExpandMore,
-                    contentDescription = if (expanded) "Collapse $title" else "Expand $title",
-                    tint = NomadTextDim,
-                )
-                Text(
-                    text = title,
-                    style = MaterialTheme.typography.titleLarge,
-                    color = MaterialTheme.colorScheme.secondary,
-                    // Confirmed via real on-device check on a 320dp-wide
-                    // reference emulator: "Local network discovery" wraps
-                    // to 2 lines and blows out the header row's height
-                    // without this — a header alongside a Switch/chevron
-                    // needs to stay one line the way a table cell does.
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                )
+                Row(
+                    modifier = Modifier
+                        .weight(1f)
+                        .clickable(onClick = onToggleExpanded)
+                        .padding(vertical = 8.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    Icon(
+                        imageVector = icon,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    Text(
+                        text = title,
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        // Confirmed via real on-device check on a 320dp-wide
+                        // reference emulator: "Local network discovery" wraps
+                        // to 2 lines and blows out the header row's height
+                        // without this — a header alongside a Switch/chevron
+                        // needs to stay one line the way a table cell does.
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(4.dp),
+                ) {
+                    headerTrailing()
+                    IconButton(onClick = onToggleExpanded) {
+                        Icon(
+                            imageVector = if (expanded) Icons.Filled.ExpandLess else Icons.Filled.ExpandMore,
+                            contentDescription = if (expanded) "Collapse $title" else "Expand $title",
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                }
             }
-            headerTrailing()
+            if (expanded) {
+                Column(content = content)
+            }
         }
-        if (expanded) {
-            Column(modifier = Modifier.padding(bottom = 8.dp), content = content)
-        }
-        HorizontalDivider()
     }
 }
 
@@ -734,6 +1355,33 @@ private fun CollapsibleSection(
  * to DataStore on every intermediate drag tick would mean dozens of
  * writes per gesture for no benefit, since only the final value matters.
  */
+/** [ThemeMode] picker — three [FilterChip]s, same shape as the Type/
+ * Network filter-chip rows Network tab's own Announces browser already
+ * established. Real Columba-parity gap closed here (see Theme.kt's own
+ * doc comment for the light palette this now offers). */
+@Composable
+private fun ThemeModeRow(mode: ThemeMode, onModeChange: (ThemeMode) -> Unit) {
+    Column(modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)) {
+        Text(text = "Theme", style = MaterialTheme.typography.bodyLarge)
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            listOf(
+                ThemeMode.SYSTEM to "System",
+                ThemeMode.LIGHT to "Light",
+                ThemeMode.DARK to "Dark",
+            ).forEach { (value, label) ->
+                FilterChip(
+                    selected = mode == value,
+                    onClick = { onModeChange(value) },
+                    label = { Text(label) },
+                )
+            }
+        }
+    }
+}
+
 @Composable
 private fun TextScaleRow(scale: Float, onScaleChange: (Float) -> Unit) {
     var sliderValue by remember(scale) { mutableStateOf(scale) }
@@ -796,8 +1444,12 @@ private fun ToggleRow(
  * per the Columba-parity-audit's "QR-code identity sharing" finding,
  * the address someone would actually want to scan to add you as a
  * contact) adds a second icon button opening [AddressQrDialog]. */
+// No longer private — IdentitiesScreen's own per-identity address
+// detail is a second real caller, per this project's own "promote only
+// after real reuse" convention. Same package (ui.settings), no import
+// needed there.
 @Composable
-private fun AddressRow(
+fun AddressRow(
     label: String,
     value: String?,
     placeholder: String = "Not available yet",
@@ -855,8 +1507,10 @@ private fun AddressRow(
  * fresh Columba-parity-audit pass, not invented). Generated fresh each
  * time this dialog opens (cheap, no need to cache) via [remember] keyed
  * on the payload so it doesn't regenerate every recomposition. */
+// No longer private — same second-real-caller reasoning as AddressRow
+// above.
 @Composable
-private fun AddressQrDialog(
+fun AddressQrDialog(
     address: String,
     publicKeyHex: String,
     identityHash: String?,
@@ -1161,88 +1815,13 @@ private fun InterfaceAnnounceTab(
 }
 
 // ---------------------------------------------------------------------------
-// Identity + hosted-site actions — moved here from the now-removed Home
-// screen (see this file's own top doc comment for why). Everything below
-// this point is either IdentityAppearanceRow/HostedSiteActionsRow
-// themselves or composables only they call.
+// Hosted-site actions — moved here from the now-removed Home screen
+// (see this file's own top doc comment for why). Everything below this
+// point is either HostedSiteActionsRow itself or composables only it
+// calls. (Identity name/icon editing used to live here too —
+// IdentityAppearanceRow — moved to IdentitiesScreen.kt, per explicit
+// direction: it was redundant to edit the same thing in two places.)
 // ---------------------------------------------------------------------------
-
-/**
- * This device's own LXMF identity's *name and icon* — an editable
- * display name and an editable icon appearance. Address/last-announced/
- * manual-announce all have their own rows elsewhere on this tab
- * (Addresses/Announce sections) — this is deliberately narrower than
- * the old Home screen's full IdentitySection, not a verbatim copy of it.
- */
-@Composable
-private fun IdentityAppearanceRow(
-    status: AnnounceStatus,
-    onRename: (String) -> Unit,
-    onSaveIcon: (glyphName: String, foreground: Color, background: Color) -> Unit,
-) {
-    var editingName by remember { mutableStateOf(false) }
-    var nameDraft by remember(status.displayName) { mutableStateOf(status.displayName ?: "") }
-    var editingIcon by remember { mutableStateOf(false) }
-
-    Column(modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp)) {
-        Column(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalAlignment = Alignment.CenterHorizontally,
-        ) {
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(4.dp),
-            ) {
-                if (editingName) {
-                    OutlinedTextField(
-                        value = nameDraft,
-                        onValueChange = { nameDraft = it },
-                        singleLine = true,
-                        modifier = Modifier.weight(1f, fill = false),
-                    )
-                    IconButton(onClick = {
-                        val trimmed = nameDraft.trim()
-                        if (trimmed.isNotEmpty()) onRename(trimmed)
-                        editingName = false
-                    }) {
-                        Icon(Icons.Filled.Check, contentDescription = "Save name")
-                    }
-                    IconButton(onClick = {
-                        nameDraft = status.displayName ?: ""
-                        editingName = false
-                    }) {
-                        Icon(Icons.Filled.Close, contentDescription = "Cancel")
-                    }
-                } else {
-                    Text(
-                        text = status.displayName ?: "Unnamed",
-                        style = MaterialTheme.typography.bodyLarge,
-                    )
-                    IconButton(onClick = { editingName = true }) {
-                        Icon(Icons.Filled.Edit, contentDescription = "Rename")
-                    }
-                }
-            }
-
-            IdentityIconPreview(
-                appearance = status.iconAppearance,
-                onClick = { editingIcon = !editingIcon },
-                modifier = Modifier.padding(top = 6.dp),
-            )
-        }
-
-        if (editingIcon) {
-            IconAppearanceEditor(
-                current = status.iconAppearance,
-                onSave = { glyph, fg, bg ->
-                    onSaveIcon(glyph, fg, bg)
-                    editingIcon = false
-                },
-                onCancel = { editingIcon = false },
-            )
-        }
-    }
-}
 
 /**
  * This device's own hosted NomadNet site's *name and actions* — rename,
@@ -1375,9 +1954,14 @@ private fun formatRelativeAnnounceTime(millis: Long): String {
  * contact's [ContactIcon.Appearance] — duplicated rather than shared
  * since that composable takes a full
  * [com.jamesm92.nomadportal.data.messaging.Contact], which this device's
- * own identity isn't one of. */
+ * own identity isn't one of.
+ *
+ * No longer private — [IdentitiesScreen]'s own per-identity icon
+ * editing is a second real caller, per this project's own "promote only
+ * after real reuse" convention. Same package (`ui.settings`), so no
+ * import needed there. */
 @Composable
-private fun IdentityIconPreview(
+fun IdentityIconPreview(
     appearance: ContactIcon.Appearance?,
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
@@ -1524,9 +2108,13 @@ private fun CompactIconRow(
  * off-screen below a tall list): the list is the only other thing
  * visible while it's open, so Save is always right below it, never
  * buried under two more open sections above.
+ *
+ * No longer private — [IdentitiesScreen]'s own per-identity icon
+ * editing is a second real caller, same reasoning as
+ * [IdentityIconPreview]'s own doc comment.
  */
 @Composable
-private fun IconAppearanceEditor(
+fun IconAppearanceEditor(
     current: ContactIcon.Appearance?,
     onSave: (glyphName: String, foreground: Color, background: Color) -> Unit,
     onCancel: () -> Unit,
