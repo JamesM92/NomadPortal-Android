@@ -1,32 +1,82 @@
 # NomadPortal-Android
 
-> ⚠️ **This project is "vibe coded"** — built in collaboration with an AI
-> assistant. The author is not a security expert, and this code (including
-> the parts that handle cryptographic identity, permissions, and untrusted
-> network input) has not had a professional security audit. Treat it
-> accordingly, especially before relying on it for anything sensitive.
-> **Security-minded review, auditing, and improvements are genuinely
-> welcome** — please open an issue or PR, or see
-> [`SECURITY.md`](SECURITY.md) to report a vulnerability privately.
-
-A native Android app for browsing, hosting, and editing
-[NomadNet](https://github.com/markqvist/NomadNet) (Reticulum) pages — an
-independent, open-source alternative to
-[Sideband](https://github.com/markqvist/Sideband) with a broader feature
-set. A from-scratch rewrite inspired by
+A native Android app for messaging, calling, and browsing/hosting
+[NomadNet](https://github.com/markqvist/NomadNet) pages over
+[Reticulum](https://github.com/markqvist/Reticulum) — a mesh network that
+needs no internet, no cell signal, no servers, and no accounts.[^1] An
+independent, open-source project, and a from-scratch rewrite inspired by
 [`jamesm92/nomadportal`](https://github.com/JamesM92/nomadportal) (the
 author's existing Flask-based web portal for the same protocol stack), not a
 port of its Flask/Jinja layer.
 
-**Status: early scaffold.** Working Chaquopy-embedded Python interpreter
-(with `rns`/`lxmf` installed and verified importing on-device — see
-"Toolchain versions" below), a Settings screen with real connectivity/
-hosting toggles and a panic-wipe gesture, but no browsing, hosting, or
-editor functionality yet — those are blocked on `micron2compose` (a
-separate sibling project) and the RNS/LXMF core extraction from
-`nomadportal`. See
-[`nomadportal_android_handoff.md`](nomadportal_android_handoff.md) for the
-full architecture and build sequencing.
+**Status: early beta.** Everything below is real and working on-device, not
+aspirational — see [`nomadportal_android_handoff.md`](nomadportal_android_handoff.md)
+for the full architecture and build sequencing.
+
+## Screenshots
+
+<table>
+<tr>
+<td><img src="docs/screenshots/messages-unread.png" width="220" alt="Messages tab with unread badges on Favorites and General messages"></td>
+<td><img src="docs/screenshots/sites-fetch-status.png" width="220" alt="Sites tab showing the four fetch-status indicators: fetched OK, degraded, failed, and never attempted"></td>
+<td><img src="docs/screenshots/network-announces.png" width="220" alt="Network tab's live, filterable Announces browser"></td>
+<td><img src="docs/screenshots/settings.png" width="220" alt="Settings screen's card-based layout"></td>
+</tr>
+<tr>
+<td align="center">Messages — unread badges</td>
+<td align="center">Sites — fetch status</td>
+<td align="center">Network — live announces</td>
+<td align="center">Settings</td>
+</tr>
+</table>
+
+## What You Can Do
+
+- **Message without infrastructure** — LXMF messaging that works over
+  whatever medium is available, with no server, account, or internet
+  connection required.
+- **Make voice calls** — real-time voice over Reticulum.
+- **Browse, host, and edit NomadNet pages** — a full Micron page renderer
+  and a dual-mode (rich-text or raw) on-device editor, so you can run your
+  own site from your phone, not just view other people's.
+- **Connect however you're reachable** — TCP, Bluetooth mesh, RNode (LoRa
+  radio), and local Wi-Fi discovery, each independently toggleable.
+- **Manage multiple identities on one device** — switch between them
+  cleanly, each with its own isolated messages, contacts, and favorites.
+- **Keep messages and calls private by default** — a contacts-only
+  allowlist for each (separately), per-contact blocking, and disappearing
+  messages. Location is never requested, period.
+- **Wipe everything in an emergency** — a real panic-wipe gesture that
+  securely erases identity, message, and contact data on-device.
+- **Reach another device's shell remotely** — a built-in `rnsh` client for
+  terminal access over Reticulum, no separate app required.
+
+## Getting Started
+
+Download the latest APK from [Releases](../../releases/latest) and install
+it on your Android device (you'll need to allow installs from this source,
+since it isn't on the Play Store).
+
+**This is currently a debug build, not a signed release** — there's no
+release keystore set up yet, so Android will flag it as debuggable/
+untrusted. That's expected and fine for an early beta; see the footnote
+above for the fuller "vibe coded, no security audit" context before
+relying on it for anything sensitive. No installable release exists yet
+for anything other than Android.
+
+## About Reticulum & NomadNet
+
+[Reticulum](https://github.com/markqvist/Reticulum) is a networking stack
+for building encrypted, resilient mesh networks over almost any medium —
+LoRa radio, packet radio, Wi-Fi, TCP, even data-over-audio — designed for
+low-bandwidth, high-latency links rather than assuming a fast always-on
+internet connection underneath. [LXMF](https://github.com/markqvist/LXMF)
+is the peer-to-peer message format this app sends messages with.
+[NomadNet](https://github.com/markqvist/NomadNet) is the original desktop
+client and page-hosting protocol this app is compatible with: Micron
+(`.mu`) pages served directly off someone's own device, no web host
+involved. This app lets you browse, host, and edit those pages from your
+phone.
 
 ## Architecture
 
@@ -98,3 +148,14 @@ Sideband itself.
 See [`SECURITY.md`](SECURITY.md) for the threat model, vulnerability
 reporting process, and what CI enforces on every PR (CodeQL, dependency
 review, Gradle wrapper validation).
+
+---
+
+[^1]: **This project is "vibe coded"** — built in collaboration with an AI
+    assistant. The author is not a security expert, and this code
+    (including the parts that handle cryptographic identity, permissions,
+    and untrusted network input) has not had a professional security
+    audit. Treat it accordingly, especially before relying on it for
+    anything sensitive. **Security-minded review, auditing, and
+    improvements are genuinely welcome** — please open an issue or PR, or
+    see [`SECURITY.md`](SECURITY.md) to report a vulnerability privately.

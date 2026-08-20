@@ -1,0 +1,79 @@
+name: Release
+
+# Beta-stage distribution: builds the same debug APK CI already verifies
+# on every push (see ci.yml's own "Assemble debug APK" step) and attaches
+# it to a GitHub Release, so testers have somewhere to actually download
+# it from instead of needing a full Android build toolchain. Deliberately
+# NOT a signed release build — no keystore/secrets setup exists yet, and
+# per explicit direction a debug-signed beta APK is an acceptable
+# distribution method for now. Revisit (real release keystore, a
+# `assembleRelease` signing config, Play Store) once this project is past
+# early beta.
+#
+# Triggered by pushing a tag matching v* (e.g. v0.0.1) — never runs on an
+# ordinary push/PR, so cutting a release is always a deliberate, separate
+# action from normal development.
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write # only this workflow needs it, to create the Release — ci.yml's own jobs stay read-only.
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    # See ci.yml's identical env var/comment for why this exists.
+    env:
+      MICRON2COMPOSE_DIR: micron2compose
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      # See ci.yml's identical step for why this is needed, why `dev` is
+      # pinned, and why `path` is a subdirectory not `../...`.
+      - name: Checkout micron2compose (composite-build dependency)
+        uses: actions/checkout@v7
+        with:
+          repository: JamesM92/micron2compose
+          ref: dev
+          path: micron2compose
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      # See ci.yml's identical step for why this must match
+      # app/build.gradle.kts's chaquopy.version exactly.
+      - name: Set up build-time Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v6
+
+      - name: Assemble debug APK
+        run: ./gradlew assembleDebug --no-daemon
+
+      # Renamed (not just uploaded as-is) so the download itself carries
+      # the version and the fact that it's a debug build, not something a
+      # tester has to already know from context.
+      - name: Rename APK for release
+        run: |
+          mkdir -p release-out
+          cp app/build/outputs/apk/debug/app-debug.apk \
+            "release-out/NomadPortal-Android-${GITHUB_REF_NAME}-debug.apk"
+
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "${GITHUB_REF_NAME}" \
+            release-out/*.apk \
+            --title "NomadPortal-Android ${GITHUB_REF_NAME}" \
+            --notes "Early beta. **This is a debug build, not a signed release APK** — there's no release keystore set up yet, so Android will show this as a debuggable/untrusted-source install. Appropriate for beta testers, not general distribution. See the README for what's actually working and the security disclaimer." \
+            --prerelease
