@@ -72,7 +72,7 @@ START_ANNOUNCE_DELAY = 6        # seconds after start before first announce
 # own TentPortalMark (AppLogo.kt) — generated offline via
 # github.com/JamesM92/Img2ContourAscii (contour/shape-matching, not
 # plain brightness-to-character mapping) against a from-source PIL
-# reproduction of that composable's exact Canvas geometry, at --cols 20
+# reproduction of that composable's exact Canvas geometry, at --cols 30
 # with --color --palette-size 4 --hysteresis 0.5 (a small, real palette
 # matched to the mark's own actual colors — NomadAccent's tent blue,
 # NomadPortalPurple's doorway, the seam/guy-line shade, background —
@@ -88,7 +88,29 @@ START_ANNOUNCE_DELAY = 6        # seconds after start before first announce
 # font than the real target renderer actually uses, so identical content
 # needed more width there than it would in a real NomadNet client. Fixed
 # there directly (font-size parity, not just this art's own size) plus
-# --cols 20 here for real margin. That tool is GPL-3.0 — same real
+# --cols 20 here for real margin.
+#
+# Per explicit direction ("make the ascii art of our logo 50% bigger"),
+# --cols 30 (a real, literal 50% bump from 20). Trying this first
+# surfaced what looked like a real regression (the same phone this
+# whole sizing history is about needed real horizontal scrolling to
+# read even plain paragraph text below the art) — but that turned out
+# to be a different, pre-existing bug this art's own resize just
+# happened to expose: this page's prose paragraphs (see
+# _DEFAULT_INDEX's own doc comment below) were single unwrapped lines
+# ~500 characters long, already the real widest content on the page by
+# a wide margin over anything the art itself was doing at any col
+# count. Fixed that at the actual root (hard-wrapping the prose, not
+# shrinking the art) — confirmed via an actual on-device fresh-install
+# browse that --cols 30 fits fine once the prose isn't competing for
+# width anymore. Also regenerated from a from-source PIL reproduction
+# that had itself drifted stale relative to three later real on-device
+# fixes to TentPortalMark's own geometry (stake Y, guy-line draw order,
+# guy-anchor anti-aliasing nudge — see draw_logo.py's own doc comment,
+# kept offline alongside the rest of this generation pipeline) — this
+# art had quietly been built from the *old*, pre-fix logo shape ever
+# since, without anyone noticing until this resync. That tool is
+# GPL-3.0 — same real
 # license-conflict reasoning already documented on DEFAULT_EXAMPLES_PAGE
 # below applies here, so it's used purely as an offline one-time
 # generator, never imported or shipped as a runtime dependency; only its
@@ -137,20 +159,61 @@ START_ANNOUNCE_DELAY = 6        # seconds after start before first announce
 # been the artwork's own "'''" divider line). Left-aligned, not
 # `c-centered — Micron's centering strips/recomputes leading whitespace
 # per line, which would destroy this art's column alignment.
-_LOGO_ASCII_ART = """         `F367r<`f
-        `F5acd><b`f
-       `F367<`f`F5acU><U`f`F367>`f
-      `F367-`f`F5acdU><Ub`f`F367-`f
-     `F367-`f`F5acuUUL)UUe`f`F367-`f
-     `F367:`f`F5acU}`f`F96ciuc|`f`F5acAU`f`F367:`f
-    `F367!`f`F5acUU`f`F96cvUUUUc`f`F5acU&`f`F367!`f
-   `F367:`f`F5acdU&`f`F96c|UUUUc`f`F5acUUb`f`F367:`f
-    `F5acUU&`f`F96c|UUUUc`f`F5acUUU`f`F367-:`f
-  `F367!`f `F5acUU&`f`F96c|UUUUc`f`F5acUUU`f `F367!`f
- `F367v`f  `F5acUU&`f`F96c|UUUUc`f`F5acUUU`f  `F367v`f
-`F367:`f                  `F367:`f
-`F367!`f                  `F367!`f"""
+_LOGO_ASCII_ART = """              `F367->`f
+             `F367.!!:`f
+             `F5acU`f`F367>-`f`F5acU`f`F367_`f
+            `F5acdU`f`F367>-`f`F5acU&`f
+           `F5acdUU`f`F367>-`f`F5acUUb`f
+          `F5acdUUU`f`F367>-`f`F5acUUUb`f
+         `F5acuUUUU`f`F367>-`f`F5acUUUUo`f
+        `F367v`f`F5acUUUUU`f`F367>-`f`F5acUUUUU`f`F367c`f
+       `F367.`f`F5acUUUUAV`f`F96c:cf`f`F5acAUUUU`f`F367:`f
+      `F367.`f`F5acUUUUV`f`F96cuiiiic|`f`F5acUUUU`f`F367.`f
+      `F5acUUUUE`f`F96ciiiiiiic`f`F5acVUUU&`f
+     `F367:`f`F5acUUUU`f`F96cniiiiiiii!`f`F5acUUUU`f`F367:`f
+    `F367!-`f`F5acUUUU`f`F96c!iiiiiiii!`f`F5acUUUU`f`F367-!`f
+   `F367v!`f `F5acUUUU`f`F96c!iiiiiiii!`f`F5acUUUU`f `F367!v`f
+  `F367v!`f  `F5acUUUU`f`F96c!iiiiiiii!`f`F5acUUUU`f  `F367!v`f
+ `F367:!`f   `F5acUUUU`f`F96c!iiiiiiii!`f`F5acUUUU`f   `F367!v`f
+`F367:!`f    `F5acUUUU`f`F96c!iiiiiiii!`f`F5acUUUU`f    `F367!:`f
+`F367!`f     `F5acYYYY`f`F96c!YYYYYYYY!`f`F5acYYYY`f     `F367!`f"""
 
+# Real bug found while chasing what looked at first like a logo-sizing
+# regression (a "make the art 50% bigger" request): the actual widest
+# line on this whole page — by a wide margin, ~500 raw characters vs.
+# the art's own ~50 — was always the prose paragraphs below, written as
+# single long unwrapped lines. MicronPage renders with softWrap=false
+# (confirmed via BrowserScreen.kt's own real horizontalScroll/
+# TextMeasurer-sized-contentWidth setup — this app never reflows Micron
+# text, matching real NomadNet client behavior, since Micron itself has
+# no reflow concept), so the whole page's content width is sized to its
+# single widest line — meaning these paragraphs, not the art, were what
+# forced real horizontal scrolling even for plain text on an actual
+# on-device fresh-install browse. Every paragraph/bullet below is now
+# hard-wrapped at a real terminal-safe width (~44 characters, tuned
+# down from an initial ~48 after an on-device check found even that
+# still needed a few characters of horizontal scroll on the exact
+# MIN_MICRON_CONTENT_WIDTH-floor phone this is all about) with
+# literal newlines, matching how real NomadNet page authors actually
+# write body text for a format that never reflows client-side — not a
+# workaround, the correct way to author a Micron page. Re-wrap by hand
+# if this content changes again; there's no automated re-wrap step.
+#
+# Headings need their *own*, much narrower budget than body text, for
+# the same width-measurement reason — confirmed directly against
+# BrowserScreen.kt's own real contentWidth calculation, not guessed:
+# every block renders in the same monospace font, but a `>>` heading
+# measures at 20sp and `>` at 24sp against body text's ~12sp
+# (bodyMedium * 0.85), so a heading's real on-screen width is roughly
+# 1.7x/2x its own character count, not 1x. A 34-character `>>` heading
+# ("Why this page is boring on purpose") was, on its own, wider than
+# every hard-wrapped body paragraph below it despite looking short —
+# shortened to "Boring on purpose" instead of wrapped, since a heading
+# wrapping onto a second line reads as two separate headings, not one.
+# This app's own `>` H1 title line ("NomadPortal-Android") is close to
+# this same real limit purely from the app's own name length — a
+# structural cost of the H1 being what it is, not something wrapping
+# can fix, and not something this pass changed.
 _DEFAULT_INDEX = """>NomadPortal-Android
 `cA native Android app for Reticulum & NomadNet`a
 
@@ -160,37 +223,88 @@ _DEFAULT_INDEX = """>NomadPortal-Android
 
 -
 
-`!Open beta`! -- this app works and this page is proof, but it's still under active development. Expect rough edges, and expect things to keep changing. If that's not what you're looking for today, check back later; if it is, keep reading.
+`!Open beta`! -- this app works and this page is
+proof, but it's still under active
+development. Expect rough edges, and expect
+things to keep changing. If that's not what
+you're looking for today, check back later;
+if it is, keep reading.
 
 -
 
-If you're reading this from another NomadNet client, you've found a real, live instance of NomadPortal-Android -- this page is being served from an ordinary Android phone in someone's pocket, not a server. It's a native Kotlin/Compose app built around the real, embedded Reticulum and LXMF reference implementations (not a reimplementation), for infrastructure-free mesh communication -- a different project from the original NomadPortal Docker server, which is built for infrastructure you administer, not for carrying around.
+If you're reading this from another NomadNet
+client, you've found a real, live instance
+of NomadPortal-Android -- this page is being
+served from an ordinary Android phone in
+someone's pocket, not a server. It's a
+native Kotlin/Compose app built around the
+real, embedded Reticulum and LXMF reference
+implementations (not a reimplementation),
+for infrastructure-free mesh communication
+-- a different project from the original
+NomadPortal Docker server, which is built
+for infrastructure you administer, not for
+carrying around.
 
 >>What it does
 
-• Message people over LXMF: text, photos, audio, and files
-• Browse and host NomadNet pages, like this one
-• Connect over TCP and local Wi-Fi discovery, with Bluetooth mesh and RNode/LoRa support in progress
-• A panic-wipe safeguard that securely erases identity and message data in seconds
+• Message people over LXMF: text, photos,
+  audio, and files
+• Browse and host NomadNet pages, like this
+  one
+• Connect over TCP and local Wi-Fi discovery,
+  with Bluetooth mesh and RNode/LoRa support
+  in progress
+• A panic-wipe safeguard that securely erases
+  identity and message data in seconds
 • Never asks for location access, full stop
 
 >>Why get it
 
-If you're already on Reticulum, this is a way to carry your identity, contacts, and a node in your pocket instead of leaving them on a machine somewhere -- no separate server to run, no infrastructure to maintain, just a phone. If you're new to Reticulum and NomadNet, this page you're looking at right now is a real example of what the network actually looks like in practice: an ordinary phone, hosting a real page, reachable over whatever link happens to connect the two of you.
+If you're already on Reticulum, this is a
+way to carry your identity, contacts, and a
+node in your pocket instead of leaving them
+on a machine somewhere -- no separate server
+to run, no infrastructure to maintain, just
+a phone. If you're new to Reticulum and
+NomadNet, this page you're looking at right
+now is a real example of what the network
+actually looks like in practice: an ordinary
+phone, hosting a real page, reachable over
+whatever link happens to connect the two of
+you.
 
-There's no app-store listing yet -- get it directly from the source, build it yourself, and see exactly what's running: https://github.com/JamesM92/NomadPortal-Android
+There's no app-store listing yet -- get it
+directly from the source, build it yourself,
+and see exactly what's running:
+https://github.com/JamesM92/NomadPortal-Android
 
->>Why this page is boring on purpose
+>>Boring on purpose
 
-Pages hosted by NomadPortal-Android are plain Micron markup only -- no Python, no executables, ever. A real NomadNet server can run scripts to build pages dynamically; this app deliberately never does, because a phone carried in someone's pocket is a different trust boundary than a server an operator administers directly. What you're reading is exactly the file it is, nothing more.
+Pages hosted by NomadPortal-Android are
+plain Micron markup only -- no Python, no
+executables, ever. A real NomadNet server
+can run scripts to build pages dynamically;
+this app deliberately never does, because a
+phone carried in someone's pocket is a
+different trust boundary than a server an
+operator administers directly. What you're
+reading is exactly the file it is, nothing
+more.
 
 >>Permissions
 
-Every permission this app requests is optional -- denying any of them just turns that one feature off, the rest of the app keeps working normally. It never requests location access, under any circumstances.
+Every permission this app requests is
+optional -- denying any of them just turns
+that one feature off, the rest of the app
+keeps working normally. It never requests
+location access, under any circumstances.
 
 -
 
-`[See examples.mu on this node`/page/examples.mu] for a quick tour of what this page's own markup can do.
+`[See examples.mu on this node`/page/examples.mu]
+for a quick tour of what this page's own
+markup can do.
 """
 
 # A real file (not a synthetic fallback like _DEFAULT_INDEX above) —

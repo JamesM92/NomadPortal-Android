@@ -121,6 +121,47 @@ fun IdentitiesScreen(repository: IdentityRepository, onBack: () -> Unit) {
         }
     }
 
+    // Which identity "Save as…" is exporting — CreateDocument's own
+    // launcher callback only gets the destination Uri back, not any
+    // context about which row triggered it, so this is set right before
+    // launch() and read back once the picker returns.
+    var saveAsTarget by remember { mutableStateOf<Identity?>(null) }
+
+    // A real destination picker (ACTION_CREATE_DOCUMENT under the hood),
+    // not a hardcoded write into the device's Downloads collection —
+    // per explicit direction ("make it a real save as"), matching what
+    // importLauncher above already offers on the read side (browse to
+    // any folder a document provider can reach, not just one fixed
+    // location). Replaces the old "Save to device" behavior entirely;
+    // "Share" (below, in IdentityRow) is unrelated and unchanged — it's
+    // still the real share-sheet hand-off to another app.
+    val saveAsLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.CreateDocument("application/octet-stream"),
+    ) { uri: Uri? ->
+        val target = saveAsTarget
+        saveAsTarget = null
+        if (uri == null || target == null) return@rememberLauncherForActivityResult
+        scope.launch {
+            val bytes = repository.exportIdentity(target.id)
+            if (bytes == null) {
+                errorMessage = "Couldn't export this identity"
+                return@launch
+            }
+            val ok = withContext(Dispatchers.IO) {
+                try {
+                    context.contentResolver.openOutputStream(uri)?.use { it.write(bytes) } != null
+                } catch (e: Exception) {
+                    false
+                }
+            }
+            if (ok) {
+                statusMessage = "Saved \"${target.name}\""
+            } else {
+                errorMessage = "Couldn't save this identity"
+            }
+        }
+    }
+
     Scaffold(
         topBar = {
             AdaptiveTopAppBar(
@@ -184,37 +225,21 @@ fun IdentitiesScreen(repository: IdentityRepository, onBack: () -> Unit) {
                             onEditIcon = { iconTarget = identity },
                             onRename = { renameTarget = identity },
                             onSaveToDevice = {
-                                scope.launch {
-                                    val fileName = "${identity.name.ifBlank { identity.id.take(8) }}.identity"
-                                    val bytes = repository.exportIdentity(identity.id)
-                                    if (bytes == null) {
-                                        errorMessage = "Couldn't export this identity"
-                                        return@launch
-                                    }
-                                    // Straight to the device's own Downloads
-                                    // collection via MediaStore, no
-                                    // share-sheet round trip — see
-                                    // AttachmentFileProvider.saveToDownloads's
-                                    // own doc comment for why this needs no
-                                    // storage permission on this app's
-                                    // minSdk. A real on-device report found
-                                    // the share-only export unreliable for
-                                    // actually landing a local copy (many
-                                    // share targets don't write to storage
-                                    // at all, they just forward the URI).
-                                    val tempFile = File(context.cacheDir, fileName)
-                                    withContext(Dispatchers.IO) { tempFile.writeBytes(bytes) }
-                                    val saved = AttachmentFileProvider.saveToDownloads(
-                                        context = context,
-                                        path = tempFile.absolutePath,
-                                        mime = "application/octet-stream",
-                                        displayName = fileName,
-                                    )
-                                    if (saved) {
-                                        statusMessage = "Saved to Downloads as \"$fileName\""
-                                    } else {
-                                        errorMessage = "Couldn't save to Downloads"
-                                    }
+                                val fileName = "${identity.name.ifBlank { identity.id.take(8) }}.identity"
+                                saveAsTarget = identity
+                                // Same defensive wrapping importLauncher's
+                                // own launch() already has, and for the
+                                // same reason (see that call site's own
+                                // updated doc comment) — the underlying
+                                // androidx.fragment bug is fixed at the
+                                // root now, so this is real defense-in-
+                                // depth, not the actual fix.
+                                try {
+                                    saveAsLauncher.launch(fileName)
+                                } catch (e: IllegalArgumentException) {
+                                    saveAsTarget = null
+                                    errorMessage = "Couldn't open the save dialog — try closing and " +
+                                        "reopening the app, then try again."
                                 }
                             },
                             onShare = {
@@ -507,16 +532,17 @@ private fun IdentityRow(
             }
             DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
                 DropdownMenuItem(text = { Text("Rename") }, onClick = { menuOpen = false; onRename() })
-                // Two separate real actions, same split
-                // AttachmentFileProvider already established for message
-                // attachments (per a real prior on-device report: a
-                // share-sheet-only export doesn't reliably save a local
-                // copy — many share targets don't actually write a file
-                // to device storage, they just pass the URI through) —
-                // "Save" writes straight to Downloads via MediaStore, no
-                // share-sheet round trip needed; "Share" still opens the
-                // share sheet for handing the file to another app.
-                DropdownMenuItem(text = { Text("Save to device") }, onClick = { menuOpen = false; onSaveToDevice() })
+                // Two separate real actions: "Save as…" opens a real
+                // destination picker (ACTION_CREATE_DOCUMENT) so the file
+                // lands wherever the user actually chooses, matching
+                // import's own "browse to wherever" picker on the read
+                // side — per explicit direction ("make it a real save
+                // as"), replacing an earlier version that always wrote
+                // straight into Downloads with no choice in the matter.
+                // "Share" is a separate, unrelated real action — still
+                // the share sheet, for handing the file to another app
+                // directly rather than saving a local copy first.
+                DropdownMenuItem(text = { Text("Save as…") }, onClick = { menuOpen = false; onSaveToDevice() })
                 DropdownMenuItem(text = { Text("Share") }, onClick = { menuOpen = false; onShare() })
                 DropdownMenuItem(text = { Text("Delete") }, onClick = { menuOpen = false; onDelete() })
             }

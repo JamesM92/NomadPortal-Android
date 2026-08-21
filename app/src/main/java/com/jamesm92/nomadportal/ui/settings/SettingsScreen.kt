@@ -1077,16 +1077,24 @@ fun SettingsScreen(
                             // *when* Battery-friendly's real trade-off
                             // actually matters, rather than leaving it as
                             // an abstract "may delay/skip" warning —
-                            // RNode/Bluetooth mesh/hosting all depend on
-                            // this process staying alive in the
+                            // RNode/Bluetooth mesh/hosting/voice calls all
+                            // depend on this process staying alive in the
                             // background to keep working at all, not just
-                            // on timely notifications. Checks
-                            // backgroundServiceActive (not just
-                            // notificationsAlwaysOn) so this also fires
-                            // when notifications are off entirely, not
-                            // just when they're on-but-Battery-friendly —
-                            // see that val's own doc comment.
-                            if (!backgroundServiceActive && (rNodeEnabled || bluetoothMeshEnabled || nodeHostingEnabled)) {
+                            // on timely notifications. Voice calls added
+                            // after a real gap found via an actual live
+                            // test call: this app had no incoming-call
+                            // alert at all before CallNotifier, and even
+                            // with it, Battery-friendly's real ~15min
+                            // minimum interval is far longer than a call
+                            // ever rings for — see that file's own doc
+                            // comment. Checks backgroundServiceActive (not
+                            // just notificationsAlwaysOn) so this also
+                            // fires when notifications are off entirely,
+                            // not just when they're on-but-Battery-
+                            // friendly — see that val's own doc comment.
+                            if (!backgroundServiceActive &&
+                                (rNodeEnabled || bluetoothMeshEnabled || nodeHostingEnabled || announceStatus?.callsEnabled == true)
+                            ) {
                                 Text(
                                     text = "Recommended: turn notifications on and set them to " +
                                         "Always-on — you have " +
@@ -1094,6 +1102,7 @@ fun SettingsScreen(
                                             "RNode".takeIf { rNodeEnabled },
                                             "Bluetooth mesh".takeIf { bluetoothMeshEnabled },
                                             "node hosting".takeIf { nodeHostingEnabled },
+                                            "voice calls".takeIf { announceStatus?.callsEnabled == true },
                                         ).joinToString(", ") +
                                         " on, and all of those need this app actually running in " +
                                         "the background to keep working.",
