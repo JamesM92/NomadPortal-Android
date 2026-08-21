@@ -15,7 +15,11 @@
      (79.08) matches the tent fill's own base y exactly — a real
      on-device correction, the stakes used to sit lower than the tent's
      own base, reading as floating below it instead of grounded level
-     with it. Colors
+     with it. Guy-line anchor x nudged 1.32 inward from the roof slope
+     itself — a real on-device correction ("the stake lines are peaking
+     out from behind the tent very slightly," an anti-aliasing seam
+     where the stroke's anchor sat exactly on the fill's own diagonal
+     edge instead of genuinely inside it). Colors
      match the real theme values exactly: NomadAccent (#5ba3c9, tent),
      NomadPortalPurple (#9b6bc8, doorway), and the same 0.6x-darkened
      tentColor (#366178) TentPortalMark itself computes for the seam/guy
@@ -39,7 +43,7 @@
         android:strokeWidth="3.3"
         android:strokeLineCap="round"
         android:fillColor="#00000000"
-        android:pathData="M44.1,41.79 L23.64,79.08 M63.9,41.79 L84.36,79.08" />
+        android:pathData="M45.42,41.79 L23.64,79.08 M62.58,41.79 L84.36,79.08" />
     <!-- Tent silhouette (filled) -->
     <path
         android:fillColor="#5ba3c9"

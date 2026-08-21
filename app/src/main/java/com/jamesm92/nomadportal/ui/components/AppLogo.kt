@@ -173,8 +173,21 @@ fun TentPortalMark(modifier: Modifier = Modifier, markSize: Dp = 24.dp) {
         // corners) and run outward-and-down to a ground stake — real
         // on-device correction: "the guide lines extending to the ground
         // from the top slope," not from the base.
-        val guyAnchorLeft = Offset((apex.x + shoulderLeft.x) / 2f, (apex.y + shoulderLeft.y) / 2f)
-        val guyAnchorRight = Offset((apex.x + shoulderRight.x) / 2f, (apex.y + shoulderRight.y) / 2f)
+        //
+        // Nudged inward (toward cx) by a small margin, not left exactly
+        // on the roof slope itself — a real on-device correction ("the
+        // stake lines are peaking out from behind the tent very
+        // slightly"): the guy lines already draw before the tent fill
+        // so it covers their anchor ends (see the fill's own doc
+        // comment), but an anchor sitting exactly ON the fill's diagonal
+        // edge is sensitive to anti-aliasing not lining up pixel-for-
+        // pixel between the stroke and the polygon edge, leaving a
+        // hairline sliver visible. Starting genuinely inside the fill
+        // instead (not just touching its boundary) gives real overlap
+        // margin, not just a coincident edge.
+        val guyInwardMargin = w * 0.02f
+        val guyAnchorLeft = Offset((apex.x + shoulderLeft.x) / 2f + guyInwardMargin, (apex.y + shoulderLeft.y) / 2f)
+        val guyAnchorRight = Offset((apex.x + shoulderRight.x) / 2f - guyInwardMargin, (apex.y + shoulderRight.y) / 2f)
         // Kept inside [0, w] x [0, h] deliberately — Compose's Canvas
         // doesn't reliably clip content drawn past its own bounds, and
         // whether that content still renders (rather than being cut off
