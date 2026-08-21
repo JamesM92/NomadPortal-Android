@@ -617,10 +617,35 @@ def set_node_hosting_enabled(enabled: bool) -> None:
             # enable, not just first-ever.
             os.makedirs(pages_dir, exist_ok=True)
             seed_starter_content(pages_dir)
+            # This device's own messaging identity's hash — real
+            # exclusion input for SiteServer's own view-counter (per
+            # explicit correction: "the view counter is for people
+            # visiting the node from outside," not this device counting
+            # its own identified self-visits). Same identity
+            # BrowserScreen's "identify to this node" toggle actually
+            # sends (identify_with, see fetch_page_text's own doc
+            # comment) — an RNS.Identity, not a destination hash, so
+            # .hash (not dest_hash_hex, which is aspect-specific) is the
+            # right comparison basis against a request's own
+            # remote_identity.hash.
+            own_identity_hashes = set()
+            if _identity_store is not None:
+                entry = _identity_store.get_for_user(_active_user_sub)
+                if entry is not None:
+                    own_identity = _identity_store.load_rns_identity(entry["id"])
+                    if own_identity is not None:
+                        own_identity_hashes.add(own_identity.hash.hex())
             server = SiteServer(
                 pages_dir=pages_dir,
                 files_dir=os.path.join(site_dir, "files"),
                 identity_file=os.path.join(_base_dir, "reticulum", "site_identity.id"),
+                # Real view counter (per explicit direction) — persisted
+                # under the same "site" root as pages_dir/files_dir
+                # above, so it survives a hosting toggle-off/on and a
+                # real app restart, not just resetting to zero every
+                # time SiteServer gets reconstructed.
+                stats_file=os.path.join(site_dir, "view_stats.json"),
+                own_identity_hashes=own_identity_hashes,
             )
             node_hash = server.start()
             _site_server = server
@@ -652,13 +677,17 @@ def get_site_status_json() -> str:
     RNS destination with its own announce loop, see site_server.py — 0
     means auto-announce disabled, same no-separate-flag convention as
     every other announce control in this app), last_announce_at (unix
-    seconds, nullable)."""
+    seconds, nullable), total_views (real per-request count, persisted
+    across restarts — see SiteServer's own _record_view; 0 while
+    hosting is off, not null, since "not currently hosting" and "hosting
+    but never once viewed" are both genuinely zero, not unknown)."""
     import json
     if _site_server is None:
         return json.dumps({
             "enabled": False, "node_hash": None, "node_name": None,
             "pages_dir": None, "files_dir": None,
             "announce_interval_seconds": 0, "last_announce_at": None,
+            "total_views": 0,
         })
     last_announce = _site_server.last_announce_at()
     # 0-means-disabled on the wire, same single-value convention as
@@ -676,6 +705,7 @@ def get_site_status_json() -> str:
         "files_dir": _site_server.files_dir(),
         "announce_interval_seconds": interval,
         "last_announce_at": last_announce if last_announce else None,
+        "total_views": _site_server.total_views(),
     })
 
 

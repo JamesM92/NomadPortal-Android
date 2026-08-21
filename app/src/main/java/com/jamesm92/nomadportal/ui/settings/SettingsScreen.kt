@@ -2020,6 +2020,17 @@ private fun HostedSiteActionsRow(
             color = NomadTextDim,
             modifier = Modifier.padding(top = 4.dp),
         )
+        // Real per-request count (SiteServer._record_view), persisted
+        // across restarts — per explicit direction ("are we able to set
+        // up a view counter for our hosted node"). Singular/plural
+        // matches this app's own existing convention elsewhere
+        // (rnshCount's "N remembered connection(s)" in the Advanced
+        // section below).
+        Text(
+            text = if (status.totalViews == 1) "1 view" else "${status.totalViews} views",
+            style = MaterialTheme.typography.labelSmall,
+            color = NomadTextDim,
+        )
 
         Row(
             modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
