@@ -2,6 +2,7 @@ package com.jamesm92.nomadportal.ui.hosting
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -14,6 +15,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.FormatAlignLeft
@@ -31,10 +33,12 @@ import androidx.compose.material.icons.filled.Title
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.LocalTextStyle
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -49,12 +53,16 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.TextRange
+import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.input.TextFieldValue
+import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import com.jamesm92.micron2compose.compose.MicronBlock as RealMicronBlockView
+import com.jamesm92.micron2compose.parser.LinkRun
 import com.jamesm92.micron2compose.parser.MicronConverter
+import com.jamesm92.micron2compose.parser.TextRun
 import com.jamesm92.nomadportal.data.hosting.CharStyle
 import com.jamesm92.nomadportal.data.hosting.MicronAlign
 import com.jamesm92.nomadportal.data.hosting.MicronBlock
@@ -573,24 +581,77 @@ private fun BlockRow(
 private fun RealRenderedBlockRow(rawText: String, onFocus: () -> Unit, modifier: Modifier = Modifier) {
     val converter = remember { MicronConverter() }
     val parsedBlocks = remember(rawText) { converter.convert(rawText).blocks }
+    // Real Micron content is fixed-character-grid by design (box-drawing
+    // art, tables) and must never reflow -- the exact same problem, and
+    // the exact same fix, as BrowserScreen.kt's own read-only page
+    // viewer (see that screen's own doc comment): micron2compose's
+    // MicronBlock already renders with softWrap=false internally, but a
+    // bare `Modifier.fillMaxWidth()` on it still let anything wider than
+    // this row visibly wrap onto new lines instead — a real on-device
+    // report ("the page editor shouldn't wrap either in the true
+    // view"). Sized to the widest actual line via TextMeasurer, same as
+    // BrowserScreen, then wrapped in its own horizontal scroll so a wide
+    // line is reachable rather than clipped.
+    //
+    // Real second bug caught the same way, on the same report ("still
+    // too big to show without scrolling" even after the fix above): this
+    // row was measuring/rendering at bodyLarge (16sp), not BrowserScreen's
+    // own bodyMedium * 0.85 (~11.9sp) -- meaning "the true view" was
+    // rendering meaningfully *larger* than the real target renderer a
+    // NomadNet client actually uses, needing more width for identical
+    // content and defeating the whole point of matching it. bodyFontSize
+    // here must track BrowserScreen's own scaling exactly, not just
+    // "some readable size" -- see that screen's own doc comment for why
+    // 0.85 specifically (a real on-device size correction).
+    val density = LocalDensity.current
+    val textMeasurer = rememberTextMeasurer()
+    val bodyFontSize = MaterialTheme.typography.bodyMedium.fontSize * 0.85f
+    val contentWidth = remember(parsedBlocks, bodyFontSize) {
+        var maxWidthPx = 0
+        for (block in parsedBlocks) {
+            val text = block.runs.joinToString("") { run ->
+                when (run) {
+                    is TextRun -> run.text
+                    is LinkRun -> run.label
+                    else -> ""
+                }
+            }
+            if (text.isEmpty()) continue
+            val width = textMeasurer.measure(
+                text = text,
+                style = TextStyle(fontFamily = NomadMono, fontSize = bodyFontSize),
+            ).size.width
+            if (width > maxWidthPx) maxWidthPx = width
+        }
+        with(density) { maxWidthPx.toDp() }
+    }
     Column(
-        modifier = modifier.clickable(onClick = onFocus).padding(horizontal = 8.dp, vertical = 4.dp),
+        modifier = modifier
+            .clickable(onClick = onFocus)
+            .horizontalScroll(rememberScrollState())
+            .padding(horizontal = 8.dp, vertical = 4.dp),
     ) {
-        if (parsedBlocks.isEmpty()) {
-            // A blank line or a standalone "``" reset line -- micron2compose
-            // emits no Block for either, but the row still needs a visible/
-            // tappable presence.
-            Text(" ", fontFamily = NomadMono, style = MaterialTheme.typography.bodyLarge)
-        } else {
-            parsedBlocks.forEach { parsed ->
-                RealMicronBlockView(
-                    block = parsed,
-                    readOnly = true,
-                    fontFamily = NomadMono,
-                    monospaceFontFamily = NomadMono,
-                    onLinkClick = {},
-                    modifier = Modifier.fillMaxWidth(),
-                )
+        CompositionLocalProvider(LocalTextStyle provides MaterialTheme.typography.bodyMedium.copy(fontSize = bodyFontSize)) {
+            if (parsedBlocks.isEmpty()) {
+                // A blank line or a standalone "``" reset line -- micron2compose
+                // emits no Block for either, but the row still needs a visible/
+                // tappable presence.
+                Text(" ", fontFamily = NomadMono)
+            } else {
+                parsedBlocks.forEach { parsed ->
+                    RealMicronBlockView(
+                        block = parsed,
+                        readOnly = true,
+                        fontFamily = NomadMono,
+                        monospaceFontFamily = NomadMono,
+                        onLinkClick = {},
+                        // .width(), not .fillMaxWidth() -- this row is now
+                        // inside its own horizontalScroll, which needs a
+                        // bounded/measured width to scroll *within*, not an
+                        // unbounded "fill whatever's available" one.
+                        modifier = Modifier.width(contentWidth),
+                    )
+                }
             }
         }
     }
