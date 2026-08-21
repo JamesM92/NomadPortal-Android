@@ -1,23 +1,62 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- Simple terminal-prompt glyph ("> _"), matching NomadPortal's terminal-
-     flavored dark aesthetic (porting-notes.md, section 5). Placeholder until
-     a real app icon is designed. -->
+<!-- The app's real mark (AppLogo.kt's TentPortalMark), not the old
+     terminal-prompt placeholder — see that composable's own doc comment
+     for the design rationale (a camping-tent silhouette with a purple
+     portal-doorway arch). Reproduced here as static vector paths rather
+     than referencing the Compose composable directly (launcher icons are
+     resolved by the system/launcher process, outside this app's own
+     Compose tree, so there's no way to reuse the runtime drawing code
+     as-is); coordinates are TentPortalMark's own fractional geometry,
+     scaled into the standard 66dp adaptive-icon safe zone (centered in
+     this 108dp viewport, 21dp margin each side) rather than filling the
+     full 108dp canvas edge to edge, so the shape survives every standard
+     launcher mask (circle, squircle, rounded square, teardrop) without
+     the guy-line stakes sitting exactly on the crop boundary. Stake y
+     (79.08) matches the tent fill's own base y exactly — a real
+     on-device correction, the stakes used to sit lower than the tent's
+     own base, reading as floating below it instead of grounded level
+     with it. Guy-line anchor x nudged 1.32 inward from the roof slope
+     itself — a real on-device correction ("the stake lines are peaking
+     out from behind the tent very slightly," an anti-aliasing seam
+     where the stroke's anchor sat exactly on the fill's own diagonal
+     edge instead of genuinely inside it). Colors
+     match the real theme values exactly: NomadAccent (#5ba3c9, tent),
+     NomadPortalPurple (#9b6bc8, doorway), and the same 0.6x-darkened
+     tentColor (#366178) TentPortalMark itself computes for the seam/guy
+     lines. Keep this in sync with AppLogo.kt's own geometry if that
+     composable's proportions ever change — including draw order: guy
+     lines draw *before* the tent fill (so it covers their anchor ends,
+     matching a real line vanishing into the fabric — a real on-device
+     correction: "the tent stake lines need to be under the tent
+     itself"), the ridge seam draws *after* it (stays visible on top, a
+     stitching detail rather than something the fabric covers). -->
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
     android:width="108dp"
     android:height="108dp"
     android:viewportWidth="108"
     android:viewportHeight="108">
+    <!-- Guy lines (stroked, round caps — matches TentPortalMark's own
+         StrokeCap.Round), drawn first so the tent fill below covers
+         their anchor ends. -->
     <path
-        android:pathData="M34,32 L58,54 L34,76"
-        android:strokeColor="#5ba3c9"
-        android:strokeWidth="9"
+        android:strokeColor="#366178"
+        android:strokeWidth="3.3"
         android:strokeLineCap="round"
-        android:strokeLineJoin="round"
-        android:fillColor="#00000000" />
+        android:fillColor="#00000000"
+        android:pathData="M45.42,41.79 L23.64,79.08 M62.58,41.79 L84.36,79.08" />
+    <!-- Tent silhouette (filled) -->
     <path
-        android:pathData="M66,76 L82,76"
-        android:strokeColor="#5ba3c9"
-        android:strokeWidth="9"
+        android:fillColor="#5ba3c9"
+        android:pathData="M34.2,79.08 L34.2,57.3 L54,26.28 L73.8,57.3 L73.8,79.08 Z" />
+    <!-- Ridge seam, drawn after the tent fill so it stays visible on top. -->
+    <path
+        android:strokeColor="#366178"
+        android:strokeWidth="3.3"
         android:strokeLineCap="round"
-        android:fillColor="#00000000" />
+        android:fillColor="#00000000"
+        android:pathData="M54,26.28 L54,61.92" />
+    <!-- Portal doorway: flat sides + semicircular arch top, filled -->
+    <path
+        android:fillColor="#9b6bc8"
+        android:pathData="M43.44,79.08 L43.44,61.92 A10.56,10.56 0 0,1 64.56,61.92 L64.56,79.08 Z" />
 </vector>

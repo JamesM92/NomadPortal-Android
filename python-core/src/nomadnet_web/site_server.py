@@ -71,47 +71,64 @@ START_ANNOUNCE_DELAY = 6        # seconds after start before first announce
 # own TentPortalMark (AppLogo.kt) — generated offline via
 # github.com/JamesM92/Img2ContourAscii (contour/shape-matching, not
 # plain brightness-to-character mapping) against a from-source PIL
-# reproduction of that composable's exact Canvas geometry, at
-# --cols 32. Deliberately narrow (an earlier --cols 52 pass measured
-# noticeably wider than this app's own MIN_MICRON_CONTENT_WIDTH
-# 320.dp phone-width floor — see BrowserScreen.kt — per explicit
-# direction: "small enough the full width is visible on the phone,"
-# not forcing a horizontal scroll just to see the logo). That tool is
-# GPL-3.0 — same real license-conflict reasoning already documented on
-# DEFAULT_EXAMPLES_PAGE below applies here, so it's used purely as an
-# offline one-time generator, never imported or shipped as a runtime
-# dependency; only its plain-text *output* (not GPL-encumbered) is
-# embedded. `--exclude` dropped backtick and backslash from its
-# character palette specifically so the art is safe to embed as a
-# literal Python string *and* as literal Micron text — a raw backtick
-# in Micron source is always an escape-sequence opener, never a
-# literal character, so one surviving in the art would corrupt
-# whatever ran after it. Left-aligned, not `c-centered — Micron's
-# centering strips/recomputes leading whitespace per line, which would
-# destroy this art's column alignment.
-_LOGO_ASCII_ART = """               ..
-               <>
-              .!!.
-             .U~-&
-             dU~-Ub
-            dUU~-UUb
-          :-UUU~-UUU-:
-         .!vUUU~-UUUc!
-         !:UUUU~-UUUU:!
-        :-dUUUU~-UUUUb-:
-       .!uUUU|1uc||UUUe!.
-       !:UU}iiUUUUirAUU:!
-      v!dUUlUUUUUUUU|UU&!v
-     :-uUUUvUUUUUUUUcUUUb-:
-     !:UUUU|UUUUUUUUcUUUUr!
-    !!)UUUU|UUUUUUUUcUUUUL!v
-   :! )UUUU|UUUUUUUUcUUUUL !:
-  .!  )UUUU|UUUUUUUUcUUUUL  !
-  !!  )UUUU|UUUUUUUUcUUUUL  !v
- :!   )UUUU|UUUUUUUUcUUUUL   !:
-.!                            !.
-!!                            -!
-!                              !"""
+# reproduction of that composable's exact Canvas geometry, at --cols 20
+# with --color --palette-size 4 --hysteresis 0.5 (a small, real palette
+# matched to the mark's own actual colors — NomadAccent's tent blue,
+# NomadPortalPurple's doorway, the seam/guy-line shade, background —
+# rather than one color per pixel). Went through two real size
+# corrections, both from on-device reports, not guesses: --cols 52 first
+# (measured noticeably wider than this app's own MIN_MICRON_CONTENT_WIDTH
+# 320.dp phone-width floor — see BrowserScreen.kt), then --cols 28
+# still reported as needing horizontal scroll to see fully. That second
+# report turned up a real, separate bug rather than a sizing miss: the
+# rich editor's own "true view" (RichTextPageEditor.kt's
+# RealRenderedBlockRow) was rendering Micron content at bodyLarge
+# (16sp), not BrowserScreen's own bodyMedium * 0.85 (~11.9sp) — a wider
+# font than the real target renderer actually uses, so identical content
+# needed more width there than it would in a real NomadNet client. Fixed
+# there directly (font-size parity, not just this art's own size) plus
+# --cols 20 here for real margin. That tool is GPL-3.0 — same real
+# license-conflict reasoning already documented on DEFAULT_EXAMPLES_PAGE
+# below applies here, so it's used purely as an offline one-time
+# generator, never imported or shipped as a runtime dependency; only its
+# plain-text *output* (not GPL-encumbered) is embedded, converted from
+# the tool's own raw ANSI 24-bit-color escapes into real Micron color
+# markup (`FTrrggbb...text...`f, run-collapsed — Micron pays one escape
+# per *run*, not per character) by a small offline script, not by hand.
+# That same script also strips any glyph the tool colored to match the
+# source image's own real background (#131313, this app's actual
+# NomadBg) — palette quantization occasionally buckets faint/low-
+# contrast pixels (the apex's thin tip, antialiasing) into that cluster
+# and still assigns a real glyph character to the cell; coloring it that
+# exact shade renders it genuinely invisible against this app's real
+# background (not just faint), which read as a missing/skipped row
+# rather than what it actually was — replaced with a plain space
+# instead, visually identical either way. `--exclude` separately dropped
+# backtick, backslash, AND double-quote from the character palette —
+# backtick because a raw one in Micron source is always an escape-
+# sequence opener, never a literal character, so one surviving in the
+# art would corrupt whatever ran after it; backslash because an
+# unescaped one inside this Python triple-quoted string would otherwise
+# start a `\U########`-style unicode escape and fail to compile (an
+# earlier pass caught this the hard way); double-quote because a
+# generated `"""` mid-art would prematurely close this very string
+# literal (caught the same way, on an earlier pass, at what would have
+# been the artwork's own "'''" divider line). Left-aligned, not
+# `c-centered — Micron's centering strips/recomputes leading whitespace
+# per line, which would destroy this art's column alignment.
+_LOGO_ASCII_ART = """         `FT366178r<`f
+        `FT5ba3c9d><b`f
+       `FT366178<`f`FT5ba3c9U><U`f`FT366178>`f
+      `FT366178-`f`FT5ba3c9dU><Ub`f`FT366178-`f
+     `FT366178-`f`FT5ba3c9uUUL)UUe`f`FT366178-`f
+     `FT366178:`f`FT5ba3c9U}`f`FT9b6bc8iuc|`f`FT5ba3c9AU`f`FT366178:`f
+    `FT366178!`f`FT5ba3c9UU`f`FT9b6bc8vUUUUc`f`FT5ba3c9U&`f`FT366178!`f
+   `FT366178:`f`FT5ba3c9dU&`f`FT9b6bc8|UUUUc`f`FT5ba3c9UUb`f`FT366178:`f
+    `FT5ba3c9UU&`f`FT9b6bc8|UUUUc`f`FT5ba3c9UUU`f`FT366178-:`f
+  `FT366178!`f `FT5ba3c9UU&`f`FT9b6bc8|UUUUc`f`FT5ba3c9UUU`f `FT366178!`f
+ `FT366178v`f  `FT5ba3c9UU&`f`FT9b6bc8|UUUUc`f`FT5ba3c9UUU`f  `FT366178v`f
+`FT366178:`f                  `FT366178:`f
+`FT366178!`f                  `FT366178!`f"""
 
 _DEFAULT_INDEX = """>NomadPortal-Android
 `cA native Android app for Reticulum & NomadNet`a
