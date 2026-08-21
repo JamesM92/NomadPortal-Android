@@ -96,6 +96,7 @@ import com.jamesm92.nomadportal.ui.components.dismissKeyboardOnTap
 import com.jamesm92.nomadportal.ui.theme.NomadAccent2
 import com.jamesm92.nomadportal.ui.theme.NomadMono
 import com.jamesm92.nomadportal.ui.theme.NomadTextDim
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 
@@ -293,6 +294,22 @@ fun BrowserScreen(
             result = converter.convert(source, nodeHash = currentAddress.nodeHash, basePath = currentAddress.path)
             fetchStatus = PageFetchStatus.LIVE
             if (pageCacheEnabled && identityId != null) pageCacheStore.write(identityId, currentAddress, source)
+        } catch (e: CancellationException) {
+            // Real bug found from an on-device report ("Couldn't load
+            // this page: the coroutine scope left the composition" shown
+            // as a genuine error, while some other in-flight call still
+            // went on to mark the page LIVE) — a classic Kotlin
+            // coroutines footgun: CancellationException is structurally
+            // an Exception, so the broad `catch (e: Exception)` below
+            // was swallowing it and reporting a superseded/aborted fetch
+            // (this LaunchedEffect relaunching on a key change, or the
+            // screen leaving composition entirely) as a real load
+            // failure. A cancellation was never a failure to begin with
+            // — it must propagate, not get caught and turned into UI
+            // state, so the *actual* still-running attempt (or nothing,
+            // if the screen is really gone) is what determines what the
+            // user sees next.
+            throw e
         } catch (e: Exception) {
             if (alreadyShowingContent) {
                 fetchStatus = PageFetchStatus.FAILED
@@ -846,8 +863,22 @@ fun BrowserScreen(
                         // is controlled here. bodyFontSize (bodyMedium's
                         // real size) still tracks the user's Settings →
                         // text size multiplier, same as every other role.
+                        //
+                        // lineHeight scaled down by the same 0.85 factor,
+                        // not left at bodyMedium's own unscaled value —
+                        // a real on-device report ("wider gap between
+                        // rows" on multi-line content like this page's
+                        // own logo art) traced to exactly this: fontSize
+                        // shrank to 0.85x but the line box itself stayed
+                        // at bodyMedium's full 20sp*scale, leaving
+                        // visible extra leading above/below every line
+                        // that had nothing to do with Micron's own
+                        // per-block spacing.
                         CompositionLocalProvider(
-                            LocalTextStyle provides MaterialTheme.typography.bodyMedium.copy(fontSize = bodyFontSize),
+                            LocalTextStyle provides MaterialTheme.typography.bodyMedium.copy(
+                                fontSize = bodyFontSize,
+                                lineHeight = MaterialTheme.typography.bodyMedium.lineHeight * 0.85f,
+                            ),
                         ) {
                             MicronPage(
                                 result = result!!,

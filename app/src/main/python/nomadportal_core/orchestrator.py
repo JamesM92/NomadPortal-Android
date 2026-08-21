@@ -1133,19 +1133,47 @@ def _seed_default_tcp_connection_if_needed() -> None:
     start_index = int(dest_hash_hex[3], 16) % len(candidates)
     ordered = candidates[start_index:] + candidates[:start_index]
 
+    # Two-pass rollover, not one: _tcp_probe (cheap, walks up to
+    # _MAX_TCP_SEED_PROBES candidates) finds candidates that merely
+    # *accept a socket*; _tcp_probe_deep (expensive — a real RNS Link
+    # attempt, capped separately at _MAX_TCP_SEED_DEEP_PROBES since it's
+    # real network traffic, not a free check) confirms a survivor can
+    # actually carry one before committing to it. Added after a real,
+    # on-device-confirmed gap: this exact rollover used to stop at the
+    # first candidate whose socket merely accepted a connection, which
+    # picked a hub that relayed announces fine but failed every single
+    # real page-fetch Link through it.
+    deep_probes_used = 0
     for candidate in ordered[:_MAX_TCP_SEED_PROBES]:
-        if _tcp_probe(candidate["host"], candidate["port"]):
-            add_tcp_connection(candidate["name"], candidate["host"], candidate["port"])
-            _tcp_default_seeded = True
-            _save_tcp_connections()
+        if not _tcp_probe(candidate["host"], candidate["port"]):
+            continue
+        if deep_probes_used >= _MAX_TCP_SEED_DEEP_PROBES:
+            # Deep-probe budget spent and nothing has passed yet — stop
+            # here rather than falling back to seeding an only-shallow-
+            # verified candidate, which would silently reintroduce the
+            # exact gap this whole two-pass check exists to close. Same
+            # "log and retry next launch" ending as the full-failure case
+            # below, just reached early.
             log.info(
-                "Seeded default TCP connection '%s' (%s:%d)",
-                candidate["name"], candidate["host"], candidate["port"],
+                "Deep-probe budget (%d) exhausted with no confirmed-working "
+                "candidate — will retry next launch",
+                _MAX_TCP_SEED_DEEP_PROBES,
             )
             return
+        deep_probes_used += 1
+        if not _tcp_probe_deep(candidate["host"], candidate["port"]):
+            continue
+        add_tcp_connection(candidate["name"], candidate["host"], candidate["port"])
+        _tcp_default_seeded = True
+        _save_tcp_connections()
+        log.info(
+            "Seeded default TCP connection '%s' (%s:%d) — confirmed via a real Link, not just a socket check",
+            candidate["name"], candidate["host"], candidate["port"],
+        )
+        return
 
     log.info(
-        "None of the first %d candidate TCP servers (of %d total) were reachable — will retry next launch",
+        "None of the first %d candidate TCP servers (of %d total) passed reachability — will retry next launch",
         min(_MAX_TCP_SEED_PROBES, len(ordered)), len(candidates),
     )
 
@@ -1201,16 +1229,149 @@ def _fetch_tcp_directory_candidates() -> list:
 
 def _tcp_probe(host: str, port: int, timeout: float = 5.0) -> bool:
     """Raw TCP reachability check — deliberately not a real RNS-level
-    handshake (that's what add_tcp_connection's own _sync_tcp_interfaces
-    does afterward, for whichever candidate actually gets picked); this
-    only needs to answer "is anything listening here right now" cheaply
-    enough to walk an entire candidate list per app launch."""
+    handshake (that's what _tcp_probe_deep below actually does, for
+    whichever candidate passes this cheap first pass); this only needs
+    to answer "is anything listening here right now" cheaply enough to
+    walk an entire candidate list per app launch."""
     import socket
     try:
         with socket.create_connection((host, port), timeout=timeout):
             return True
     except OSError:
         return False
+
+
+# How long _tcp_probe_deep waits for a real nomadnetwork.node announce to
+# arrive through a freshly-attached candidate interface before giving up
+# on it, and how long it then waits for a real RNS.Link to that announced
+# node to reach ACTIVE. Both real, on-the-wire waits (not configurable
+# per-call) — tuned to be comfortably longer than a healthy handshake (RNS
+# announces on a busy public hub typically arrive within a few seconds;
+# a healthy Link handshake is 2-8s per browser.py's own LINK_ESTABLISH_TIMEOUT
+# doc comment) while still keeping a full deep probe well under a minute,
+# since up to _MAX_TCP_SEED_DEEP_PROBES of these can run in one seeding pass.
+_DEEP_PROBE_ANNOUNCE_WAIT_S = 20.0
+_DEEP_PROBE_LINK_WAIT_S = 15.0
+
+# Deep probes are real RNS Link attempts, not a cheap socket check — each
+# one costs up to _DEEP_PROBE_ANNOUNCE_WAIT_S + _DEEP_PROBE_LINK_WAIT_S
+# (~35s). Capped independently from, and much lower than,
+# _MAX_TCP_SEED_PROBES (the cheap-probe budget) so a bad run of candidates
+# that all pass the raw socket check but fail deep can't block deferred
+# setup for minutes.
+_MAX_TCP_SEED_DEEP_PROBES = 3
+
+
+def _link_probe(dest_hash: bytes, timeout: float = _DEEP_PROBE_LINK_WAIT_S) -> bool:
+    """Attempts one real `RNS.Link` to the already-announced NomadNet node
+    at [dest_hash] and returns whether it reached ACTIVE within [timeout].
+    Single attempt, no retries, no page request — this only needs to
+    answer "can a real bidirectional Link even be established through
+    whatever interface is currently up", which is exactly the gap a bare
+    TCP-socket probe can't see: a hub can accept a raw connection and
+    relay announces perfectly (both one-way, connectionless-feeling
+    traffic) while every real Link through it still dies with "Link
+    closed before response" — a real, on-device-confirmed failure mode
+    (this device's own auto-seeded default hub did exactly this).
+
+    Deliberately not browser.py's own fetch_page() — that does a real
+    page *request* over the Link, with its own multi-attempt retry loop
+    (MAX_ATTEMPTS × up to LINK_ESTABLISH_TIMEOUT=120s each), meant for a
+    real user-initiated browse where waiting minutes for a stubborn
+    destination is acceptable. A seeding-time probe walking a whole
+    candidate list can't afford that; this only asks the cheaper, more
+    fundamental question a startup check actually needs answered.
+    """
+    import threading
+    import RNS
+
+    identity = RNS.Identity.recall(dest_hash)
+    if identity is None:
+        return False
+
+    from nomadnet_web.browser import APP_NAME, NODE_ASPECT
+    destination = RNS.Destination(
+        identity, RNS.Destination.OUT, RNS.Destination.SINGLE,
+        APP_NAME, NODE_ASPECT,
+    )
+
+    done = threading.Event()
+
+    def _on_established(link):
+        done.set()
+
+    def _on_closed(link):
+        done.set()
+
+    link = RNS.Link(destination, established_callback=_on_established, closed_callback=_on_closed)
+    established = link.status == RNS.Link.ACTIVE
+    if not established:
+        established = done.wait(timeout=timeout) and link.status == RNS.Link.ACTIVE
+    try:
+        link.teardown()
+    except Exception:
+        pass
+    return established
+
+
+def _tcp_probe_deep(host: str, port: int) -> bool:
+    """A meaningfully deeper reachability check than _tcp_probe's own
+    bare socket connect — actually attaches [host]:[port] as a real,
+    temporary RNS interface and requires it to (a) relay at least one
+    real nomadnetwork.node announce (proving genuine RNS framing works
+    over the raw socket, not just "something answered the connect"), and
+    then (b) actually carry a real Link to that announced node (see
+    _link_probe's own doc comment for why this second step is the one
+    that actually matters). The candidate is only ever kept attached if
+    both succeed; detached and torn down either way before returning.
+
+    Only ever called from _seed_default_tcp_connection_if_needed, on
+    candidates that already passed the cheap _tcp_probe — this is real
+    RNS traffic, not free, so it's the second-pass confirmation on
+    survivors of the first pass, not a replacement for it.
+    """
+    import time
+    import RNS
+
+    try:
+        iface = _make_tcp_client(host, port)
+        _browser.reticulum._add_interface(iface)
+    except Exception as exc:
+        log.info("Deep probe: failed to attach %s:%d: %s", host, port, exc)
+        return False
+
+    try:
+        known_before = {n["hash"] for n in _browser.get_nodes()}
+        deadline = time.monotonic() + _DEEP_PROBE_ANNOUNCE_WAIT_S
+        new_hash = None
+        while time.monotonic() < deadline:
+            for n in _browser.get_nodes():
+                if n["hash"] not in known_before:
+                    new_hash = n["hash"]
+                    break
+            if new_hash is not None:
+                break
+            time.sleep(1.0)
+
+        if new_hash is None:
+            log.info(
+                "Deep probe: %s:%d relayed no real node announce within %ds",
+                host, port, int(_DEEP_PROBE_ANNOUNCE_WAIT_S),
+            )
+            return False
+
+        ok = _link_probe(bytes.fromhex(new_hash))
+        log.info(
+            "Deep probe: %s:%d %s a real Link to %s",
+            host, port, "completed" if ok else "failed to complete", new_hash[:16],
+        )
+        return ok
+    finally:
+        try:
+            iface.detach()
+            RNS.Transport.remove_interface(iface)
+        except Exception as exc:
+            log.warning("Deep probe: failed to detach %s:%d: %s", host, port, exc)
 
 
 def update_tcp_connection(conn_id: str, name: str, host: str, port: int) -> bool:

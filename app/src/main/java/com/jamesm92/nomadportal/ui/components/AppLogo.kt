@@ -173,22 +173,58 @@ fun TentPortalMark(modifier: Modifier = Modifier, markSize: Dp = 24.dp) {
         // corners) and run outward-and-down to a ground stake — real
         // on-device correction: "the guide lines extending to the ground
         // from the top slope," not from the base.
-        val guyAnchorLeft = Offset((apex.x + shoulderLeft.x) / 2f, (apex.y + shoulderLeft.y) / 2f)
-        val guyAnchorRight = Offset((apex.x + shoulderRight.x) / 2f, (apex.y + shoulderRight.y) / 2f)
+        //
+        // Nudged inward (toward cx) by a small margin, not left exactly
+        // on the roof slope itself — a real on-device correction ("the
+        // stake lines are peaking out from behind the tent very
+        // slightly"): the guy lines already draw before the tent fill
+        // so it covers their anchor ends (see the fill's own doc
+        // comment), but an anchor sitting exactly ON the fill's diagonal
+        // edge is sensitive to anti-aliasing not lining up pixel-for-
+        // pixel between the stroke and the polygon edge, leaving a
+        // hairline sliver visible. Starting genuinely inside the fill
+        // instead (not just touching its boundary) gives real overlap
+        // margin, not just a coincident edge.
+        val guyInwardMargin = w * 0.02f
+        val guyAnchorLeft = Offset((apex.x + shoulderLeft.x) / 2f + guyInwardMargin, (apex.y + shoulderLeft.y) / 2f)
+        val guyAnchorRight = Offset((apex.x + shoulderRight.x) / 2f - guyInwardMargin, (apex.y + shoulderRight.y) / 2f)
         // Kept inside [0, w] x [0, h] deliberately — Compose's Canvas
         // doesn't reliably clip content drawn past its own bounds, and
         // whether that content still renders (rather than being cut off
         // by whatever parent container this mark sits in) shouldn't be
-        // left to chance.
-        val stakeLeft = Offset(0f, h * 0.98f)
-        val stakeRight = Offset(w, h * 0.98f)
+        // left to chance. y matches wallBottomLeft/wallBottomRight's own
+        // 0.88f exactly — a real on-device correction: the stakes used
+        // to sit lower than the tent's own base (0.98f), reading as
+        // floating below the tent instead of grounded level with it.
+        val stakeLeft = Offset(0f, h * 0.88f)
+        val stakeRight = Offset(w, h * 0.88f)
 
+        // A same-color line would vanish against the solid fill below —
+        // the ridge seam and guy lines both use a darkened tint of the
+        // tent color instead, reading as a seam/stitching detail rather
+        // than a flat silhouette edge. Computed before the tent fill
+        // itself since the guy lines below need to draw *underneath* it.
+        val seamColor = Color(tentColor.red * 0.6f, tentColor.green * 0.6f, tentColor.blue * 0.6f, 1f)
+        // Guy lines — from partway up each roof slope, out past the
+        // tent's own footprint down to a ground stake. Drawn *before*
+        // the tent fill below, deliberately (a real on-device
+        // correction: "the tent stake lines need to be under the tent
+        // itself") — each line's own anchor point sits exactly on the
+        // roofline edge, so without this ordering its own round stroke
+        // cap visibly pokes a small dot of seam color on top of the
+        // tent fill right at that edge, instead of tucking behind it
+        // the way a real guy line vanishing into the fabric would.
+        drawLine(color = seamColor, start = guyAnchorLeft, end = stakeLeft, strokeWidth = w * 0.05f, cap = StrokeCap.Round)
+        drawLine(color = seamColor, start = guyAnchorRight, end = stakeRight, strokeWidth = w * 0.05f, cap = StrokeCap.Round)
         // Tent silhouette — a solid filled polygon (per explicit
         // correction: "the tent should be a solid color"), not an
         // outline. Left wall up the left roof slope, up to the apex,
         // down the right roof slope, down the right wall, closed back
         // along the base. The vertical walls are what keep this reading
-        // as a real ridge tent rather than a plain triangle.
+        // as a real ridge tent rather than a plain triangle. Drawn after
+        // the guy lines above (so it covers their anchor ends) but
+        // before the ridge seam below (which needs to stay visible on
+        // top, unlike the guy lines).
         drawPath(
             path = Path().apply {
                 moveTo(wallBottomLeft.x, wallBottomLeft.y)
@@ -200,13 +236,11 @@ fun TentPortalMark(modifier: Modifier = Modifier, markSize: Dp = 24.dp) {
             },
             color = tentColor,
         )
-        // A same-color line would vanish against the solid fill above —
-        // the ridge seam and guy lines both use a darkened tint of the
-        // tent color instead, reading as a seam/stitching detail rather
-        // than a flat silhouette edge.
-        val seamColor = Color(tentColor.red * 0.6f, tentColor.green * 0.6f, tentColor.blue * 0.6f, 1f)
         // Ridge seam — apex straight down to the doorway's own peak, the
-        // single most standard "this is a tent" visual shorthand.
+        // single most standard "this is a tent" visual shorthand. Stays
+        // on top of the tent fill (unlike the guy lines above) since
+        // it's meant to read as a visible stitching detail running down
+        // the tent's own face, not something the fabric covers.
         drawLine(
             color = seamColor,
             start = apex,
@@ -214,10 +248,6 @@ fun TentPortalMark(modifier: Modifier = Modifier, markSize: Dp = 24.dp) {
             strokeWidth = w * 0.05f,
             cap = StrokeCap.Round,
         )
-        // Guy lines — from partway up each roof slope, out past the
-        // tent's own footprint down to a ground stake.
-        drawLine(color = seamColor, start = guyAnchorLeft, end = stakeLeft, strokeWidth = w * 0.05f, cap = StrokeCap.Round)
-        drawLine(color = seamColor, start = guyAnchorRight, end = stakeRight, strokeWidth = w * 0.05f, cap = StrokeCap.Round)
 
         // Portal doorway — an arch (flat bottom, semicircular top) sized
         // to sit inside the tent's lower half without its rounded top
