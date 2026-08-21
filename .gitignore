@@ -4,6 +4,11 @@ build/
 app/build/
 out/
 
+## Kotlin's own local incremental-compile cache (separate from build/,
+## introduced by newer Kotlin Gradle plugin versions) — a real, local-
+## only build artifact, not something any commit should ever carry.
+.kotlin/
+
 ## Local configuration
 local.properties
 

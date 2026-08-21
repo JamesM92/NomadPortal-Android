@@ -78,9 +78,17 @@ chaquopy {
         // (Chaquopy resolves/installs pip dependencies at build time, not
         // just on-device). Chaquopy auto-detects it via `py -3.12` (Windows)
         // / `python3.12` (Linux/Mac) — if that doesn't find your install,
-        // set `buildPython("C:/path/to/python.exe")` locally (don't commit
-        // a machine-specific path here). See
+        // set the CHAQUOPY_BUILD_PYTHON environment variable to a real
+        // interpreter path (see the chaquopy-build-cycle convention).
+        // Deliberately an env var, not a hardcoded buildPython() call
+        // edited in and back out of this file for every single local
+        // build (this repo's own history has that mistake committed and
+        // caught more than once, and it's the exact class of footgun
+        // sanity-checks' own "No committed buildPython() override" CI
+        // step exists for) — an env var can never end up in a commit at
+        // all, so there's nothing to remember to revert. See
         // https://chaquo.com/chaquopy/doc/current/android.html#buildpython.
+        System.getenv("CHAQUOPY_BUILD_PYTHON")?.let { buildPython(it) }
         pip {
             // Pinned to exactly what python-core/requirements.txt (the
             // extracted nomadnet_web core) was validated against — NOT
