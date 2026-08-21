@@ -96,6 +96,7 @@ import com.jamesm92.nomadportal.ui.components.dismissKeyboardOnTap
 import com.jamesm92.nomadportal.ui.theme.NomadAccent2
 import com.jamesm92.nomadportal.ui.theme.NomadMono
 import com.jamesm92.nomadportal.ui.theme.NomadTextDim
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 
@@ -293,6 +294,22 @@ fun BrowserScreen(
             result = converter.convert(source, nodeHash = currentAddress.nodeHash, basePath = currentAddress.path)
             fetchStatus = PageFetchStatus.LIVE
             if (pageCacheEnabled && identityId != null) pageCacheStore.write(identityId, currentAddress, source)
+        } catch (e: CancellationException) {
+            // Real bug found from an on-device report ("Couldn't load
+            // this page: the coroutine scope left the composition" shown
+            // as a genuine error, while some other in-flight call still
+            // went on to mark the page LIVE) — a classic Kotlin
+            // coroutines footgun: CancellationException is structurally
+            // an Exception, so the broad `catch (e: Exception)` below
+            // was swallowing it and reporting a superseded/aborted fetch
+            // (this LaunchedEffect relaunching on a key change, or the
+            // screen leaving composition entirely) as a real load
+            // failure. A cancellation was never a failure to begin with
+            // — it must propagate, not get caught and turned into UI
+            // state, so the *actual* still-running attempt (or nothing,
+            // if the screen is really gone) is what determines what the
+            // user sees next.
+            throw e
         } catch (e: Exception) {
             if (alreadyShowingContent) {
                 fetchStatus = PageFetchStatus.FAILED
