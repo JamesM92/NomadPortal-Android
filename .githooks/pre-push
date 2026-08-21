@@ -1,0 +1,62 @@
+#!/usr/bin/env bash
+# Local pre-push gate — per explicit direction ("we should run a ci/cd /
+# security audit done locally before we do pushes"): the same checks
+# dev/main's own branch protection requires (see .github/workflows/ci.yml's
+# build-and-test/sanity-checks jobs), run here first so a push that would
+# obviously fail CI gets caught in minutes locally instead of after a full
+# cloud round-trip. Mirrors, not replaces, the real GitHub Actions gate —
+# this can drift from the workflow files over time, so treat CI's own
+# result as authoritative, not this script's exit code.
+#
+# What's deliberately NOT covered here (both real gaps, not oversights):
+#   - instrumented-tests (connectedDebugAndroidTest) needs an attached
+#     device/emulator. Run it yourself when you have one attached and the
+#     change actually touches androidTest-covered surface:
+#       ./gradlew connectedDebugAndroidTest --no-daemon
+#   - CodeQL / dependency-review are genuinely cloud-side checks (CodeQL
+#     needs the CodeQL CLI + a real database build; dependency-review
+#     diffs GitHub's own dependency-graph snapshot between base and head
+#     refs, which only exists once a PR is open). scripts/security-audit.sh
+#     approximates both locally where a real local equivalent exists
+#     (CodeQL via the `gh codeql` extension if installed; pip-audit for
+#     python-core's own dependencies) — run it explicitly before any push
+#     that's heading toward a release, not on every routine push (it's
+#     real network/CPU work, not a few-second check).
+#
+# Setup (one-time per clone): git config core.hooksPath .githooks
+#
+# If Chaquopy can't auto-detect a build-time Python 3.12 on your
+# machine, set CHAQUOPY_BUILD_PYTHON in your shell first (see the
+# chaquopy-build-cycle convention) — app/build.gradle.kts reads it
+# directly, no file edit needed.
+
+set -e
+
+cd "$(git rev-parse --show-toplevel)"
+
+echo "== pre-push: no committed buildPython() override =="
+if grep -n '^\s*buildPython(' app/build.gradle.kts; then
+    echo "A buildPython() override is committed in app/build.gradle.kts —" >&2
+    echo "a machine-specific local-dev path that must never be pushed." >&2
+    echo "(see the chaquopy-build-cycle convention). Remove it and re-commit." >&2
+    exit 1
+fi
+
+echo "== pre-push: compileDebugKotlin =="
+./gradlew compileDebugKotlin --no-daemon --console=plain
+
+echo "== pre-push: lintDebug =="
+./gradlew lintDebug --no-daemon --console=plain
+
+echo "== pre-push: testDebugUnitTest =="
+./gradlew testDebugUnitTest --no-daemon --console=plain
+
+echo "== pre-push: assembleDebug =="
+./gradlew assembleDebug --no-daemon --console=plain
+
+if [ -d python-core ]; then
+    echo "== pre-push: python-core test suite =="
+    ( cd python-core && python -m pytest -q )
+fi
+
+echo "== pre-push: all local checks passed =="
