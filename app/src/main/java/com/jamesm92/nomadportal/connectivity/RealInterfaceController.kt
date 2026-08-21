@@ -151,6 +151,7 @@ class RealInterfaceController(
             } else {
                 (obj.optDouble("last_announce_at", 0.0) * 1000).toLong()
             },
+            totalViews = obj.optInt("total_views", 0),
         )
     }
 

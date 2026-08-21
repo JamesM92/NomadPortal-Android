@@ -29,6 +29,7 @@ authoring UI, so it holds regardless of how a page file ended up on
 disk.
 """
 
+import json
 import logging
 import os
 import threading
@@ -258,6 +259,8 @@ class SiteServer:
         node_name: Optional[str] = None,
         auto_announce: bool = False,
         announce_interval: int = DEFAULT_ANNOUNCE_INTERVAL,
+        stats_file: Optional[str] = None,
+        own_identity_hashes: Optional[set] = None,
     ):
         # ``node_name=None`` means "auto-generate from the destination hash"
         # in start() — produces e.g. "NomadPortal-Android-4de" so multiple
@@ -294,6 +297,87 @@ class SiteServer:
         # rescan loop registered — RNS.Destination has no "deregister
         # everything" call, only per-path deregister_request_handler().
         self._registered_paths: set = set()
+
+        # View counter (per explicit direction — "are we able to set up
+        # a view counter for our hosted node," then corrected: "the view
+        # counter is for people visiting the node from outside") — real
+        # request counts, not a synthetic/estimated figure: incremented
+        # in _serve_page/_serve_file only on an actual successful serve
+        # (a 404 or a mid-read I/O error doesn't count as a real view),
+        # AND only when the requester isn't this same device — see
+        # own_identity_hashes below. Keyed by request path
+        # ("/page/index.mu") so a future per-page breakdown is already
+        # there if wanted, not just a bare total.
+        #
+        # own_identity_hashes: real hex identity hashes to exclude from
+        # counting — this device's own messaging/LXMF identity (what
+        # BrowserScreen's "identify to this node" toggle actually sends,
+        # see that feature's own doc comment) plus this site's own
+        # hosting identity, both passed in by orchestrator.py since
+        # SiteServer itself only ever knows about the latter. Only
+        # catches *identified* self-visits (remote_identity is None for
+        # anonymous requests, self or otherwise, with no way to tell
+        # them apart at this layer) — a real, honest partial guard, not
+        # a claim of perfect self-exclusion. In practice, an anonymous
+        # self-visit also requires this device's own browse-to-self path
+        # to actually work, which it currently doesn't (a separate,
+        # already-flagged bug) — so this covers the one case that's
+        # realistically reachable today.
+        self._own_identity_hashes = own_identity_hashes or set()
+        #
+        # stats_file=None (SiteServer's own unit tests, or any caller
+        # that doesn't care about surviving a restart) means in-memory
+        # only, counting from zero every time start() runs — real,
+        # persisted counts are opt-in via a real path, same shape as
+        # identity_file above, not a hidden requirement of this class.
+        self._stats_file = stats_file
+        self._page_views: dict = {}
+        self._load_stats()
+
+    def _load_stats(self) -> None:
+        if not self._stats_file or not os.path.isfile(self._stats_file):
+            return
+        try:
+            with open(self._stats_file, "r", encoding="utf-8") as fh:
+                data = json.load(fh)
+            loaded = data.get("page_views", {})
+            if isinstance(loaded, dict):
+                self._page_views = {str(k): int(v) for k, v in loaded.items()}
+        except (OSError, ValueError, TypeError) as exc:
+            log.warning("Could not load site view stats: %s", exc)
+
+    def _save_stats(self) -> None:
+        if not self._stats_file:
+            return
+        try:
+            os.makedirs(os.path.dirname(self._stats_file), exist_ok=True)
+            with open(self._stats_file, "w", encoding="utf-8") as fh:
+                json.dump({"page_views": self._page_views}, fh)
+        except OSError as exc:
+            log.warning("Could not save site view stats: %s", exc)
+
+    def _record_view(self, request_path: str, remote_identity=None) -> None:
+        # remote_identity is an RNS.Identity, not a plain hash — .hash is
+        # already the real raw bytes any other identity-hash comparison
+        # in this codebase compares against (see e.g. browser.py's own
+        # dest_hash handling), hex-encoded here to match
+        # own_identity_hashes' own hex-string convention.
+        if remote_identity is not None:
+            try:
+                if remote_identity.hash.hex() in self._own_identity_hashes:
+                    return
+            except AttributeError:
+                pass
+        self._page_views[request_path] = self._page_views.get(request_path, 0) + 1
+        self._save_stats()
+
+    def total_views(self) -> int:
+        return sum(self._page_views.values())
+
+    def page_views(self) -> dict:
+        """A fresh copy — callers must not be able to mutate this
+        instance's own real counts through the returned dict."""
+        return dict(self._page_views)
 
     def start(self) -> str:
         """Start the node server. Returns the destination hexhash."""
@@ -569,7 +653,11 @@ class SiteServer:
             # comment for why (a real capability removed, not merely a
             # code path this app happens not to exercise).
             with open(file_path, "rb") as fh:
-                return fh.read()
+                content = fh.read()
+            # Counted only here, past the not-found check above — a
+            # missing page is a 404, not a real view of anything.
+            self._record_view(path, remote_identity)
+            return content
 
         except Exception as exc:
             log.error("Error serving page %s: %s", path, exc)
@@ -580,12 +668,15 @@ class SiteServer:
         file_name = path.replace("/file/", "", 1)
         log.debug("File request: %s → %s", path, file_path)
         try:
-            return [open(file_path, "rb"), {"name": file_name.encode("utf-8")}]
+            handle = open(file_path, "rb")
+            self._record_view(path, remote_identity)
+            return [handle, {"name": file_name.encode("utf-8")}]
         except Exception as exc:
             log.error("Error serving file %s: %s", path, exc)
             return None
 
     def _serve_default_index(self, path, data, request_id, link_id, remote_identity, requested_at):
+        self._record_view(path, remote_identity)
         return _DEFAULT_INDEX.encode("utf-8")
 
     # ------------------------------------------------------------------

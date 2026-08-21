@@ -22,6 +22,11 @@ data class HostedNodeStatus(
     val announceIntervalSeconds: Int,
     /** Null if this node has never announced yet. */
     val lastAnnounceAtMillis: Long?,
+    /** Real per-request count, persisted across restarts — see
+     * `SiteServer._record_view`. 0 both while hosting is off and while
+     * hosting but never once viewed; those are both genuinely zero, not
+     * an unknown/loading state. */
+    val totalViews: Int = 0,
 ) {
     val autoAnnounceEnabled: Boolean get() = announceIntervalSeconds > 0
 }
