@@ -13,6 +13,7 @@ import com.jamesm92.micron2compose.parser.BlockKind
 import com.jamesm92.micron2compose.parser.MicronConverter
 import com.jamesm92.micron2compose.parser.TextRun
 import java.util.UUID
+import kotlin.math.roundToInt
 
 /**
  * A block-based rich-text model for editing one hosted-node page,
@@ -273,26 +274,43 @@ fun MicronBlock.Paragraph.toMicronLine(): String {
         if (style.bold) sb.append("`!")
         if (style.italic) sb.append("`*")
         if (style.underline) sb.append("`_")
-        // Always the explicit 6-hex truecolor form (`` `FT``/`` `BT``),
-        // never the bare 3-char shorthand (`` `F``+3 chars) -- real
-        // Micron's default (no "T" marker) reads back exactly 3 raw
-        // characters as the color value, confirmed directly against
-        // MicronParser.py's own dispatch code (`line[i+1:i+4]`, fixed
-        // width, no length sniffing). Writing our 6-digit hex there
-        // without the "T" marker would only consume half of it as the
-        // color and leak the other 3 hex characters into the visible
-        // rendered text on a real Micron client -- the "T" truecolor
-        // form is unambiguous and exact instead of relying on a lossy
-        // digit-doubled 3-char approximation.
-        if (style.color != null) sb.append("`FT").append(style.color.toMicronHex())
-        if (style.background != null) sb.append("`BT").append(style.background.toMicronHex())
+        // Always the bare 3-char shorthand (`` `F``/`` `B``+3 hex
+        // digits, each doubled to form the real byte value), never the
+        // explicit 6-hex truecolor form (`` `FT``/`` `BT``) -- both are
+        // genuinely spec-valid Micron (confirmed directly against
+        // MicronParser.py's own dispatch code), but a real other Micron
+        // viewer this app's own hosted pages were actually browsed with
+        // doesn't implement the 6-hex form at all, rendering it as
+        // literal garbage text instead of a color. Per explicit
+        // direction, every color this app writes -- generated default
+        // content and anything a user picks in this editor alike --
+        // trades a small amount of color accuracy (only 16 representable
+        // levels per channel) for real compatibility with viewers like
+        // that one, rather than only fixing the app's own seeded pages
+        // and leaving user-authored ones exposed to the same bug.
+        if (style.color != null) sb.append("`F").append(style.color.toMicron3Hex())
+        if (style.background != null) sb.append("`B").append(style.background.toMicron3Hex())
         sb.append(text, i, j)
         i = j
     }
     return sb.toString()
 }
 
-private fun Color.toMicronHex(): String = String.format("%06X", toArgb() and 0xFFFFFF)
+/** Nearest 3-hex-shorthand digit for one 0-255 channel value -- see
+ * [toMicron3Hex]'s own doc comment for why this app writes only this
+ * form. Rounds rather than truncates (truncating would systematically
+ * darken every channel) to the closest of the 16 representable levels
+ * (0x0->0x00, 0x1->0x11, ..., 0xf->0xff, per MicronParser.py's own
+ * low_color()). */
+private fun Int.toNearest3HexDigit(): Int = (this / 17.0).roundToInt().coerceIn(0, 15)
+
+private fun Color.toMicron3Hex(): String {
+    val argb = toArgb()
+    val r = (argb shr 16) and 0xFF
+    val g = (argb shr 8) and 0xFF
+    val b = argb and 0xFF
+    return "%X%X%X".format(r.toNearest3HexDigit(), g.toNearest3HexDigit(), b.toNearest3HexDigit())
+}
 
 // ---------------------------------------------------------------------
 // Parsing: real Micron markup text -> List<MicronBlock>.

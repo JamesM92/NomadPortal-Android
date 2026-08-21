@@ -93,9 +93,29 @@ START_ANNOUNCE_DELAY = 6        # seconds after start before first announce
 # below applies here, so it's used purely as an offline one-time
 # generator, never imported or shipped as a runtime dependency; only its
 # plain-text *output* (not GPL-encumbered) is embedded, converted from
-# the tool's own raw ANSI 24-bit-color escapes into real Micron color
-# markup (`FTrrggbb...text...`f, run-collapsed — Micron pays one escape
-# per *run*, not per character) by a small offline script, not by hand.
+# the tool's own raw ANSI 24-bit-color escapes into Micron color markup,
+# run-collapsed (Micron pays one escape per *run*, not per character) by
+# a small offline script, not by hand.
+#
+# Real, on-device-reported compatibility bug, found after this had
+# already shipped once: the script originally emitted Micron's precise
+# 6-hex color form (`FTrrggbb...`f — confirmed genuinely spec-valid
+# against NomadNet's own real MicronParser.py source), but a real other
+# Micron viewer this page was actually browsed with rendered it as
+# literal garbage text instead of a color (the raw hex digits leaking
+# through), rather than just falling back to an uncolored render — that
+# viewer doesn't implement the 6-hex form at all. Per explicit direction
+# ("we should stick to the 3hex color codes for the default page as not
+# all viewers are compatible with the high precision color"), the script
+# now quantizes every color down to the older, more-widely-supported
+# 3-hex shorthand (`Frgb...`f, each digit doubled) instead — a real
+# interop fix, not a downgrade for its own sake; see the script's own
+# updated doc comment (ansi_to_micron.py, kept offline alongside the
+# rest of this generation pipeline, not part of this repo) for the exact
+# quantization. DEFAULT_EXAMPLES_PAGE below still *demonstrates* the
+# 6-hex form further down — that's deliberate: it's educational content
+# explicitly labeled as an alternate, less-supported form, not this
+# app's own default output, so it's a different case from this art.
 # That same script also strips any glyph the tool colored to match the
 # source image's own real background (#131313, this app's actual
 # NomadBg) — palette quantization occasionally buckets faint/low-
@@ -117,19 +137,19 @@ START_ANNOUNCE_DELAY = 6        # seconds after start before first announce
 # been the artwork's own "'''" divider line). Left-aligned, not
 # `c-centered — Micron's centering strips/recomputes leading whitespace
 # per line, which would destroy this art's column alignment.
-_LOGO_ASCII_ART = """         `FT366178r<`f
-        `FT5ba3c9d><b`f
-       `FT366178<`f`FT5ba3c9U><U`f`FT366178>`f
-      `FT366178-`f`FT5ba3c9dU><Ub`f`FT366178-`f
-     `FT366178-`f`FT5ba3c9uUUL)UUe`f`FT366178-`f
-     `FT366178:`f`FT5ba3c9U}`f`FT9b6bc8iuc|`f`FT5ba3c9AU`f`FT366178:`f
-    `FT366178!`f`FT5ba3c9UU`f`FT9b6bc8vUUUUc`f`FT5ba3c9U&`f`FT366178!`f
-   `FT366178:`f`FT5ba3c9dU&`f`FT9b6bc8|UUUUc`f`FT5ba3c9UUb`f`FT366178:`f
-    `FT5ba3c9UU&`f`FT9b6bc8|UUUUc`f`FT5ba3c9UUU`f`FT366178-:`f
-  `FT366178!`f `FT5ba3c9UU&`f`FT9b6bc8|UUUUc`f`FT5ba3c9UUU`f `FT366178!`f
- `FT366178v`f  `FT5ba3c9UU&`f`FT9b6bc8|UUUUc`f`FT5ba3c9UUU`f  `FT366178v`f
-`FT366178:`f                  `FT366178:`f
-`FT366178!`f                  `FT366178!`f"""
+_LOGO_ASCII_ART = """         `F367r<`f
+        `F5acd><b`f
+       `F367<`f`F5acU><U`f`F367>`f
+      `F367-`f`F5acdU><Ub`f`F367-`f
+     `F367-`f`F5acuUUL)UUe`f`F367-`f
+     `F367:`f`F5acU}`f`F96ciuc|`f`F5acAU`f`F367:`f
+    `F367!`f`F5acUU`f`F96cvUUUUc`f`F5acU&`f`F367!`f
+   `F367:`f`F5acdU&`f`F96c|UUUUc`f`F5acUUb`f`F367:`f
+    `F5acUU&`f`F96c|UUUUc`f`F5acUUU`f`F367-:`f
+  `F367!`f `F5acUU&`f`F96c|UUUUc`f`F5acUUU`f `F367!`f
+ `F367v`f  `F5acUU&`f`F96c|UUUUc`f`F5acUUU`f  `F367v`f
+`F367:`f                  `F367:`f
+`F367!`f                  `F367!`f"""
 
 _DEFAULT_INDEX = """>NomadPortal-Android
 `cA native Android app for Reticulum & NomadNet`a
@@ -140,15 +160,25 @@ _DEFAULT_INDEX = """>NomadPortal-Android
 
 -
 
-This page is being served live from an Android phone running NomadPortal-Android -- a native Kotlin/Compose app built around the real, embedded Reticulum and LXMF reference implementations (not a reimplementation), for infrastructure-free mesh communication. It's a different project from the original NomadPortal Docker server -- built for carrying in a pocket, not for running on infrastructure you administer.
+`!Open beta`! -- this app works and this page is proof, but it's still under active development. Expect rough edges, and expect things to keep changing. If that's not what you're looking for today, check back later; if it is, keep reading.
+
+-
+
+If you're reading this from another NomadNet client, you've found a real, live instance of NomadPortal-Android -- this page is being served from an ordinary Android phone in someone's pocket, not a server. It's a native Kotlin/Compose app built around the real, embedded Reticulum and LXMF reference implementations (not a reimplementation), for infrastructure-free mesh communication -- a different project from the original NomadPortal Docker server, which is built for infrastructure you administer, not for carrying around.
 
 >>What it does
 
 • Message people over LXMF: text, photos, audio, and files
 • Browse and host NomadNet pages, like this one
-• Connect over TCP and local Wi-Fi discovery (Bluetooth mesh and LoRa are on the way)
+• Connect over TCP and local Wi-Fi discovery, with Bluetooth mesh and RNode/LoRa support in progress
 • A panic-wipe safeguard that securely erases identity and message data in seconds
 • Never asks for location access, full stop
+
+>>Why get it
+
+If you're already on Reticulum, this is a way to carry your identity, contacts, and a node in your pocket instead of leaving them on a machine somewhere -- no separate server to run, no infrastructure to maintain, just a phone. If you're new to Reticulum and NomadNet, this page you're looking at right now is a real example of what the network actually looks like in practice: an ordinary phone, hosting a real page, reachable over whatever link happens to connect the two of you.
+
+There's no app-store listing yet -- get it directly from the source, build it yourself, and see exactly what's running: https://github.com/JamesM92/NomadPortal-Android
 
 >>Why this page is boring on purpose
 
@@ -159,8 +189,6 @@ Pages hosted by NomadPortal-Android are plain Micron markup only -- no Python, n
 Every permission this app requests is optional -- denying any of them just turns that one feature off, the rest of the app keeps working normally. It never requests location access, under any circumstances.
 
 -
-
-If you're reading this from another NomadNet client, you've found a real, live instance -- running on ordinary consumer hardware, nothing but an Android phone. NomadPortal-Android is under active development.
 
 `[See examples.mu on this node`/page/examples.mu] for a quick tour of what this page's own markup can do.
 """
@@ -194,10 +222,10 @@ Combine them: `!`_bold and underlined together`_`!
 
 >>Colors
 
-`Fa30Foreground color`f is set with a backtick, F, then a 3-digit shorthand hex code -- each digit doubled, so a30 becomes aa3300.
-`FT2e8b57Foreground color (precise)`f uses a backtick, F, T, then a full 6-digit hex code instead of the 3-digit shorthand.
+`Fa30Foreground color`f is set with a backtick, F, then a 3-digit shorthand hex code -- each digit doubled, so a30 becomes aa3300. This is the only form this app's own editor ever writes, and the only one used on this page.
+`FT2e8b57Foreground color (precise)`f uses a backtick, F, T, then a full 6-digit hex code instead of the 3-digit shorthand -- real, spec-valid Micron, but not every client renders it; a real client tested against this app's own hosted pages showed raw hex digits instead of a color where this form was used, so this app's own editor deliberately never writes it, even though it would let you match a color exactly rather than one of 16 shades per channel.
 `B502Background color`b works the same way, with B instead of F.
-`BT1a1a2e`FTe0c068Foreground and background together`f`b combine both on the same run -- this is what this editor's own Highlight button writes.
+`BT1a1a2e`FTe0c068Foreground and background together`f`b combines both on the same run using the precise form above, just to demonstrate the syntax -- this app's own editor writes `B223`Fdb6 instead (both 3-digit, the nearest representable shade of each), which is what its Highlight button actually produces.
 
 >>Alignment
 

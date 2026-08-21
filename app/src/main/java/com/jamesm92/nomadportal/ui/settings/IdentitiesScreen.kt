@@ -132,20 +132,28 @@ fun IdentitiesScreen(repository: IdentityRepository, onBack: () -> Unit) {
                 },
                 actions = {
                     IconButton(onClick = {
-                        // Real, on-device-confirmed crash:
-                        // IllegalArgumentException("Can only use lower
-                        // 16 bits for requestCode") from
-                        // ActivityResultRegistry — a known AndroidX
-                        // issue where its internal request-code counter
-                        // can exceed 16 bits on a long-lived Activity
-                        // (many launcher registrations/config changes
-                        // over a long session), unrelated to anything
-                        // this screen does wrong. Not something this
-                        // app can prevent from in here — but a file
-                        // picker crashing the whole app over it is far
-                        // worse than a friendly failure, so this is
-                        // caught defensively rather than left to
-                        // propagate.
+                        // Real, on-device-traced crash this used to hit on
+                        // every single launch (not intermittently, as an
+                        // earlier version of this comment guessed): the
+                        // app's own dependency graph resolved
+                        // androidx.fragment down to 1.2.5 (an old
+                        // transitive pull from appcompat/camera-core, see
+                        // libs.versions.toml's own androidxFragment
+                        // comment for the full root-cause trace), whose
+                        // FragmentActivity.startActivityForResult
+                        // override rejects any requestCode >= 0x10000 —
+                        // but ComponentActivity's own
+                        // ActivityResultRegistry (what every
+                        // rememberLauncherForActivityResult call here
+                        // goes through) deliberately generates codes
+                        // starting at exactly 0x10000. Fixed at the root
+                        // by forcing androidx.fragment up to a modern
+                        // version (the checkForValidRequestCode
+                        // restriction was removed there) — this catch
+                        // stays as defense-in-depth (a file picker
+                        // crashing the whole app is far worse than a
+                        // friendly failure message), not as the actual
+                        // fix.
                         try {
                             importLauncher.launch(arrayOf("*/*"))
                         } catch (e: IllegalArgumentException) {
