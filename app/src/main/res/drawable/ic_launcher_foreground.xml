@@ -16,24 +16,37 @@
      NomadPortalPurple (#9b6bc8, doorway), and the same 0.6x-darkened
      tentColor (#366178) TentPortalMark itself computes for the seam/guy
      lines. Keep this in sync with AppLogo.kt's own geometry if that
-     composable's proportions ever change. -->
+     composable's proportions ever change — including draw order: guy
+     lines draw *before* the tent fill (so it covers their anchor ends,
+     matching a real line vanishing into the fabric — a real on-device
+     correction: "the tent stake lines need to be under the tent
+     itself"), the ridge seam draws *after* it (stays visible on top, a
+     stitching detail rather than something the fabric covers). -->
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
     android:width="108dp"
     android:height="108dp"
     android:viewportWidth="108"
     android:viewportHeight="108">
-    <!-- Tent silhouette (filled) -->
-    <path
-        android:fillColor="#5ba3c9"
-        android:pathData="M34.2,79.08 L34.2,57.3 L54,26.28 L73.8,57.3 L73.8,79.08 Z" />
-    <!-- Ridge seam + guy lines (stroked, round caps — matches
-         TentPortalMark's own StrokeCap.Round) -->
+    <!-- Guy lines (stroked, round caps — matches TentPortalMark's own
+         StrokeCap.Round), drawn first so the tent fill below covers
+         their anchor ends. -->
     <path
         android:strokeColor="#366178"
         android:strokeWidth="3.3"
         android:strokeLineCap="round"
         android:fillColor="#00000000"
-        android:pathData="M54,26.28 L54,61.92 M44.1,41.79 L23.64,85.68 M63.9,41.79 L84.36,85.68" />
+        android:pathData="M44.1,41.79 L23.64,85.68 M63.9,41.79 L84.36,85.68" />
+    <!-- Tent silhouette (filled) -->
+    <path
+        android:fillColor="#5ba3c9"
+        android:pathData="M34.2,79.08 L34.2,57.3 L54,26.28 L73.8,57.3 L73.8,79.08 Z" />
+    <!-- Ridge seam, drawn after the tent fill so it stays visible on top. -->
+    <path
+        android:strokeColor="#366178"
+        android:strokeWidth="3.3"
+        android:strokeLineCap="round"
+        android:fillColor="#00000000"
+        android:pathData="M54,26.28 L54,61.92" />
     <!-- Portal doorway: flat sides + semicircular arch top, filled -->
     <path
         android:fillColor="#9b6bc8"
