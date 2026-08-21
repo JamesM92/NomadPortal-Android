@@ -629,9 +629,28 @@ private fun RealRenderedBlockRow(rawText: String, onFocus: () -> Unit, modifier:
         modifier = modifier
             .clickable(onClick = onFocus)
             .horizontalScroll(rememberScrollState())
-            .padding(horizontal = 8.dp, vertical = 4.dp),
+            // vertical = 1.dp, not the original 4.dp -- each raw line
+            // becomes its own separate BlockRow (parseMicronToBlocks
+            // splits per-line), so this padding stacks between every
+            // consecutive row; 4.dp+4.dp between neighbors read as a
+            // real visible gap on tightly-packed multi-line content like
+            // this page's own logo art (a real on-device report — "the
+            // real viewer has a wider gap between rows" — traced partly
+            // to this, partly to the lineHeight fix below).
+            .padding(horizontal = 8.dp, vertical = 1.dp),
     ) {
-        CompositionLocalProvider(LocalTextStyle provides MaterialTheme.typography.bodyMedium.copy(fontSize = bodyFontSize)) {
+        // lineHeight scaled down by the same 0.85 factor as fontSize,
+        // not left at bodyMedium's own unscaled value -- the other real
+        // half of the "wider gap" report: fontSize shrank but the line
+        // box itself stayed at bodyMedium's full 20sp*scale, leaving
+        // visible extra leading independent of this row's own padding
+        // above. Same fix as BrowserScreen.kt's own CompositionLocalProvider.
+        CompositionLocalProvider(
+            LocalTextStyle provides MaterialTheme.typography.bodyMedium.copy(
+                fontSize = bodyFontSize,
+                lineHeight = MaterialTheme.typography.bodyMedium.lineHeight * 0.85f,
+            ),
+        ) {
             if (parsedBlocks.isEmpty()) {
                 // A blank line or a standalone "``" reset line -- micron2compose
                 // emits no Block for either, but the row still needs a visible/

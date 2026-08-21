@@ -846,8 +846,22 @@ fun BrowserScreen(
                         // is controlled here. bodyFontSize (bodyMedium's
                         // real size) still tracks the user's Settings →
                         // text size multiplier, same as every other role.
+                        //
+                        // lineHeight scaled down by the same 0.85 factor,
+                        // not left at bodyMedium's own unscaled value —
+                        // a real on-device report ("wider gap between
+                        // rows" on multi-line content like this page's
+                        // own logo art) traced to exactly this: fontSize
+                        // shrank to 0.85x but the line box itself stayed
+                        // at bodyMedium's full 20sp*scale, leaving
+                        // visible extra leading above/below every line
+                        // that had nothing to do with Micron's own
+                        // per-block spacing.
                         CompositionLocalProvider(
-                            LocalTextStyle provides MaterialTheme.typography.bodyMedium.copy(fontSize = bodyFontSize),
+                            LocalTextStyle provides MaterialTheme.typography.bodyMedium.copy(
+                                fontSize = bodyFontSize,
+                                lineHeight = MaterialTheme.typography.bodyMedium.lineHeight * 0.85f,
+                            ),
                         ) {
                             MicronPage(
                                 result = result!!,
