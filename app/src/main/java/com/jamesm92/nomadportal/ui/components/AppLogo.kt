@@ -179,9 +179,12 @@ fun TentPortalMark(modifier: Modifier = Modifier, markSize: Dp = 24.dp) {
         // doesn't reliably clip content drawn past its own bounds, and
         // whether that content still renders (rather than being cut off
         // by whatever parent container this mark sits in) shouldn't be
-        // left to chance.
-        val stakeLeft = Offset(0f, h * 0.98f)
-        val stakeRight = Offset(w, h * 0.98f)
+        // left to chance. y matches wallBottomLeft/wallBottomRight's own
+        // 0.88f exactly — a real on-device correction: the stakes used
+        // to sit lower than the tent's own base (0.98f), reading as
+        // floating below the tent instead of grounded level with it.
+        val stakeLeft = Offset(0f, h * 0.88f)
+        val stakeRight = Offset(w, h * 0.88f)
 
         // A same-color line would vanish against the solid fill below —
         // the ridge seam and guy lines both use a darkened tint of the
