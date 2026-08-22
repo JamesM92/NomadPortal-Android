@@ -28,12 +28,16 @@ android {
         // an app that otherwise supports API 24+.
         minSdk = 31
         targetSdk = 37
-        versionCode = 1
-        // v0.0.1 — this app's real first (beta) release tag, per explicit
-        // direction ahead of cutting it. Was "0.1.0" (an earlier, informal
-        // placeholder from initial scaffolding, before there was a real
-        // release to version at all).
-        versionName = "0.0.1"
+        versionCode = 2
+        // v0.0.2 — second real beta release tag. v0.0.1 (versionCode 1)
+        // was cut before a substantial batch of real fixes/features
+        // landed on dev this same session (identity-import crash fix,
+        // 3-hex Micron colors, Save As, own-hosted-node browsing fix,
+        // icon categories, real incoming-call notifications, and more)
+        // — this bump exists so that work actually reaches a real,
+        // installable beta build instead of sitting merged-but-
+        // unreleased indefinitely.
+        versionName = "0.0.2"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
 
