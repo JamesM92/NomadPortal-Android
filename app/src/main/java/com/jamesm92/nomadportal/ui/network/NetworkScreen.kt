@@ -358,26 +358,23 @@ private fun TcpConnectionStatusRow(connection: TcpConnection) {
             )
             // Per explicit direction ("the lifetime data up and down
             // should be per connection in tcp, and should show current
-            // speed"), then refined by immediate follow-up direction
-            // once the combined line was actually seen live on-device
-            // ("the current speed should be on its own row so we avoid
-            // wrapping, we dont need the lifetime now"): current speed
-            // only, its own row — real per-connection data (see
-            // get_tcp_connections_json's own doc comment for the real
-            // .name-collision bug this sits on top of the fix for).
-            // Only shown while actually flowing (both 0 while idle, or
-            // detached) — a "0 B/s" readout sitting there permanently
-            // would just be noise, same "only show once there's real
-            // data" convention InterfaceStatusRow's own byteStats
-            // already uses for its own lifetime line above.
-            if (connection.rxBytesPerSecond >= 1.0 || connection.txBytesPerSecond >= 1.0) {
-                Text(
-                    text = "↓${formatBytes(connection.rxBytesPerSecond.toLong())}/s " +
-                        "↑${formatBytes(connection.txBytesPerSecond.toLong())}/s",
-                    style = MaterialTheme.typography.labelSmall,
-                    color = NomadTextDim,
-                )
-            }
+            // speed"), refined twice more by immediate on-device
+            // follow-up: first "the current speed should be on its own
+            // row so we avoid wrapping, we dont need the lifetime now"
+            // (own row, dropped the lifetime line), then "the network
+            // speed should stay visible even if it is 0, it
+            // disappearing and reappearing is distracting" (unconditional
+            // now — this row used to only render while actually
+            // flowing, which meant it popped in and out between traffic
+            // bursts on an otherwise-idle-but-online connection; always
+            // shown now, "↓0 B/s ↑0 B/s" included, so the row's presence
+            // itself stays stable and only the numbers change).
+            Text(
+                text = "↓${formatBytes(connection.rxBytesPerSecond.toLong())}/s " +
+                    "↑${formatBytes(connection.txBytesPerSecond.toLong())}/s",
+                style = MaterialTheme.typography.labelSmall,
+                color = NomadTextDim,
+            )
         }
     }
 }
