@@ -11,6 +11,7 @@ import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.consumeWindowInsets
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
@@ -395,7 +396,21 @@ fun ConversationScreen(
         // instead of being pushed up above it (confirmed: a real on-device
         // send test showed the input field invisible behind the keyboard,
         // only the suggestion bar visible above it).
-        Column(modifier = Modifier.padding(innerPadding).imePadding()) {
+        //
+        // consumeWindowInsets(innerPadding) — a second, real on-device bug
+        // found later: without this, imePadding() has no way to know
+        // innerPadding already consumed the navigation-bar's own share of
+        // the bottom inset, so it stacks the keyboard's height *on top of*
+        // that instead of replacing it — the input field floated a real,
+        // visible gap (the navigation bar's own height) above the actual
+        // keyboard. This tells imePadding "that part of the inset is
+        // already accounted for", so it only adds what's actually left.
+        Column(
+            modifier = Modifier
+                .padding(innerPadding)
+                .consumeWindowInsets(innerPadding)
+                .imePadding(),
+        ) {
             LazyColumn(
                 state = listState,
                 modifier = Modifier
@@ -411,6 +426,28 @@ fun ConversationScreen(
                 }
             }
 
+            // Real bug found via a direct user report across 3 physical
+            // phones ("the error for most attempts to message users is
+            // 'no delivery identitiy registered for this user'"). Root
+            // cause: `AnnounceStatus.lxmfAddress` is null until the LXMF
+            // delivery router actually exists — orchestrator.py only
+            // registers it inside `_run_deferred_setup()`'s "LXMF
+            // delivery setup" step, which itself waits on
+            // `_browser.wait_ready()` first (RNS.Reticulum() init is
+            // documented, in this same file, to take 60-300s on real
+            // deployments). There was previously no UI-level signal for
+            // this window at all — the app looked fully interactive
+            // (conversations list, contact names, everything else
+            // already worked off cached/local state) while sendMessage()
+            // synchronously threw that exact raw string underneath.
+            // Checked ahead of sendBlocked/sendError below: this is the
+            // more fundamental "not ready at all" state, not just "ready
+            // but shouldn't send right now."
+            val notReadyYet = announceStatus?.lxmfAddress == null
+            val startingUpNote = if (notReadyYet) {
+                "Still starting up — please wait a moment before sending."
+            } else null
+
             // Proactive warning, per explicit design direction ("messages
             // need to have a note that you wont be allowed to send if it
             // is disabled") — shown before the user even tries to send,
@@ -418,7 +455,7 @@ fun ConversationScreen(
             // (a real send failure) is the reactive fallback for whatever
             // this proactive check couldn't predict.
             val blockedNote = announceStatus?.takeIf { it.sendBlocked }?.sendBlockedReason
-            (blockedNote ?: sendError)?.let { note ->
+            (startingUpNote ?: blockedNote ?: sendError)?.let { note ->
                 Text(
                     text = note,
                     style = MaterialTheme.typography.bodyMedium,
@@ -480,25 +517,35 @@ fun ConversationScreen(
                         )
                     }
                 }
+                // Both send entry points (keyboard "Send" action and the
+                // icon button) route through this one guard rather than
+                // calling sendDraft() directly, so notReadyYet only has
+                // to be checked in one place. Deliberately still lets the
+                // tap through to set sendError (not just disable the
+                // button silently) — see startingUpNote's own doc comment
+                // above for the real bug this closes; a tap during this
+                // window now reinforces the already-visible proactive
+                // note instead of surfacing the raw Python exception text
+                // sendDraft's catch block would otherwise show.
+                val onSendTapped = {
+                    if (notReadyYet) {
+                        sendError = "Still starting up — please wait a moment before sending."
+                    } else {
+                        sendDraft(draft, contact.lxmfHash, repository, scope, onError = { sendError = it }) {
+                            draft = ""
+                            sendError = null
+                        }
+                    }
+                }
                 OutlinedTextField(
                     value = draft,
                     onValueChange = { draft = it },
                     modifier = Modifier.weight(1f),
                     placeholder = { Text("Message") },
                     keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send),
-                    keyboardActions = KeyboardActions(onSend = {
-                        sendDraft(draft, contact.lxmfHash, repository, scope, onError = { sendError = it }) {
-                            draft = ""
-                            sendError = null
-                        }
-                    }),
+                    keyboardActions = KeyboardActions(onSend = { onSendTapped() }),
                 )
-                IconButton(onClick = {
-                    sendDraft(draft, contact.lxmfHash, repository, scope, onError = { sendError = it }) {
-                        draft = ""
-                        sendError = null
-                    }
-                }) {
+                IconButton(onClick = onSendTapped) {
                     Icon(Icons.AutoMirrored.Filled.Send, contentDescription = "Send")
                 }
             }

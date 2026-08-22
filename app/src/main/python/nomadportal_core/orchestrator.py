@@ -3115,8 +3115,20 @@ def send_message(
     allowed, block_reason = _check_send_allowed()
     if not allowed:
         raise RuntimeError(block_reason)
+    # Real regression found+fixed while investigating a live "No delivery
+    # identity registered for this user" report: this call hardcoded ""
+    # for both title and user_sub, missed by the sweep this module's own
+    # _active_user_sub doc comment describes ("every function below that
+    # used to hardcode user_sub="" now reads this instead"). Harmless for
+    # any install that has only ever used its original single identity
+    # (_active_user_sub stays "" there too — see that comment), but a
+    # real, reproducible break for multi-identity: switch_active_identity()
+    # to a second identity (real user_sub = that identity's own hexhash,
+    # per IdentityStore.create()'s own doc comment) and every send from
+    # then on looked up the router under the wrong ("") key instead of
+    # the actually-active one.
     ok, result = _messaging.send_message(
-        dest_hash_hex, content, "", "",
+        dest_hash_hex, content, "", _active_user_sub,
         attachment_filename=attachment_filename,
         attachment_data=bytes(attachment_data) if attachment_data is not None else None,
         attachment_kind=attachment_kind,
