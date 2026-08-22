@@ -5,12 +5,10 @@ import androidx.compose.ui.graphics.Color
 import com.chaquo.python.PyException
 import com.chaquo.python.Python
 import com.jamesm92.nomadportal.data.SettingsRepository
+import com.jamesm92.nomadportal.data.pollingFlow
 import java.io.IOException
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
-import kotlinx.coroutines.flow.flow
-import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.withContext
 import org.json.JSONArray
 import org.json.JSONObject
@@ -44,19 +42,11 @@ class RealMessagingRepository(private val settings: SettingsRepository) : Messag
         Python.getInstance().getModule("nomadportal_core.orchestrator")
     }
 
-    override fun conversations(): Flow<List<ConversationSummary>> = flow {
-        while (true) {
-            emit(fetchConversations())
-            delay(POLL_INTERVAL_MS)
-        }
-    }.flowOn(Dispatchers.IO)
+    override fun conversations(): Flow<List<ConversationSummary>> =
+        pollingFlow(POLL_INTERVAL_MS) { fetchConversations() }
 
-    override fun messages(contactHash: String): Flow<List<Message>> = flow {
-        while (true) {
-            emit(fetchMessages(contactHash))
-            delay(POLL_INTERVAL_MS)
-        }
-    }.flowOn(Dispatchers.IO)
+    override fun messages(contactHash: String): Flow<List<Message>> =
+        pollingFlow(POLL_INTERVAL_MS) { fetchMessages(contactHash) }
 
     override suspend fun sendMessage(
         contactHash: String,
@@ -118,15 +108,10 @@ class RealMessagingRepository(private val settings: SettingsRepository) : Messag
         }
     }
 
-    override fun announceStatus(): Flow<AnnounceStatus> = flow {
-        while (true) {
-            emit(fetchAnnounceStatus())
-            // Ticks faster than the main POLL_INTERVAL_MS — this backs a
-            // live "time since last announce" display that should count
-            // up smoothly, not jump in 4s steps.
-            delay(1000L)
-        }
-    }.flowOn(Dispatchers.IO)
+    // Ticks faster than the main POLL_INTERVAL_MS — this backs a live
+    // "time since last announce" display that should count up smoothly,
+    // not jump in 4s steps.
+    override fun announceStatus(): Flow<AnnounceStatus> = pollingFlow(1000L) { fetchAnnounceStatus() }
 
     override suspend fun setAutoAnnounceInterval(seconds: Int) {
         withContext(Dispatchers.IO) {
@@ -158,22 +143,13 @@ class RealMessagingRepository(private val settings: SettingsRepository) : Messag
             orchestrator.callAttr("set_disappearing_timer", contactHash, seconds).toBoolean()
         }
 
-    override fun propagationSyncStatus(): Flow<PropagationSyncStatus> = flow {
-        while (true) {
-            emit(fetchPropagationSyncStatus())
-            // Same faster-than-POLL_INTERVAL_MS reasoning as
-            // announceStatus() above — this backs a live in-progress
-            // transfer-state display, not just a slow-changing summary.
-            delay(1000L)
-        }
-    }.flowOn(Dispatchers.IO)
+    // Same faster-than-POLL_INTERVAL_MS reasoning as announceStatus() above —
+    // this backs a live in-progress transfer-state display, not just a
+    // slow-changing summary.
+    override fun propagationSyncStatus(): Flow<PropagationSyncStatus> =
+        pollingFlow(1000L) { fetchPropagationSyncStatus() }
 
-    override fun relayNodes(): Flow<List<RelayNode>> = flow {
-        while (true) {
-            emit(fetchRelayNodes())
-            delay(POLL_INTERVAL_MS)
-        }
-    }.flowOn(Dispatchers.IO)
+    override fun relayNodes(): Flow<List<RelayNode>> = pollingFlow(POLL_INTERVAL_MS) { fetchRelayNodes() }
 
     override suspend fun triggerPropagationSync(): String = withContext(Dispatchers.IO) {
         try {

@@ -1,11 +1,9 @@
 package com.jamesm92.nomadportal.data.calling
 
 import com.chaquo.python.Python
+import com.jamesm92.nomadportal.data.pollingFlow
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
-import kotlinx.coroutines.flow.flow
-import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.withContext
 import org.json.JSONArray
 import org.json.JSONObject
@@ -21,12 +19,7 @@ class RealCallRepository : CallRepository {
         Python.getInstance().getModule("nomadportal_core.orchestrator")
     }
 
-    override fun callState(): Flow<CallState> = flow {
-        while (true) {
-            emit(fetchState())
-            delay(POLL_INTERVAL_MS)
-        }
-    }.flowOn(Dispatchers.IO)
+    override fun callState(): Flow<CallState> = pollingFlow(POLL_INTERVAL_MS) { fetchState() }
 
     private fun fetchState(): CallState {
         val obj = JSONObject(orchestrator.callAttr("get_call_status_json").toString())
@@ -51,12 +44,7 @@ class RealCallRepository : CallRepository {
     private fun JSONObject.optTimestampMillisOrNull(key: String): Long? =
         if (isNull(key)) null else (optDouble(key, 0.0) * 1000).toLong()
 
-    override fun callHistory(): Flow<List<CallHistoryEntry>> = flow {
-        while (true) {
-            emit(fetchHistory())
-            delay(POLL_INTERVAL_MS)
-        }
-    }.flowOn(Dispatchers.IO)
+    override fun callHistory(): Flow<List<CallHistoryEntry>> = pollingFlow(POLL_INTERVAL_MS) { fetchHistory() }
 
     private fun fetchHistory(): List<CallHistoryEntry> {
         val array = JSONArray(orchestrator.callAttr("get_call_history_json").toString())

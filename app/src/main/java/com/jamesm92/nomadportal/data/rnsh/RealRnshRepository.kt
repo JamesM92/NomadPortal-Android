@@ -3,12 +3,10 @@ package com.jamesm92.nomadportal.data.rnsh
 import android.util.Base64
 import com.chaquo.python.PyException
 import com.chaquo.python.Python
+import com.jamesm92.nomadportal.data.pollingFlow
 import java.io.IOException
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
-import kotlinx.coroutines.flow.flow
-import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.withContext
 import org.json.JSONObject
 
@@ -24,19 +22,9 @@ class RealRnshRepository : RnshRepository {
         Python.getInstance().getModule("nomadportal_core.orchestrator")
     }
 
-    override fun status(): Flow<RnshStatus> = flow {
-        while (true) {
-            emit(fetchStatus())
-            delay(STATUS_POLL_INTERVAL_MS)
-        }
-    }.flowOn(Dispatchers.IO)
+    override fun status(): Flow<RnshStatus> = pollingFlow(STATUS_POLL_INTERVAL_MS) { fetchStatus() }
 
-    override fun outputChunks(): Flow<ByteArray> = flow {
-        while (true) {
-            emit(fetchOutputChunk())
-            delay(OUTPUT_POLL_INTERVAL_MS)
-        }
-    }.flowOn(Dispatchers.IO)
+    override fun outputChunks(): Flow<ByteArray> = pollingFlow(OUTPUT_POLL_INTERVAL_MS) { fetchOutputChunk() }
 
     override suspend fun connect(destinationHash: String) {
         withContext(Dispatchers.IO) {

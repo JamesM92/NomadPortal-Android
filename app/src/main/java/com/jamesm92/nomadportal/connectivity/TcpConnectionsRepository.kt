@@ -1,11 +1,9 @@
 package com.jamesm92.nomadportal.connectivity
 
 import com.chaquo.python.Python
+import com.jamesm92.nomadportal.data.pollingFlow
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
-import kotlinx.coroutines.flow.flow
-import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.withContext
 import org.json.JSONObject
 
@@ -83,12 +81,7 @@ class RealTcpConnectionsRepository : TcpConnectionsRepository {
         Python.getInstance().getModule("nomadportal_core.orchestrator")
     }
 
-    override fun connections(): Flow<List<TcpConnection>> = flow {
-        while (true) {
-            emit(fetchConnections())
-            delay(POLL_INTERVAL_MS)
-        }
-    }.flowOn(Dispatchers.IO)
+    override fun connections(): Flow<List<TcpConnection>> = pollingFlow(POLL_INTERVAL_MS) { fetchConnections() }
 
     override suspend fun addConnection(name: String, host: String, port: Int) {
         withContext(Dispatchers.IO) {

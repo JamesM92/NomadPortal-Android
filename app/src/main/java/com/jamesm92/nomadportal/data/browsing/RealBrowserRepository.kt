@@ -3,12 +3,10 @@ package com.jamesm92.nomadportal.data.browsing
 import com.chaquo.python.PyException
 import com.chaquo.python.PyObject
 import com.chaquo.python.Python
+import com.jamesm92.nomadportal.data.pollingFlow
 import java.io.IOException
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
-import kotlinx.coroutines.flow.flow
-import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.withContext
 import org.json.JSONArray
 
@@ -34,12 +32,7 @@ class RealBrowserRepository : BrowserRepository {
         Python.getInstance().getModule("nomadportal_core.orchestrator")
     }
 
-    override fun discoveredNodes(): Flow<List<NodeInfo>> = flow {
-        while (true) {
-            emit(fetchNodes())
-            delay(POLL_INTERVAL_MS)
-        }
-    }.flowOn(Dispatchers.IO)
+    override fun discoveredNodes(): Flow<List<NodeInfo>> = pollingFlow(POLL_INTERVAL_MS) { fetchNodes() }
 
     private fun fetchNodes(): List<NodeInfo> {
         val array = JSONArray(orchestrator.callAttr("get_nodes_json").toString())

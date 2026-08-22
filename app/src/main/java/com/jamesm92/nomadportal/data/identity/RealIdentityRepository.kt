@@ -7,12 +7,10 @@ import com.jamesm92.nomadportal.data.browsing.PageCacheStore
 import com.jamesm92.nomadportal.data.messaging.ContactIcon
 import com.jamesm92.nomadportal.data.messaging.parseHexColor
 import com.jamesm92.nomadportal.data.messaging.toHexString
+import com.jamesm92.nomadportal.data.pollingFlow
 import java.io.IOException
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
-import kotlinx.coroutines.flow.flow
-import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.withContext
 import org.json.JSONArray
 import org.json.JSONObject
@@ -38,12 +36,7 @@ class RealIdentityRepository(
         Python.getInstance().getModule("nomadportal_core.orchestrator")
     }
 
-    override fun identities(): Flow<List<Identity>> = flow {
-        while (true) {
-            emit(fetchIdentities())
-            delay(POLL_INTERVAL_MS)
-        }
-    }.flowOn(Dispatchers.IO)
+    override fun identities(): Flow<List<Identity>> = pollingFlow(POLL_INTERVAL_MS) { fetchIdentities() }
 
     private fun fetchIdentities(): List<Identity> {
         val obj = JSONObject(orchestrator.callAttr("list_identities_json").toString())

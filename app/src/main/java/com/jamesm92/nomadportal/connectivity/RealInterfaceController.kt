@@ -3,14 +3,12 @@ package com.jamesm92.nomadportal.connectivity
 import android.content.Context
 import com.chaquo.python.Python
 import com.jamesm92.nomadportal.data.SettingsRepository
+import com.jamesm92.nomadportal.data.pollingFlow
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
-import kotlinx.coroutines.flow.flow
-import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.withContext
 import org.json.JSONObject
@@ -132,12 +130,8 @@ class RealInterfaceController(
         settings.setNodeHostingEnabled(enabled)
     }
 
-    override fun hostedNodeStatus(): Flow<HostedNodeStatus> = flow {
-        while (true) {
-            emit(fetchHostedNodeStatus())
-            delay(POLL_INTERVAL_MS)
-        }
-    }.flowOn(Dispatchers.IO)
+    override fun hostedNodeStatus(): Flow<HostedNodeStatus> =
+        pollingFlow(POLL_INTERVAL_MS) { fetchHostedNodeStatus() }
 
     private fun fetchHostedNodeStatus(): HostedNodeStatus {
         val obj = JSONObject(orchestrator.callAttr("get_site_status_json").toString())
@@ -167,21 +161,13 @@ class RealInterfaceController(
         orchestrator.callAttr("announce_site_now").toBoolean()
     }
 
-    override fun hasDownTcpConnection(): Flow<Boolean> = flow {
-        while (true) {
-            emit(fetchHasDownTcpConnection())
-            delay(POLL_INTERVAL_MS)
-        }
-    }.flowOn(Dispatchers.IO)
+    override fun hasDownTcpConnection(): Flow<Boolean> =
+        pollingFlow(POLL_INTERVAL_MS) { fetchHasDownTcpConnection() }
 
     override fun bluetoothMeshStatus(): Flow<BluetoothMeshStatus> = bluetoothMesh.status
 
-    override fun announceInterfaces(): Flow<Map<String, String>> = flow {
-        while (true) {
-            emit(fetchAnnounceInterfaces())
-            delay(POLL_INTERVAL_MS)
-        }
-    }.flowOn(Dispatchers.IO)
+    override fun announceInterfaces(): Flow<Map<String, String>> =
+        pollingFlow(POLL_INTERVAL_MS) { fetchAnnounceInterfaces() }
 
     private fun fetchAnnounceInterfaces(): Map<String, String> {
         val obj = JSONObject(orchestrator.callAttr("get_announce_interfaces_json").toString())
@@ -194,12 +180,8 @@ class RealInterfaceController(
         return result
     }
 
-    override fun interfaceByteStats(): Flow<Map<String, InterfaceByteStats>> = flow {
-        while (true) {
-            emit(fetchInterfaceByteStats())
-            delay(POLL_INTERVAL_MS)
-        }
-    }.flowOn(Dispatchers.IO)
+    override fun interfaceByteStats(): Flow<Map<String, InterfaceByteStats>> =
+        pollingFlow(POLL_INTERVAL_MS) { fetchInterfaceByteStats() }
 
     private fun fetchInterfaceByteStats(): Map<String, InterfaceByteStats> {
         val obj = JSONObject(orchestrator.callAttr("get_interface_byte_stats_json").toString())
