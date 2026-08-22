@@ -35,8 +35,6 @@ import androidx.compose.material.icons.filled.Code
 import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.filled.FavoriteBorder
 import androidx.compose.material.icons.filled.Fingerprint
-import androidx.compose.material.icons.filled.BluetoothDisabled
-import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
@@ -83,8 +81,6 @@ import com.jamesm92.micron2compose.parser.LinkRun
 import com.jamesm92.micron2compose.parser.LinkTarget
 import com.jamesm92.micron2compose.parser.MicronConverter
 import com.jamesm92.micron2compose.parser.TextRun
-import com.jamesm92.nomadportal.connectivity.InterfaceController
-import com.jamesm92.nomadportal.connectivity.TcpConnectionsRepository
 import com.jamesm92.nomadportal.data.SettingsRepository
 import com.jamesm92.nomadportal.data.browsing.BrowserRepository
 import com.jamesm92.nomadportal.data.browsing.PageAddress
@@ -151,19 +147,6 @@ private enum class PageFetchStatus {
     REFRESHING,
     LIVE,
     FAILED,
-
-    /** Real request: "it should not request site connections if its only
-     * on bluetooth" — a fetch was never even attempted because this
-     * device currently has Bluetooth mesh on and no online TCP
-     * connection. Site announces/node discovery still flow over
-     * Bluetooth mesh normally (unaffected, see [BrowserRepository]'s own
-     * discovery path) — this only gates the actual page-content fetch
-     * (RNS Link + Resource transfer), which is what turned out to be
-     * unreliable/very slow over this transport in real 3-phone testing.
-     * Distinct from [FAILED] (a real attempt that came back negative) —
-     * this is "never tried," so it's never shown alongside cached
-     * content the same way FAILED can be. */
-    BLUETOOTH_ONLY_BLOCKED,
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -173,24 +156,19 @@ fun BrowserScreen(
     pageCacheStore: PageCacheStore,
     identityRepository: IdentityRepository,
     settingsRepository: SettingsRepository,
-    interfaceController: InterfaceController,
-    tcpConnectionsRepository: TcpConnectionsRepository,
     startAddress: PageAddress,
     onBack: () -> Unit,
 ) {
-    // Real request, following a live 3-phone Bluetooth-mesh test where
-    // page loads were unreliable/very slow (root-caused to BLE's own
-    // bandwidth limits plus this mesh's dumb-flood-not-routed design —
-    // see MeshTransport's own doc comment — not something worth chasing
-    // with a bigger mesh rewrite right now): "it should not request site
-    // connections if its only on bluetooth [mesh]... it can still forward
-    // site announces." Node/announce discovery is untouched — this only
-    // gates the actual page-content fetch below.
-    val bluetoothMeshEnabled by interfaceController.bluetoothMeshEnabled.collectAsState()
-    val tcpConnections by tcpConnectionsRepository.connections().collectAsState(initial = emptyList())
-    val anyTcpOnline = tcpConnections.any { it.online }
-    val bluetoothOnlyBlocked = bluetoothMeshEnabled && !anyTcpOnline
-
+    // Real product decision, reverted 2026-08-22: this used to gate live
+    // page-content fetches behind "has a TCP connection" whenever Bluetooth
+    // mesh was the only interface up, following a live 3-phone test where
+    // page loads over BLE-only were unreliable/very slow. Removed for now
+    // per direct instruction, following this same session's real mesh
+    // reliability fixes (per-neighbor RNS routing, a duplicate-send bug
+    // that was doubling airtime to every neighbor) — worth re-testing
+    // whether BLE-only page loads are actually usable now before deciding
+    // whether this block should come back. See MeshTransport.kt's own
+    // history for the underlying mesh work this depends on.
     val pageCacheEnabledSetting by settingsRepository.pageCacheEnabled.collectAsState(initial = true)
     // Page cache is identity-scoped (per explicit direction — see
     // PageCacheStore's own doc comment) — activeIdentity stays null
@@ -375,15 +353,8 @@ fun BrowserScreen(
             }
         }
 
-        // See bluetoothOnlyBlocked's own doc comment above — a cached
-        // copy (if any) still shows either way, this only decides
-        // whether a real live fetch is attempted.
-        if (bluetoothOnlyBlocked) {
-            fetchStatus = PageFetchStatus.BLUETOOTH_ONLY_BLOCKED
-        } else {
-            if (showingCache) fetchStatus = PageFetchStatus.REFRESHING
-            refreshLive(alreadyShowingContent = showingCache)
-        }
+        if (showingCache) fetchStatus = PageFetchStatus.REFRESHING
+        refreshLive(alreadyShowingContent = showingCache)
     }
 
     pendingWarning?.let { warning ->
@@ -442,15 +413,6 @@ fun BrowserScreen(
                                 PageFetchStatus.FAILED -> {
                                     Spacer(modifier = Modifier.width(8.dp))
                                     StatusDot(color = MaterialTheme.colorScheme.error, size = 8.dp)
-                                }
-                                PageFetchStatus.BLUETOOTH_ONLY_BLOCKED -> {
-                                    Spacer(modifier = Modifier.width(8.dp))
-                                    Icon(
-                                        Icons.Filled.BluetoothDisabled,
-                                        contentDescription = "Not refreshed — Bluetooth mesh only, no TCP connection",
-                                        tint = MaterialTheme.colorScheme.error,
-                                        modifier = Modifier.size(14.dp),
-                                    )
                                 }
                                 null -> Unit
                             }
@@ -611,49 +573,6 @@ fun BrowserScreen(
                     color = MaterialTheme.colorScheme.error,
                     modifier = Modifier.padding(16.dp),
                 )
-                // No cached copy to fall back on and a live fetch was
-                // never attempted (see bluetoothOnlyBlocked's own doc
-                // comment) — an honest explanation instead of a spinner
-                // that would just look stuck forever, since this fetch
-                // genuinely isn't going to happen on its own.
-                result == null && fetchStatus == PageFetchStatus.BLUETOOTH_ONLY_BLOCKED -> Column(
-                    modifier = Modifier.fillMaxSize().padding(24.dp),
-                    horizontalAlignment = Alignment.CenterHorizontally,
-                    verticalArrangement = Arrangement.Center,
-                ) {
-                    Icon(
-                        Icons.Filled.BluetoothDisabled,
-                        contentDescription = null,
-                        tint = NomadTextDim,
-                        modifier = Modifier.size(40.dp),
-                    )
-                    Text(
-                        text = "Sites aren't available over Bluetooth mesh alone",
-                        style = MaterialTheme.typography.titleMedium,
-                        modifier = Modifier.padding(top = 16.dp),
-                    )
-                    Text(
-                        text = "This device only has Bluetooth mesh connected right now. " +
-                            "Loading pages needs a TCP connection — messages and node " +
-                            "announces still work fine over Bluetooth mesh.",
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = NomadTextDim,
-                        modifier = Modifier.padding(top = 8.dp),
-                    )
-                    Button(
-                        onClick = {
-                            scope.launch {
-                                if (!bluetoothOnlyBlocked) {
-                                    fetchStatus = PageFetchStatus.REFRESHING
-                                    refreshLive(alreadyShowingContent = false)
-                                }
-                            }
-                        },
-                        modifier = Modifier.padding(top = 16.dp),
-                    ) {
-                        Text("Retry")
-                    }
-                }
                 // Checked ahead of the rendered-page branch below —
                 // `showRawView` wins over `result != null` whenever both
                 // are true, since toggling Raw is meant to *replace* the
@@ -893,12 +812,8 @@ fun BrowserScreen(
                                         val shouldRefresh = pullDistance > pullRefreshThresholdPx
                                         scope.launch {
                                             if (shouldRefresh) {
-                                                if (bluetoothOnlyBlocked) {
-                                                    fetchStatus = PageFetchStatus.BLUETOOTH_ONLY_BLOCKED
-                                                } else {
-                                                    fetchStatus = PageFetchStatus.REFRESHING
-                                                    refreshLive(alreadyShowingContent = true)
-                                                }
+                                                fetchStatus = PageFetchStatus.REFRESHING
+                                                refreshLive(alreadyShowingContent = true)
                                             }
                                         }
                                         scope.launch {

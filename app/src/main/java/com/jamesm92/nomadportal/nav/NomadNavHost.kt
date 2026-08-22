@@ -310,8 +310,6 @@ fun NomadNavHost(
                     pageCacheStore = pageCacheStore,
                     identityRepository = identityRepository,
                     settingsRepository = settingsRepository,
-                    interfaceController = interfaceController,
-                    tcpConnectionsRepository = tcpConnectionsRepository,
                     startAddress = PageAddress(nodeHash),
                     onBack = { navController.popBackStack() },
                 )
