@@ -1,6 +1,7 @@
 package com.jamesm92.nomadportal.ui.hosting
 
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.consumeWindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
@@ -151,7 +152,19 @@ fun SitePageEditorScreen(
             )
         },
     ) { innerPadding ->
-        Column(modifier = Modifier.fillMaxSize().padding(innerPadding).imePadding()) {
+        // consumeWindowInsets(innerPadding) — same real fix as
+        // ConversationScreen.kt's own identical bug (see that file's own
+        // doc comment for the full story): without it, imePadding() below
+        // double-counts the navigation bar's own share of innerPadding's
+        // bottom inset, leaving the editor's input floating a real,
+        // visible gap above the actual keyboard.
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(innerPadding)
+                .consumeWindowInsets(innerPadding)
+                .imePadding(),
+        ) {
             errorText?.let {
                 Text(
                     text = it,

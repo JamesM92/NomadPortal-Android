@@ -10,6 +10,7 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.consumeWindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
@@ -865,7 +866,20 @@ fun RnshTerminalScreen(
         // focus (on CONNECTED, and after every Up/Down recall), so
         // there was previously no way to dismiss the keyboard at all
         // without leaving the screen or disconnecting.
-        Box(modifier = Modifier.fillMaxSize().padding(innerPadding).dismissKeyboardOnTap()) {
+        // consumeWindowInsets(innerPadding) — same real bug/fix as
+        // ConversationScreen.kt's own message compose field (see that
+        // file's own doc comment): without it, the key row's own real
+        // imePadding() further down this tree double-counts the
+        // navigation bar's share of this Box's own innerPadding,
+        // floating that whole accessory row a real, visible gap above
+        // the actual keyboard.
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(innerPadding)
+                .consumeWindowInsets(innerPadding)
+                .dismissKeyboardOnTap(),
+        ) {
         Column(modifier = Modifier.fillMaxSize().padding(12.dp)) {
             if (status.state == RnshConnectionState.IDLE || status.state == RnshConnectionState.CLOSED ||
                 status.state == RnshConnectionState.FAILED
