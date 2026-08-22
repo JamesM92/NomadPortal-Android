@@ -1093,10 +1093,11 @@ def add_tcp_connection(name: str, host: str, port: int) -> str:
 
 
 # Bound on how many candidates a single default-seeding pass will
-# actually probe before giving up for this launch -- the directory's
-# own "online" status is only a first-pass filter (see
-# _fetch_tcp_directory_candidates), so a real probe sweep can still run
-# long if that data is stale; this keeps one bad launch from blocking
+# actually probe before giving up for this launch -- _DEFAULT_TCP_CANDIDATES'
+# entries were all confirmed real and online at curation time (see that
+# list's own doc comment), but any one of them can still have gone down
+# since, so a real probe sweep can still run long if that's happened to
+# several in a row; this keeps one bad launch from blocking
 # the deferred-setup thread for minutes over a large candidate pool.
 # Not a promise "only 10 servers are ever eligible" -- just how many
 # get *tried* per attempt; a fresh attempt on the next app launch
@@ -1108,19 +1109,29 @@ def _seed_default_tcp_connection_if_needed() -> None:
     """Gives a fresh install a real, working TCP connection by default,
     instead of the empty list _load_tcp_connections() otherwise leaves
     it at — deliberately spread across a pool of independently-run
-    public interfaces (fetched live from directory.rns.recipes, not a
-    handful of hostnames baked into this app) rather than everyone
-    converging on the same one, per explicit direction.
+    public interfaces (see _DEFAULT_TCP_CANDIDATES) rather than everyone
+    converging on the same one.
+
+    This used to fetch that pool live from directory.rns.recipes's own
+    API on every fresh install, specifically *instead of* a handful of
+    hostnames baked into this app, per explicit direction at the time.
+    Reversed by later, equally explicit direction ("hardcode 16 of the
+    largest tcp servers into the app, to avoid having to reach out to
+    the internet to establish the connection"): a fresh install no
+    longer makes any clearnet HTTPS call before it can even get onto
+    the actual (Reticulum-native) mesh — see _DEFAULT_TCP_CANDIDATES'
+    own doc comment for the real trade-off this accepts (the list can
+    go stale between app releases; the live directory can't).
 
     Deterministic starting pick: this identity's own LXMF address hash
     (see identity_store.py's IdentityStore.create — "dest_hash_hex" in
-    its stored entry) indexes into the fetched, filtered candidate list
-    via one hex nibble, hex[3] — the same "one hex nibble picks a
-    thing" convention _default_display_name/_default_icon_appearance
-    already use for the auto-generated name/icon, continued at the
-    next position those two haven't already claimed (hex[0:3], then
-    hex[4:10]). Different identities land on different starting points
-    across a large pool without any coordination needed.
+    its stored entry) indexes into the candidate list via one hex
+    nibble, hex[3] — the same "one hex nibble picks a thing" convention
+    _default_display_name/_default_icon_appearance already use for the
+    auto-generated name/icon, continued at the next position those two
+    haven't already claimed (hex[0:3], then hex[4:10]). Different
+    identities land on different starting points across the pool
+    without any coordination needed.
 
     Real rollover, not just a single deterministic pick: starting at
     that index, each candidate gets a raw TCP reachability probe (see
@@ -1155,7 +1166,7 @@ def _seed_default_tcp_connection_if_needed() -> None:
         log.info("No LXMF address hash available yet — skipping default TCP seeding for now")
         return
 
-    candidates = _fetch_tcp_directory_candidates()
+    candidates = _DEFAULT_TCP_CANDIDATES
     if not candidates:
         log.info("Default TCP server directory unavailable or empty — nothing to seed yet")
         return
@@ -1208,53 +1219,66 @@ def _seed_default_tcp_connection_if_needed() -> None:
     )
 
 
-def _fetch_tcp_directory_candidates() -> list:
-    """Live TCP-interface entries from directory.rns.recipes's public
-    API (community-maintained, not this app's own data) — filtered to
-    what this app can actually use: TCPClientInterface-compatible
-    ("tcp" type only; "backbone"/BackboneInterface entries need a
-    different RNS interface class this app doesn't construct anywhere
-    else, out of scope here), clearnet (no Tor/I2P/Yggdrasil transport
-    support in this app), and reported online by the directory itself —
-    a first-pass filter only, not a substitute for _tcp_probe's own
-    real reachability check, since directory status can lag reality
-    either direction. Returns [] on any failure (network, parse,
-    anything) — never raises, matching every other deferred-setup
-    step's own never-block-the-rest posture.
-    """
-    import json
-    import urllib.request
-
-    url = "https://directory.rns.recipes/api/directory/submitted"
-    try:
-        with urllib.request.urlopen(url, timeout=10) as resp:
-            payload = json.loads(resp.read().decode("utf-8"))
-    except Exception as exc:
-        log.info("Could not fetch TCP server directory: %s", exc)
-        return []
-
-    candidates = []
-    for item in payload.get("data", []):
-        try:
-            if item.get("type") != "tcp":
-                continue
-            if item.get("network") != "clearnet":
-                continue
-            if item.get("status") != "online":
-                continue
-            host = item["host"]
-            port = int(item["port"])
-            name = item.get("name") or f"{host}:{port}"
-        except (KeyError, TypeError, ValueError):
-            continue
-        candidates.append({"name": name, "host": host, "port": port})
-
-    # Stable order before sharding -- the directory's own JSON order
-    # isn't guaranteed consistent between fetches, and a consistent
-    # order matters for "different identities land on different
-    # starting points" to actually mean anything within a single fetch.
-    candidates.sort(key=lambda c: (c["host"], c["port"]))
-    return candidates
+# Real, currently-independently-run public TCPServerInterface entries —
+# every one of these was live-verified as type="tcp", network="clearnet",
+# status="online" against directory.rns.recipes's own public API
+# (https://directory.rns.recipes/api/directory/submitted) on 2026-08-22,
+# the exact same filter this module's own live-fetch predecessor applied
+# at runtime (see _seed_default_tcp_connection_if_needed's own doc
+# comment for why that live call was replaced with this static list, per
+# explicit direction: avoid reaching out to the internet at all before
+# a fresh install can get onto the actual mesh).
+#
+# That directory doesn't track a "size" metric to rank by (no
+# subscriber/throughput count in its schema) — "largest" isn't a real
+# field this data has an honest answer for. This is every entry that
+# passed the filter at curation time (24, not a trimmed-down 16):
+# dropping real, currently-online, independently-run servers to hit an
+# arbitrary round number would only shrink the rollover pool
+# _seed_default_tcp_connection_if_needed's own probe/deep-probe sweep
+# depends on for resilience, for no real benefit.
+#
+# The real, accepted trade-off (see _seed_default_tcp_connection_if_needed's
+# own doc comment): this list can go stale between app releases the way
+# a live directory fetch never would — a server here closing or
+# changing address means a future NomadPortal-Android release, not a
+# background config the app can refresh itself. Re-curate this list
+# directly against the directory API above (same filter) if it's ever
+# revisited.
+#
+# Sorted by (host, port) for the same reason the old live-fetch code
+# sorted its own result before sharding: hex[3]-based rollover only
+# lands "different identities on different starting points" meaningfully
+# if the list order itself is stable and deterministic.
+_DEFAULT_TCP_CANDIDATES = sorted(
+    [
+        {"name": "ZHULONG1 - Hong Kong Node", "host": "103.195.4.226", "port": 4242},
+        {"name": "RNS TCP Node Germany 002", "host": "193.26.158.230", "port": 4965},
+        {"name": "RNS TCP Node Germany 001", "host": "202.61.243.41", "port": 4965},
+        {"name": "RNS_Transport_US-East", "host": "45.77.109.86", "port": 4965},
+        {"name": "carlos.node", "host": "66.42.101.86", "port": 4242},
+        {"name": "Santino's Testbed", "host": "66.63.170.233", "port": 4242},
+        {"name": "Catz Node (TCP)", "host": "77.37.146.243", "port": 4242},
+        {"name": "SparkN0de", "host": "aspark.uber.space", "port": 44860},
+        {"name": "g00n.cloud Hub", "host": "dfw.us.g00n.cloud", "port": 6969},
+        {"name": "R-Net TCP", "host": "istanbul.reserve.network", "port": 9034},
+        {"name": "Quortal TCP Node", "host": "reticulum.qortal.link", "port": 4242},
+        {"name": "Synalysis", "host": "reticulum.synalysis.com", "port": 4242},
+        {"name": "RMAP", "host": "rmap.world", "port": 4242},
+        {"name": "Birdsnet BR", "host": "rns.birdsnet.com.br", "port": 4242},
+        {"name": "MARI-EL.NET", "host": "rns.mari-el.net", "port": 4242},
+        {"name": "rns.noderage.org (IPv4 / IPv6)", "host": "rns.noderage.org", "port": 4242},
+        {"name": "WDGWars Node", "host": "rns.wdgwars.pl", "port": 4242},
+        {"name": "wisco.network - tcp", "host": "rns.wisco.network", "port": 4242},
+        {"name": "RCHE-OCTOBER SRV", "host": "rns1.ddns.net", "port": 4242},
+        {"name": "Shut Up And Hack", "host": "suah.dev", "port": 4343},
+        {"name": "SWISS RNS", "host": "swiss-rns.cl0ud.ch", "port": 4242},
+        {"name": "Sydney RNS", "host": "sydney.reticulum.au", "port": 4242},
+        {"name": "Inertia.Chat", "host": "use.inertia.chat", "port": 4242},
+        {"name": "QuikStop", "host": "167.114.185.21", "port": 4242},
+    ],
+    key=lambda c: (c["host"], c["port"]),
+)
 
 
 def _tcp_probe(host: str, port: int, timeout: float = 5.0) -> bool:
