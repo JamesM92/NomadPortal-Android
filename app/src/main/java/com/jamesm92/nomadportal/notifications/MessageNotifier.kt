@@ -91,8 +91,21 @@ object MessageNotifier {
             // out (below) is the real fix, not a suppression: same
             // object, same explicit intent, just written so the
             // analyzer's own local-dataflow check can actually follow
-            // it.
-            val openIntent = Intent(context, MainActivity::class.java)
+            // it. That split alone wasn't the whole story though —
+            // confirmed by actually pulling this finding's real SARIF
+            // codeFlow data, not re-guessing: the split flow traced
+            // perfectly, and the sanitizer *still* never fired, because
+            // CodeQL's own ExplicitIntent check only reliably recognizes
+            // the Intent(context, Class) *constructor* form when the
+            // class argument's static type resolves to java.lang.Class
+            // — Kotlin's `X::class.java` argument doesn't satisfy that
+            // the same way Java's `X.class` literal does. Its other,
+            // simpler branch matches by method *name* alone
+            // (setClass/setComponent/etc., no argument-type check at
+            // all) — an explicit .setClass() call is what actually gets
+            // this recognized, not the constructor overload.
+            val openIntent = Intent()
+            openIntent.setClass(context, MainActivity::class.java)
             openIntent.action = Intent.ACTION_VIEW
             openIntent.flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
             openIntent.putExtra(MainActivity.EXTRA_CONVERSATION_HASH, contactHash)
