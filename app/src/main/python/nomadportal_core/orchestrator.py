@@ -1079,7 +1079,20 @@ def _save_tcp_conn_stats(snapshot: dict) -> None:
     import json
     try:
         os.makedirs(_base_dir, exist_ok=True)
-        tmp = _tcp_conn_stats_path() + ".tmp"
+        # Real bug found via a device report: get_tcp_connections_json() (and
+        # this call underneath it) is reachable from more than one screen at
+        # once (NetworkScreen and SettingsScreen each independently collect
+        # TcpConnectionsRepository.connections(), a plain cold Flow with no
+        # sharing/dedup — every composed screen runs its own ~4s poll loop on
+        # its own IO-dispatcher thread). A shared literal ".tmp" path meant
+        # two concurrent callers could race: writer A's os.replace() consumes
+        # the tmp file the instant after writer B finishes writing to that
+        # same path but before B's own os.replace() runs, so B's rename then
+        # fails with a real, intermittent "No such file or directory" — not a
+        # missing directory, a vanished temp file. A per-call-unique tmp name
+        # (thread id + object id, both cheap and always available, no extra
+        # import) means concurrent callers never share a path to race on.
+        tmp = _tcp_conn_stats_path() + f".tmp.{threading.get_ident()}.{id(snapshot)}"
         with open(tmp, "w") as f:
             json.dump(snapshot, f)
         os.replace(tmp, _tcp_conn_stats_path())
