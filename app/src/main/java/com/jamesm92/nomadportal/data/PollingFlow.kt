@@ -1,6 +1,7 @@
 package com.jamesm92.nomadportal.data
 
 import android.util.Log
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
@@ -29,11 +30,26 @@ import kotlinx.coroutines.flow.flowOn
  * [fetch] failing on one tick now just logs it and skips that emission, retrying after
  * the normal [intervalMs] — the resilience real polling code always needs, which none of
  * these call sites had before.
+ *
+ * Real regression found via a device report (a low-end phone showing the exact same
+ * "Identities/Network/Messages barely populate" symptom this function was written to
+ * fix, moments after this function first shipped): the original `catch (e: Exception)`
+ * also caught [CancellationException] — including Compose's own
+ * `LeftCompositionCancellationException`, fired routinely whenever a screen collecting
+ * this flow leaves composition. Swallowing it here instead of letting it propagate
+ * fights Kotlin's structured concurrency (a cancelled coroutine is supposed to stop, not
+ * catch its own cancellation and loop around for another `delay()`), and on a slower/
+ * more memory-constrained device — where Compose recomposes and tears down screens far
+ * more often under real GC pressure — this fired constantly, exactly the same class of
+ * bug already found once this session in BrowserScreen.kt's refreshLive(). Cancellation
+ * must always rethrow; only a genuine fetch failure gets logged and retried.
  */
 fun <T> pollingFlow(intervalMs: Long, fetch: suspend () -> T): Flow<T> = flow {
     while (true) {
         try {
             emit(fetch())
+        } catch (e: CancellationException) {
+            throw e
         } catch (e: Exception) {
             Log.w("PollingFlow", "Poll tick failed, retrying in ${intervalMs}ms", e)
         }
