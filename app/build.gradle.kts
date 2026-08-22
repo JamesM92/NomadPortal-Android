@@ -49,7 +49,42 @@ android {
         }
     }
 
+    // Real bug found+fixed via an actual failed on-device update, not
+    // guessed: without this, every build's debug APK gets signed with
+    // whichever machine happened to build it's own auto-generated
+    // ~/.android/debug.keystore — a real, different, randomly-generated
+    // certificate per machine (confirmed directly: `apksigner verify
+    // --print-certs` on the real v0.0.1 GitHub-Actions-built release
+    // APK vs. a real locally-built v0.0.2 APK showed two completely
+    // different SHA-256 cert fingerprints). Android hard-requires an
+    // update to be signed with the *exact same* certificate as
+    // whatever's already installed — a mismatch fails
+    // (INSTALL_FAILED_UPDATE_INCOMPATIBLE) on every device, every time,
+    // exactly what two real phones both hit trying to update from
+    // v0.0.1. A single, real, checked-into-the-repo keystore (debug
+    // signing keys are never sensitive the way a real release key is —
+    // this is the standard, accepted practice, unlike
+    // proguard-rules.pro's own real release-signing concerns) makes
+    // every build from here forward — CI or local, any machine — share
+    // one identical certificate, so updates actually work. One-time
+    // real cost: this fix's own first build still won't "update" over
+    // any earlier build signed with a machine-specific cert (v0.0.1,
+    // and the v0.0.2 already handed out before this fix landed) — those
+    // need one clean uninstall-then-reinstall to get onto this new
+    // shared-keystore lineage; every build after that updates normally.
+    signingConfigs {
+        getByName("debug") {
+            storeFile = file("../debug.keystore")
+            storePassword = "android"
+            keyAlias = "androiddebugkey"
+            keyPassword = "android"
+        }
+    }
+
     buildTypes {
+        debug {
+            signingConfig = signingConfigs.getByName("debug")
+        }
         release {
             isMinifyEnabled = false
             proguardFiles(
