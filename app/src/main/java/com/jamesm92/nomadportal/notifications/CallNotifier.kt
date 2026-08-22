@@ -104,9 +104,16 @@ object CallNotifier {
         }
 
         val callerLabel = state.remoteName ?: state.remoteIdentityHash?.take(16) ?: "Unknown caller"
-        val openIntent = Intent(context, MainActivity::class.java).apply {
-            flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
-        }
+        // Real CodeQL finding (java/android/implicit-pendingintents),
+        // verified against its actual source rather than suppressed —
+        // see MessageNotifier.checkAndNotify's own doc comment on this
+        // exact fix for the full explanation: every one of these three
+        // Intents genuinely is explicit, but CodeQL's dataflow loses
+        // that once a mutation happens inline (a chained `.apply { }` or
+        // `.setAction(...)` call) instead of as a separate statement
+        // against a named val. Split out below, same real objects.
+        val openIntent = Intent(context, MainActivity::class.java)
+        openIntent.flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
         // Plain "open the app" intent, no extras — CallOverlay is wired
         // at NomadNavHost's own root and renders off callRepository's
         // live state regardless of which screen is showing, so there's
@@ -116,14 +123,16 @@ object CallNotifier {
             context, 0, openIntent,
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
         )
+        val answerAction = Intent(context, CallActionReceiver::class.java)
+        answerAction.action = CallActionReceiver.ACTION_ANSWER
         val answerIntent = PendingIntent.getBroadcast(
-            context, 1,
-            Intent(context, CallActionReceiver::class.java).setAction(CallActionReceiver.ACTION_ANSWER),
+            context, 1, answerAction,
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
         )
+        val declineAction = Intent(context, CallActionReceiver::class.java)
+        declineAction.action = CallActionReceiver.ACTION_DECLINE
         val declineIntent = PendingIntent.getBroadcast(
-            context, 2,
-            Intent(context, CallActionReceiver::class.java).setAction(CallActionReceiver.ACTION_DECLINE),
+            context, 2, declineAction,
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
         )
         val notification = NotificationCompat.Builder(context, CHANNEL_CALLS)
