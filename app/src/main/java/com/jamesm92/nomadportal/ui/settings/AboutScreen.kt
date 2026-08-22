@@ -10,6 +10,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.BugReport
 import androidx.compose.material.icons.filled.Bluetooth
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -72,6 +73,16 @@ fun AboutScreen(onBack: () -> Unit) {
     // currently on — this is Android's own Bluetooth stack, not this
     // app's RNS interface.
     var sharingApk by remember { mutableStateOf(false) }
+    // Real request, surfaced directly while chasing a real Bluetooth-
+    // mesh bug across three physical phones ADB access wasn't
+    // practically available for: "is there a way to add a debugging
+    // logs download button to the app? so we can grab it on the phone
+    // itself?" See DebugLogExporter's own doc comment for how this
+    // captures real log output (this app's own PID-filtered logcat —
+    // both Kotlin-side lines and Python's stdout/stderr, since
+    // Chaquopy runs Python embedded in this same process) without
+    // needing a special permission or a computer at all.
+    var exportingLogs by remember { mutableStateOf(false) }
 
     Scaffold(
         topBar = {
@@ -148,6 +159,23 @@ fun AboutScreen(onBack: () -> Unit) {
                 // use case without the label itself overclaiming.
                 Text(if (sharingApk) "Preparing…" else "Share Installer")
             }
+            TextButton(
+                enabled = !exportingLogs,
+                onClick = {
+                    exportingLogs = true
+                    scope.launch {
+                        exportAndShareDebugLogs(context)
+                        exportingLogs = false
+                    }
+                },
+            ) {
+                Icon(
+                    Icons.Filled.BugReport,
+                    contentDescription = null,
+                    modifier = Modifier.padding(end = 8.dp),
+                )
+                Text(if (exportingLogs) "Preparing…" else "Download Debug Logs")
+            }
         }
     }
 }
@@ -193,6 +221,26 @@ private suspend fun shareInstalledApk(context: Context, versionName: String) {
             // just means nothing happens, not a crashed Settings
             // screen.
             Log.w("AboutScreen", "Failed to share installed APK: ${e.message}")
+        }
+    }
+}
+
+/** Captures real on-device logs via [DebugLogExporter] and opens the
+ * system share sheet for the resulting file — same shape as
+ * [shareInstalledApk] above (real reuse of the same
+ * [AttachmentFileProvider], not a second, parallel mechanism), and the
+ * same reasoning for running on [Dispatchers.IO]: `logcat -d` is real,
+ * blocking process I/O, not something to run on the composition
+ * thread. A null [DebugLogExporter.exportLogs] result (the real
+ * capture itself failing) is a silent no-op here, matching
+ * [shareInstalledApk]'s own "never crash a share action" posture. */
+private suspend fun exportAndShareDebugLogs(context: Context) {
+    withContext(Dispatchers.IO) {
+        try {
+            val file = DebugLogExporter.exportLogs(context) ?: return@withContext
+            AttachmentFileProvider.share(context, file.path, "text/plain", file.name)
+        } catch (e: Exception) {
+            Log.w("AboutScreen", "Failed to share debug logs: ${e.message}")
         }
     }
 }
