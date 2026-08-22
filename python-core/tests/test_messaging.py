@@ -343,36 +343,39 @@ class _FakeRouter:
         return self._node
 
 
-def test_should_retry_via_relay_false_by_default(service):
-    assert service._should_retry_via_relay(_FakeRouter(b"\xaa" * 16)) is False
+def test_should_retry_via_relay_true_by_default_when_node_available(service):
+    # Default flipped True->on 2026-08-22 (see MessagingService.__init__'s
+    # own comment for the real bug this was in response to) — a fresh
+    # service, with no set_retry_via_relay() call at all, should already
+    # retry via relay as long as a propagation node is available.
+    assert service._should_retry_via_relay(_FakeRouter(b"\xaa" * 16)) is True
 
 
-def test_should_retry_via_relay_false_with_no_propagation_node_even_if_enabled(service):
-    service.set_retry_via_relay(True)
+def test_should_retry_via_relay_false_with_no_propagation_node_even_by_default(service):
     assert service._should_retry_via_relay(_FakeRouter(None)) is False
 
 
-def test_should_retry_via_relay_true_when_enabled_and_node_available(service):
-    service.set_retry_via_relay(True)
-    assert service._should_retry_via_relay(_FakeRouter(b"\xaa" * 16)) is True
+def test_should_retry_via_relay_false_when_explicitly_disabled(service):
+    service.set_retry_via_relay(False)
+    assert service._should_retry_via_relay(_FakeRouter(b"\xaa" * 16)) is False
 
 
 def test_should_retry_via_relay_false_if_router_raises(service):
     # A malformed/stale router object shouldn't crash the decision —
     # same "never let a diagnostic-only check take down real delivery
-    # logic" caution as elsewhere in this file.
+    # logic" caution as elsewhere in this file. Default-on doesn't
+    # change this: a raising router is still not a usable one.
     class _BrokenRouter:
         def get_outbound_propagation_node(self):
             raise RuntimeError("boom")
 
-    service.set_retry_via_relay(True)
     assert service._should_retry_via_relay(_BrokenRouter()) is False
 
 
 def test_get_retry_via_relay_reflects_current_state(service):
-    assert service.get_retry_via_relay() is False
-    service.set_retry_via_relay(True)
     assert service.get_retry_via_relay() is True
+    service.set_retry_via_relay(False)
+    assert service.get_retry_via_relay() is False
 
 
 class _FakeLxmMessage:

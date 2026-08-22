@@ -154,8 +154,18 @@ class MessagingService:
         self._user_routers: dict = {}
         # See set_contacts_only_messages()'s own doc comment.
         self._contacts_only_messages = False
-        # See set_retry_via_relay()'s own doc comment.
-        self._retry_via_relay = False
+        # See set_retry_via_relay()'s own doc comment. Defaults True as
+        # of 2026-08-22 (was False) — real direction, given during the
+        # investigation of "can receive but can't send, even after a
+        # fresh announce": that bug's actual fix
+        # (_attempt_relay_retry's new no-resolved-destination path)
+        # only ever helps if this is on, and it was off for every real
+        # install by default with no persistence to ever turn it on
+        # automatically. Still ephemeral (resets to this default, not
+        # to whatever the user last chose, every restart) — that part
+        # of the original design is unchanged, only which value it
+        # resets *to*.
+        self._retry_via_relay = True
         os.makedirs(storage_path, exist_ok=True)
 
         # user_sub -> unix timestamp of that user's last successful
@@ -268,11 +278,14 @@ class MessagingService:
         Python-side ephemeral, same shape as `set_contacts_only_messages`
         — but unlike that one, deliberately **not** given real Kotlin
         DataStore persistence: this is a delivery-reliability preference,
-        not a privacy-protective one, so resetting to its default (off)
-        on restart is an acceptable minor inconvenience, not the kind of
+        not a privacy-protective one, so resetting to its default (**on**,
+        as of 2026-08-22 — see `__init__`'s own comment for why) on
+        restart is an acceptable minor inconvenience, not the kind of
         footgun that justified extra persistence machinery for contacts-
         only mode. Matches `_auto_announce_master_enabled`'s own already-
-        accepted ephemeral precedent."""
+        accepted ephemeral precedent. A user who deliberately turns this
+        off still loses that choice on the next restart, same as
+        before — only the direction of the reset changed."""
         self._retry_via_relay = bool(enabled)
 
     def get_retry_via_relay(self) -> bool:
