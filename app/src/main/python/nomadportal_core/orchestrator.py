@@ -561,7 +561,22 @@ def set_bluetooth_mesh_bridge(bridge) -> None:
             return  # already on
         from rns_ble_interface import BleNeighborInterfaceManager
         import RNS
-        _bluetooth_mesh_manager = BleNeighborInterfaceManager(RNS.Transport, bridge)
+        # Real bug, found via a live capture within minutes of real 3-phone
+        # testing: passing bare RNS.Transport here (and having the manager
+        # call RNS.Transport.add_interface() directly) skips everything
+        # Reticulum._add_interface() actually sets up on a new interface --
+        # mode, ifac_size, OUT, announce_cap, and friends. The result was a
+        # real AttributeError ('RnsBleNeighborInterface' object has no
+        # attribute 'mode') thrown from deep inside RNS's own
+        # handle_outgoing_announces on *every* outbound announce the moment
+        # any BLE neighbor was linked -- breaking outbound announce
+        # propagation entirely, not just over Bluetooth mesh. _browser.reticulum
+        # (the real Reticulum instance, not just the Transport singleton) is
+        # passed through so the manager can call the same real
+        # `reticulum._add_interface(iface)` helper `_set_interface` already
+        # uses for every other interface type, instead of a bare
+        # Transport.add_interface() that leaves a half-initialized object.
+        _bluetooth_mesh_manager = BleNeighborInterfaceManager(RNS.Transport, _browser.reticulum, bridge)
         _active_interfaces["bluetooth_mesh"] = True
         log.info("Interface 'bluetooth_mesh' enabled (real per-neighbor routing)")
 
