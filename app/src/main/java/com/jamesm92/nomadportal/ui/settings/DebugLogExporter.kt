@@ -26,13 +26,11 @@ import java.io.File
  * one, so both land in the same PID-filtered stream automatically.
  */
 object DebugLogExporter {
-    /** Captures the real current logcat buffer for this process only,
-     * writes it to a real file in this app's private cache dir, and
-     * returns that file — or null if the capture itself failed (e.g.
-     * `logcat` genuinely unavailable on some OEM build), never
-     * throwing out to the caller. Blocking (real process I/O) — always
-     * call this off the main thread. */
-    fun exportLogs(context: Context): File? {
+    /** The one real capture — everything else in this object is a
+     * different way of handing the same text to the user. Blocking
+     * (real process I/O), null on genuine failure (e.g. `logcat`
+     * unavailable on some OEM build), never throwing. */
+    fun captureLogText(): String? {
         return try {
             val pid = Process.myPid()
             val process = Runtime.getRuntime().exec(
@@ -40,10 +38,23 @@ object DebugLogExporter {
             )
             val output = process.inputStream.bufferedReader().use { it.readText() }
             process.waitFor()
+            output
+        } catch (e: Exception) {
+            null
+        }
+    }
+
+    /** Writes a fresh capture to a real file in this app's private
+     * cache dir and returns it — for the system share sheet (Bluetooth,
+     * a file manager, email, etc.). Null if either the capture or the
+     * write itself failed. */
+    fun exportLogs(context: Context): File? {
+        val text = captureLogText() ?: return null
+        return try {
             val timestamp = java.text.SimpleDateFormat("yyyyMMdd-HHmmss", java.util.Locale.US)
                 .format(java.util.Date())
             val file = File(context.cacheDir, "NomadPortal-debug-log-$timestamp.txt")
-            file.writeText(output)
+            file.writeText(text)
             file
         } catch (e: Exception) {
             null

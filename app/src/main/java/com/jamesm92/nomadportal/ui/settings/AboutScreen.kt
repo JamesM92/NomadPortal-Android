@@ -1,9 +1,13 @@
 package com.jamesm92.nomadportal.ui.settings
 
+import android.content.ClipData
+import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
+import android.os.Build
 import android.util.Log
+import android.widget.Toast
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
@@ -12,6 +16,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.BugReport
 import androidx.compose.material.icons.filled.Bluetooth
+import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -83,6 +88,14 @@ fun AboutScreen(onBack: () -> Unit) {
     // Chaquopy runs Python embedded in this same process) without
     // needing a special permission or a computer at all.
     var exportingLogs by remember { mutableStateOf(false) }
+    // Follow-up to the above: the share sheet alone didn't give a
+    // convenient path on the user's real phone — "the app doesnt seem
+    // to have the option to save the .txt file for on the phone. could
+    // we make the debug log be a text copy and paste? so i could paste
+    // the log in a chat". Clipboard copy sidesteps the share-target
+    // question entirely: whatever chat app is already open just gets a
+    // paste.
+    var copyingLogs by remember { mutableStateOf(false) }
 
     Scaffold(
         topBar = {
@@ -176,6 +189,23 @@ fun AboutScreen(onBack: () -> Unit) {
                 )
                 Text(if (exportingLogs) "Preparing…" else "Download Debug Logs")
             }
+            TextButton(
+                enabled = !copyingLogs,
+                onClick = {
+                    copyingLogs = true
+                    scope.launch {
+                        copyDebugLogsToClipboard(context)
+                        copyingLogs = false
+                    }
+                },
+            ) {
+                Icon(
+                    Icons.Filled.ContentCopy,
+                    contentDescription = null,
+                    modifier = Modifier.padding(end = 8.dp),
+                )
+                Text(if (copyingLogs) "Copying…" else "Copy Debug Logs")
+            }
         }
     }
 }
@@ -241,6 +271,37 @@ private suspend fun exportAndShareDebugLogs(context: Context) {
             AttachmentFileProvider.share(context, file.path, "text/plain", file.name)
         } catch (e: Exception) {
             Log.w("AboutScreen", "Failed to share debug logs: ${e.message}")
+        }
+    }
+}
+
+/** Copies a fresh [DebugLogExporter] capture straight to the system
+ * clipboard — the requested alternative to the share sheet: "the app
+ * doesnt seem to have the option to save the .txt file for on the
+ * phone. could we make the debug log be a text copy and paste? so i
+ * could paste the log in a chat". No file, no share target — whatever
+ * the user pastes into next (a chat app, this very conversation on
+ * another device) just receives the text directly.
+ *
+ * The capture itself (`logcat -d`, real blocking process I/O) still
+ * runs on [Dispatchers.IO], same as [exportAndShareDebugLogs], but
+ * setting the clip and showing the [Toast] are hopped back onto
+ * [Dispatchers.Main] — `ClipboardManager` and `Toast` are both meant to
+ * be driven from the main thread. Android 13+ (`TIRAMISU`) shows its
+ * own system "copied to clipboard" confirmation automatically for every
+ * app, so the explicit Toast here is only shown below that, where
+ * nothing else would tell the user anything happened at all. */
+private suspend fun copyDebugLogsToClipboard(context: Context) {
+    val text = withContext(Dispatchers.IO) { DebugLogExporter.captureLogText() }
+    withContext(Dispatchers.Main) {
+        if (text == null) {
+            Toast.makeText(context, "Failed to capture debug log", Toast.LENGTH_SHORT).show()
+            return@withContext
+        }
+        val clipboard = context.getSystemService(ClipboardManager::class.java)
+        clipboard?.setPrimaryClip(ClipData.newPlainText("NomadPortal debug log", text))
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) {
+            Toast.makeText(context, "Debug log copied to clipboard", Toast.LENGTH_SHORT).show()
         }
     }
 }
