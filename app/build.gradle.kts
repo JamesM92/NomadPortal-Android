@@ -183,6 +183,15 @@ dependencies {
     // change for this.
     implementation(libs.androidx.biometric)
     implementation(libs.androidx.work.runtime.ktx)
+    // Forces the whole dependency graph's androidx.fragment resolution up
+    // to a modern version — see libs.versions.toml's own androidxFragment
+    // comment for the real, on-device-traced crash this fixes (every
+    // activity-result launcher throwing "Can only use lower 16 bits for
+    // requestCode" on this FragmentActivity-based app, deterministically,
+    // because of a real incompatibility between fragment 1.2.5's own
+    // FragmentActivity override and ComponentActivity's ActivityResultRegistry
+    // — not a version bump for its own sake).
+    implementation(libs.androidx.fragment.ktx)
 
     testImplementation(libs.junit)
 

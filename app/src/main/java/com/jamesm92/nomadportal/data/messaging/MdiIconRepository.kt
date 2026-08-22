@@ -45,6 +45,27 @@ object MdiIconRepository {
     @Volatile private var sortedNames: List<String>? = null
     private val vectorCache = ConcurrentHashMap<String, ImageVector>()
 
+    // category -> sorted icon names in that category (e.g. "Animal" ->
+    // ["cat", "cow", "dog", ...]) — real MDI category data (`meta.json`
+    // from Templarian/MaterialDesign, the same real project mdi_icons.json
+    // itself is generated from), NOT a hand-picked/guessed taxonomy: 61
+    // real categories, matching what materialdesignicons.com's own
+    // search page filters by. Generated offline the same way
+    // mdi_icons.json was (a small one-time script, not bundled/shipped,
+    // matching this project's own established asset-generation
+    // convention — see e.g. _LOGO_ASCII_ART's own doc comment in
+    // site_server.py for another instance of that same pattern), keyed
+    // only to names this device's own mdi_icons.json actually has data
+    // for (a small number of meta.json's names are deprecated/renamed
+    // and have no current icon — dropped during generation rather than
+    // pointing the picker at a name with no real glyph). An icon can
+    // appear under more than one category (real MDI icons often do); a
+    // sizable minority have no category at all and are only reachable
+    // via search, not a category filter — both are real facts about the
+    // upstream data, not gaps in this loader.
+    @Volatile private var categoryToNames: Map<String, List<String>>? = null
+    @Volatile private var sortedCategories: List<String>? = null
+
     fun initialize(context: Context, scope: CoroutineScope) {
         if (paths != null) return
         val appContext = context.applicationContext
@@ -68,6 +89,24 @@ object MdiIconRepository {
             // Missing/corrupt asset shouldn't crash the app — every
             // lookup just falls back to a letter glyph instead, same as
             // any other genuinely-unmapped name.
+            emptyMap()
+        }
+        categoryToNames = try {
+            val text = context.assets.open("mdi_categories.json").bufferedReader().use { it.readText() }
+            val obj = JSONObject(text)
+            val map = HashMap<String, List<String>>(obj.length())
+            val keys = obj.keys()
+            while (keys.hasNext()) {
+                val key = keys.next()
+                val arr = obj.getJSONArray(key)
+                map[key] = (0 until arr.length()).map { arr.getString(it) }
+            }
+            map
+        } catch (e: Exception) {
+            // Same "degrade, don't crash" contract as paths above — a
+            // missing/corrupt categories asset just means the picker's
+            // category chips don't appear; search still works over the
+            // full name list either way.
             emptyMap()
         }
     }
@@ -100,6 +139,21 @@ object MdiIconRepository {
         val current = paths ?: return emptyList()
         return current.keys.sorted().also { sortedNames = it }
     }
+
+    /** Every real MDI category name (~61, e.g. "Animal", "Weather") this
+     * device has data for, sorted — empty until [isLoaded]. Backs the
+     * icon picker's category filter chips (see `SettingsScreen.kt`'s
+     * `FullScreenIconPicker`). */
+    fun categories(): List<String> {
+        sortedCategories?.let { return it }
+        val current = categoryToNames ?: return emptyList()
+        return current.keys.sorted().also { sortedCategories = it }
+    }
+
+    /** Every icon name tagged with [category] (already one of
+     * [categories]'s own values) — empty for an unknown category, never
+     * throws. */
+    fun namesInCategory(category: String): List<String> = categoryToNames?.get(category) ?: emptyList()
 
     /** MDI's SVGs all share a standard 24x24 viewBox — the same
      * convention Google's own Material Icons use, so no scaling

@@ -1560,6 +1560,29 @@ def fetch_page_text(destination_hash_hex: str, path: str, identify: bool = False
     couldn't be set up."""
     if _browser is None:
         raise RuntimeError("Browser not initialized yet")
+
+    # Real, previously-open bug fixed here: browsing this device's own
+    # hosted node used to always go over a real RNS.Link like any other
+    # node, but this node is silent by default (auto_announce=False —
+    # correct mesh behavior, not a bug on its own) so RNS never learns a
+    # path to it, and the fetch just times out. SiteServer.fetch_page()
+    # already existed for exactly this ("Serve a page directly from the
+    # filesystem (bypasses RNS link)") but was never actually wired up
+    # to this bridge function before now — only its own test suite
+    # called it. `identify` is meaningless for a local read (there's no
+    # RNS.Link to identify over), so it's silently ignored here rather
+    # than raising — self-browsing was never going to distinguish
+    # "anonymous" from "identified" anyway.
+    if (
+        _site_server is not None
+        and _site_server.node_hash() is not None
+        and destination_hash_hex.lower() == _site_server.node_hash()
+    ):
+        content, error = _site_server.fetch_page(path)
+        if error is not None:
+            raise RuntimeError(error)
+        return content.decode("utf-8", errors="replace")
+
     identify_with = None
     if identify and _identity_store is not None:
         entry = _identity_store.get_for_user(_active_user_sub)

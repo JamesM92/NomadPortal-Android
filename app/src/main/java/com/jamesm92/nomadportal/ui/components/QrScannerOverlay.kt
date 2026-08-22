@@ -207,7 +207,17 @@ private fun decodeQrFromImageProxy(imageProxy: ImageProxy): String? = try {
  * normal way once used, same philosophy as manual entry, not a special
  * QR-only error path.
  */
-private fun normalizeScannedText(raw: String): ScannedIdentity? {
+// internal, not private — QrCodeTest.kt (app/src/test) exercises this
+// directly, real unit-test coverage for the one part of the QR-scan
+// pipeline that's actually plain string logic (as opposed to
+// decodeQrFromImageProxy's own CameraX/ImageProxy plumbing, which
+// needs a real device/emulator camera and isn't unit-testable this
+// way) — see that test file's own doc comment for why this exists:
+// a real live device-to-device camera scan was never actually
+// achievable in this project's dev environment (a single emulator, no
+// second device/camera to scan with), so this is the closest real
+// automated coverage the scan/parse logic has ever had.
+internal fun normalizeScannedText(raw: String): ScannedIdentity? {
     parseIdentityQrPayload(raw)?.let { return it }
     val candidate = raw.trim().substringAfterLast('/').substringAfterLast(':').lowercase()
     val isValidHex = candidate.isNotEmpty() && candidate.length % 2 == 0 &&

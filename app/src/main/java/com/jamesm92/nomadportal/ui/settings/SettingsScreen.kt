@@ -23,10 +23,12 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.imePadding
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
@@ -217,6 +219,26 @@ fun SettingsScreen(
     val rNodeEnabled by interfaceController.rNodeEnabled.collectAsState()
     val wifiDiscoveryEnabled by interfaceController.wifiDiscoveryEnabled.collectAsState()
     val nodeHostingEnabled by interfaceController.nodeHostingEnabled.collectAsState()
+    // Hoisted here (rather than staying local to the Notifications
+    // section's own item block, where they used to live) so the Hosting
+    // section can warn about them too — see that section's own new
+    // warning row for why: a node that's only reachable while this
+    // app's process is alive needs Always-on notifications to actually
+    // stay reachable, and that's exactly the moment (turning hosting on)
+    // a user needs to hear it, not just buried in a different section
+    // they may never open.
+    val notificationsEnabled by settingsRepository.notificationsEnabled.collectAsState(initial = false)
+    val notificationsAlwaysOn by settingsRepository.notificationsAlwaysOn.collectAsState(initial = true)
+    // The actual condition under which this process keeps running in
+    // the background at all (MessageNotificationController only starts
+    // the real foreground service when both of these are true) — real,
+    // on-review-found bug fixed here: the Notifications section's own
+    // warning below used to check only `!notificationsAlwaysOn`, which
+    // missed the case where notifications are off *entirely*
+    // (notificationsEnabled == false) but notificationsAlwaysOn still
+    // happened to be true from a stored/default value, silently hiding
+    // the exact warning it exists to show.
+    val backgroundServiceActive = notificationsEnabled && notificationsAlwaysOn
 
     // Real, on-device-confirmed crash — the most severe instance of the
     // FragmentActivity/ActivityResultRegistry incompatibility found this
@@ -542,6 +564,26 @@ fun SettingsScreen(
                             )
                         },
                     ) {
+                        // Per explicit direction: warn about this right
+                        // where a user actually turns hosting on, not
+                        // only in the Notifications section they may
+                        // never open — this app has no separate daemon;
+                        // a hosted node is only reachable while this
+                        // process itself is alive, which (per
+                        // backgroundServiceActive's own doc comment)
+                        // means notifications on and set to Always-on
+                        // specifically, not the battery-friendly mode.
+                        if (nodeHostingEnabled && !backgroundServiceActive) {
+                            Text(
+                                text = "Your node will stop being reachable by others whenever " +
+                                    "this app isn't in the foreground, unless you turn " +
+                                    "notifications on and set them to Always-on in the " +
+                                    "Notifications section below.",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.error,
+                                modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
+                            )
+                        }
                         hostedNodeStatus?.let { status ->
                             HostedSiteActionsRow(
                                 status = status,
@@ -892,10 +934,6 @@ fun SettingsScreen(
                     // skip checks under Doze) — see
                     // MessageNotificationController's own doc comment
                     // for how the two modes are reconciled.
-                    val notificationsEnabled by settingsRepository.notificationsEnabled
-                        .collectAsState(initial = false)
-                    val notificationsAlwaysOn by settingsRepository.notificationsAlwaysOn
-                        .collectAsState(initial = true)
                     var hasNotificationPermission by remember {
                         mutableStateOf(hasPostNotificationsPermission(context))
                     }
@@ -1039,17 +1077,32 @@ fun SettingsScreen(
                             // *when* Battery-friendly's real trade-off
                             // actually matters, rather than leaving it as
                             // an abstract "may delay/skip" warning —
-                            // RNode/Bluetooth mesh/hosting all depend on
-                            // this process staying alive in the
+                            // RNode/Bluetooth mesh/hosting/voice calls all
+                            // depend on this process staying alive in the
                             // background to keep working at all, not just
-                            // on timely notifications.
-                            if (!notificationsAlwaysOn && (rNodeEnabled || bluetoothMeshEnabled || nodeHostingEnabled)) {
+                            // on timely notifications. Voice calls added
+                            // after a real gap found via an actual live
+                            // test call: this app had no incoming-call
+                            // alert at all before CallNotifier, and even
+                            // with it, Battery-friendly's real ~15min
+                            // minimum interval is far longer than a call
+                            // ever rings for — see that file's own doc
+                            // comment. Checks backgroundServiceActive (not
+                            // just notificationsAlwaysOn) so this also
+                            // fires when notifications are off entirely,
+                            // not just when they're on-but-Battery-
+                            // friendly — see that val's own doc comment.
+                            if (!backgroundServiceActive &&
+                                (rNodeEnabled || bluetoothMeshEnabled || nodeHostingEnabled || announceStatus?.callsEnabled == true)
+                            ) {
                                 Text(
-                                    text = "Recommended: switch to Always-on — you have " +
+                                    text = "Recommended: turn notifications on and set them to " +
+                                        "Always-on — you have " +
                                         listOfNotNull(
                                             "RNode".takeIf { rNodeEnabled },
                                             "Bluetooth mesh".takeIf { bluetoothMeshEnabled },
                                             "node hosting".takeIf { nodeHostingEnabled },
+                                            "voice calls".takeIf { announceStatus?.callsEnabled == true },
                                         ).joinToString(", ") +
                                         " on, and all of those need this app actually running in " +
                                         "the background to keep working.",
@@ -2091,7 +2144,19 @@ fun IdentityIconPreview(
     modifier: Modifier = Modifier,
 ) {
     val vector = remember(appearance?.glyphName) { appearance?.glyphName?.let(::materialIconFor) }
-    Box(modifier = modifier.size(52.dp).clickable(onClick = onClick)) {
+    // 56dp, not 48dp — real, on-device-reported fix: the edit badge used
+    // to sit almost flush against the avatar's own edge (barely offset,
+    // since its parent box was only 4dp bigger than the avatar circle
+    // itself), and its background color (colorScheme.secondary) could
+    // land close to whatever arbitrary color a user picked for the
+    // avatar itself (MicronColorPicker allows any RGB, not a palette
+    // chosen to contrast against this app's own theme colors), making
+    // the badge hard to notice as a distinct, tappable thing. The extra
+    // room here plus the .offset below push the badge further outside
+    // the avatar's own circle, and the background-colored ring gives it
+    // real contrast against any avatar color, not just this app's own
+    // theme ones.
+    Box(modifier = modifier.size(56.dp).clickable(onClick = onClick)) {
         Box(
             modifier = Modifier
                 .size(48.dp)
@@ -2111,10 +2176,20 @@ fun IdentityIconPreview(
         }
         Box(
             modifier = Modifier
-                .size(20.dp)
+                .size(22.dp)
+                .align(Alignment.BottomEnd)
+                .offset(x = 2.dp, y = 2.dp)
                 .clip(CircleShape)
-                .background(MaterialTheme.colorScheme.secondary)
-                .align(Alignment.BottomEnd),
+                // A ring in the surrounding page's own background color,
+                // not just the badge's fill, is what actually separates
+                // it from an avatar color that might otherwise be close
+                // to colorScheme.secondary — the same "cutout ring"
+                // convention status/notification badges commonly use for
+                // exactly this reason.
+                .background(MaterialTheme.colorScheme.background)
+                .padding(2.dp)
+                .clip(CircleShape)
+                .background(MaterialTheme.colorScheme.secondary),
             contentAlignment = Alignment.Center,
         ) {
             Icon(
@@ -2265,12 +2340,20 @@ fun IconAppearanceEditor(
     val allNames = remember {
         MdiIconRepository.names().ifEmpty { ICON_APPEARANCE_NAMES }
     }
-    val filteredNames = remember(searchQuery, allNames) {
+    // Real MDI categories (~61, e.g. "Animal", "Weather") — see
+    // MdiIconRepository's own doc comment on categoryToNames for where
+    // this data actually comes from. Empty (so no chips render at all)
+    // until MdiIconRepository finishes loading, same "degrade instead
+    // of showing something wrong" contract as allNames' own fallback.
+    val categories = remember { MdiIconRepository.categories() }
+    var selectedCategory by remember { mutableStateOf<String?>(null) }
+    val filteredNames = remember(searchQuery, allNames, selectedCategory) {
+        val base = selectedCategory?.let { MdiIconRepository.namesInCategory(it) } ?: allNames
         val q = searchQuery.trim().lowercase().replace(' ', '_').replace('-', '_')
         if (q.isBlank()) {
-            allNames
+            base
         } else {
-            allNames.filter { it.replace('-', '_').contains(q) }
+            base.filter { it.replace('-', '_').contains(q) }
         }
     }
 
@@ -2359,6 +2442,9 @@ fun IconAppearanceEditor(
                 query = searchQuery,
                 onQueryChange = { searchQuery = it },
                 names = filteredNames,
+                categories = categories,
+                selectedCategory = selectedCategory,
+                onCategoryChange = { selectedCategory = it },
                 selectedGlyph = selectedGlyph,
                 selectedBg = selectedBg,
                 selectedFg = selectedFg,
@@ -2391,6 +2477,9 @@ private fun FullScreenIconPicker(
     query: String,
     onQueryChange: (String) -> Unit,
     names: List<String>,
+    categories: List<String>,
+    selectedCategory: String?,
+    onCategoryChange: (String?) -> Unit,
     selectedGlyph: String,
     selectedBg: Color,
     selectedFg: Color,
@@ -2426,6 +2515,40 @@ private fun FullScreenIconPicker(
                     placeholder = "Search icons",
                     modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
                 )
+
+                // Real MDI categories, not a hand-picked subset — see
+                // MdiIconRepository's own doc comment. Horizontally
+                // scrolling row of chips (61 real categories won't all
+                // fit on screen at once), "All" first so clearing the
+                // filter is always in the same reachable place. Combines
+                // with the search box above rather than replacing it —
+                // picking a category narrows what search then filters
+                // further, same relationship Network tab's own real
+                // Announces browser already established between its
+                // filter chips and search field.
+                if (categories.isNotEmpty()) {
+                    LazyRow(
+                        modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    ) {
+                        item {
+                            FilterChip(
+                                selected = selectedCategory == null,
+                                onClick = { onCategoryChange(null) },
+                                label = { Text("All") },
+                            )
+                        }
+                        items(categories, key = { it }) { category ->
+                            FilterChip(
+                                selected = category == selectedCategory,
+                                onClick = {
+                                    onCategoryChange(if (category == selectedCategory) null else category)
+                                },
+                                label = { Text(category) },
+                            )
+                        }
+                    }
+                }
 
                 LazyColumn(
                     state = listState,

@@ -42,9 +42,18 @@ class MessageNotificationService : Service() {
     private val scope = CoroutineScope(SupervisorJob())
     private var loopJob: Job? = null
 
+    // Separate job/loop from messages, not folded into one — a real,
+    // deliberate mismatch in cadence: incoming calls only ring for
+    // CallRepository's own ~60s real timeout, so this polls at
+    // RealCallRepository.POLL_INTERVAL_MS's much tighter 500ms (not
+    // messaging's 4s) — see CallNotifier's own doc comment for why
+    // that gap can't be closed by Battery-friendly mode at all.
+    private var callLoopJob: Job? = null
+
     override fun onCreate() {
         super.onCreate()
         MessageNotifier.ensureChannels(this)
+        CallNotifier.ensureChannel(this)
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -68,11 +77,28 @@ class MessageNotificationService : Service() {
                 }
             }
         }
+        if (callLoopJob?.isActive != true) {
+            callLoopJob = scope.launch {
+                val app = application as NomadPortalApp
+                while (isActive) {
+                    try {
+                        CallNotifier.checkAndNotify(
+                            context = this@MessageNotificationService,
+                            callRepository = app.callRepository,
+                        )
+                    } catch (e: Exception) {
+                        // Same best-effort contract as the message loop above.
+                    }
+                    delay(CALL_POLL_INTERVAL_MS)
+                }
+            }
+        }
         return START_STICKY
     }
 
     override fun onDestroy() {
         loopJob?.cancel()
+        callLoopJob?.cancel()
         super.onDestroy()
     }
 
@@ -101,6 +127,10 @@ class MessageNotificationService : Service() {
         // Same interval RealMessagingRepository's own conversations()
         // poll uses — kept consistent rather than tuned independently.
         private const val POLL_INTERVAL_MS = 4000L
+        // Matches RealCallRepository.POLL_INTERVAL_MS exactly — see
+        // CallNotifier's own doc comment for why calls need this much
+        // tighter cadence than messages.
+        private const val CALL_POLL_INTERVAL_MS = 500L
 
         fun start(context: Context) {
             val intent = Intent(context, MessageNotificationService::class.java)

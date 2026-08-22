@@ -109,6 +109,17 @@
             android:exported="false"
             android:foregroundServiceType="dataSync" />
 
+        <!-- Handles the real Answer/Decline action buttons on
+             CallNotifier's own incoming-call notification — see that
+             file's own doc comment for the real, on-device-found gap
+             this closes (this app had no incoming-call alert at all
+             before, on any build; CallOverlay only ever renders once
+             the app is already foregrounded). Not exported: only this
+             app's own PendingIntents ever target it. -->
+        <receiver
+            android:name=".notifications.CallActionReceiver"
+            android:exported="false" />
+
         <!-- Exposes received/sent message attachments (stored under
              getNoBackupFilesDir()/reticulum/lxmf/attachments — see
              messaging.py's own doc comment for why they live there,
