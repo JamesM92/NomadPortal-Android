@@ -32,6 +32,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -169,7 +170,15 @@ fun NodeListScreen(
     // file's own doc comment / ConversationListScreen's identical
     // `favoritesOpen`: opening one always closes the other, closing one
     // always opens the other. Both headers just flip this single flag.
-    var favoritesOpen by remember { mutableStateOf(true) }
+    //
+    // rememberSaveable, not remember — per explicit request ("on both
+    // the messages and sites tabs, it should remember if your looking
+    // at announces or favorites last... helps save extra clicks"): plain
+    // remember loses this the moment the composable leaves composition
+    // (switching to another bottom-nav tab and back); rememberSaveable
+    // hooks into this destination's own SavedStateRegistry instead,
+    // which Navigation-Compose already wires up per back-stack entry.
+    var favoritesOpen by rememberSaveable { mutableStateOf(true) }
 
     Scaffold(
         topBar = {

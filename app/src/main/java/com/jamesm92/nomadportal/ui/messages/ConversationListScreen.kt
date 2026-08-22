@@ -63,6 +63,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -145,7 +146,18 @@ fun ConversationListScreen(
     var showAddByAddress by remember { mutableStateOf(false) }
     var showCallByAddress by remember { mutableStateOf(false) }
     var callCapableOnly by remember { mutableStateOf(false) }
-    var selectedTab by remember { mutableIntStateOf(0) }
+    // rememberSaveable, not remember, per explicit request ("on both
+    // the messages and sites tabs, it should remember if your looking
+    // at announces or favorites last... helps save extra clicks") —
+    // plain remember loses this the moment the composable leaves
+    // composition (switching to another bottom-nav tab and back), since
+    // NavHost's own popUpTo(saveState=true)/restoreState=true only
+    // preserves the back-stack entry itself, not raw Compose state
+    // inside it. rememberSaveable hooks into that entry's own
+    // SavedStateRegistry instead, which Navigation-Compose already
+    // wires up per-destination — the standard, correct mechanism for
+    // exactly this "remember UI state across tab switches" need.
+    var selectedTab by rememberSaveable { mutableIntStateOf(0) }
     var sortOption by remember { mutableStateOf(SortOption.RECENT) }
 
     // Optimistic favorite toggling — repository.conversations() is a
@@ -254,7 +266,10 @@ fun ConversationListScreen(
     // both headers just flip it, since with only two sections "flip"
     // and "swap which one's open" are the same operation regardless of
     // which header triggered it.
-    var favoritesOpen by remember { mutableStateOf(true) }
+    //
+    // rememberSaveable — see selectedTab's own doc comment above for
+    // why (same real request, same fix).
+    var favoritesOpen by rememberSaveable { mutableStateOf(true) }
 
     fun toggleFavorite(summary: ConversationSummary) {
         val hash = summary.contact.lxmfHash
