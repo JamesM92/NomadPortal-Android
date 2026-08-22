@@ -29,12 +29,45 @@ object DebugLogExporter {
     /** The one real capture — everything else in this object is a
      * different way of handing the same text to the user. Blocking
      * (real process I/O), null on genuine failure (e.g. `logcat`
-     * unavailable on some OEM build), never throwing. */
+     * unavailable on some OEM build), never throwing.
+     *
+     * Silences a fixed list of framework tags that are real, high-
+     * volume noise but never diagnostically useful for this app's own
+     * bugs (Compose's own per-frame `setRequestedFrameRate` spam,
+     * `Choreographer`/`HWUI`/`BLASTBufferQueue*` frame-timing chatter,
+     * `WM-*`/`nativeloader`/insets/IME plumbing that fires on every
+     * screen transition) — found the hard way when a real captured
+     * log from a live 3-phone Bluetooth-mesh test hit a 50,000-
+     * character paste limit before it ever reached the actual
+     * `MeshTransport`/`MeshGattClient`/`MeshGattServer`/`RnsBleBridge`
+     * lines the bug chase actually needed, buried under thousands of
+     * lines of this. Uses `logcat`'s own filterspec (`Tag:S` = silent
+     * for that tag, trailing `*:D` = everything else still at Debug+)
+     * rather than a client-side line-by-line grep — cheaper (the
+     * noise is filtered by the logging framework itself, not read
+     * into memory first) and it's the same mechanism `adb logcat`
+     * callers already reach for. */
     fun captureLogText(): String? {
         return try {
             val pid = Process.myPid()
             val process = Runtime.getRuntime().exec(
-                arrayOf("logcat", "-d", "-v", "threadtime", "--pid=$pid"),
+                arrayOf(
+                    "logcat", "-d", "-v", "threadtime", "--pid=$pid",
+                    "View:S", "ViewRootImpl:S", "Choreographer:S", "HWUI:S",
+                    "BLASTBufferQueue:S", "BLASTBufferQueue_Java:S",
+                    "NativeCustomFrequencyManager:S", "InputTransport:S",
+                    "InputMethodManager:S", "InputMethodManagerUtils:S",
+                    "InputMethodManager_LC:S", "InsetsController:S",
+                    "InsetsSourceConsumer:S", "ImeTracker:S",
+                    "WindowOnBackDispatcher:S", "RemoteInputConnectionImpl:S",
+                    "AssistStructure:S", "nativeloader:S", "ApplicationLoaders:S",
+                    "ActivityThread:S", "DecorView:S", "DisplayManager:S",
+                    "GraphicsEnvironment:S", "DesktopExperienceFlags:S",
+                    "DesktopModeFlags:S", "IDS_TAG:S", "ashmem:S",
+                    "WM-WrkMgrInitializer:S", "WM-PackageManagerHelper:S",
+                    "WM-Schedulers:S", "WM-ForceStopRunnable:S",
+                    "AccessibilityNodeInfoDumper:S", "*:D",
+                ),
             )
             val output = process.inputStream.bufferedReader().use { it.readText() }
             process.waitFor()
