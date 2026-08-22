@@ -72,7 +72,7 @@ START_ANNOUNCE_DELAY = 6        # seconds after start before first announce
 # own TentPortalMark (AppLogo.kt) — generated offline via
 # github.com/JamesM92/Img2ContourAscii (contour/shape-matching, not
 # plain brightness-to-character mapping) against a from-source PIL
-# reproduction of that composable's exact Canvas geometry, at --cols 20
+# reproduction of that composable's exact Canvas geometry, at --cols 30
 # with --color --palette-size 4 --hysteresis 0.5 (a small, real palette
 # matched to the mark's own actual colors — NomadAccent's tent blue,
 # NomadPortalPurple's doorway, the seam/guy-line shade, background —
@@ -88,14 +88,56 @@ START_ANNOUNCE_DELAY = 6        # seconds after start before first announce
 # font than the real target renderer actually uses, so identical content
 # needed more width there than it would in a real NomadNet client. Fixed
 # there directly (font-size parity, not just this art's own size) plus
-# --cols 20 here for real margin. That tool is GPL-3.0 — same real
+# --cols 20 here for real margin.
+#
+# Per explicit direction ("make the ascii art of our logo 50% bigger"),
+# --cols 30 (a real, literal 50% bump from 20). Trying this first
+# surfaced what looked like a real regression (the same phone this
+# whole sizing history is about needed real horizontal scrolling to
+# read even plain paragraph text below the art) — but that turned out
+# to be a different, pre-existing bug this art's own resize just
+# happened to expose: this page's prose paragraphs (see
+# _DEFAULT_INDEX's own doc comment below) were single unwrapped lines
+# ~500 characters long, already the real widest content on the page by
+# a wide margin over anything the art itself was doing at any col
+# count. Fixed that at the actual root (hard-wrapping the prose, not
+# shrinking the art) — confirmed via an actual on-device fresh-install
+# browse that --cols 30 fits fine once the prose isn't competing for
+# width anymore. Also regenerated from a from-source PIL reproduction
+# that had itself drifted stale relative to three later real on-device
+# fixes to TentPortalMark's own geometry (stake Y, guy-line draw order,
+# guy-anchor anti-aliasing nudge — see draw_logo.py's own doc comment,
+# kept offline alongside the rest of this generation pipeline) — this
+# art had quietly been built from the *old*, pre-fix logo shape ever
+# since, without anyone noticing until this resync. That tool is
+# GPL-3.0 — same real
 # license-conflict reasoning already documented on DEFAULT_EXAMPLES_PAGE
 # below applies here, so it's used purely as an offline one-time
 # generator, never imported or shipped as a runtime dependency; only its
 # plain-text *output* (not GPL-encumbered) is embedded, converted from
-# the tool's own raw ANSI 24-bit-color escapes into real Micron color
-# markup (`FTrrggbb...text...`f, run-collapsed — Micron pays one escape
-# per *run*, not per character) by a small offline script, not by hand.
+# the tool's own raw ANSI 24-bit-color escapes into Micron color markup,
+# run-collapsed (Micron pays one escape per *run*, not per character) by
+# a small offline script, not by hand.
+#
+# Real, on-device-reported compatibility bug, found after this had
+# already shipped once: the script originally emitted Micron's precise
+# 6-hex color form (`FTrrggbb...`f — confirmed genuinely spec-valid
+# against NomadNet's own real MicronParser.py source), but a real other
+# Micron viewer this page was actually browsed with rendered it as
+# literal garbage text instead of a color (the raw hex digits leaking
+# through), rather than just falling back to an uncolored render — that
+# viewer doesn't implement the 6-hex form at all. Per explicit direction
+# ("we should stick to the 3hex color codes for the default page as not
+# all viewers are compatible with the high precision color"), the script
+# now quantizes every color down to the older, more-widely-supported
+# 3-hex shorthand (`Frgb...`f, each digit doubled) instead — a real
+# interop fix, not a downgrade for its own sake; see the script's own
+# updated doc comment (ansi_to_micron.py, kept offline alongside the
+# rest of this generation pipeline, not part of this repo) for the exact
+# quantization. DEFAULT_EXAMPLES_PAGE below still *demonstrates* the
+# 6-hex form further down — that's deliberate: it's educational content
+# explicitly labeled as an alternate, less-supported form, not this
+# app's own default output, so it's a different case from this art.
 # That same script also strips any glyph the tool colored to match the
 # source image's own real background (#131313, this app's actual
 # NomadBg) — palette quantization occasionally buckets faint/low-
@@ -117,20 +159,61 @@ START_ANNOUNCE_DELAY = 6        # seconds after start before first announce
 # been the artwork's own "'''" divider line). Left-aligned, not
 # `c-centered — Micron's centering strips/recomputes leading whitespace
 # per line, which would destroy this art's column alignment.
-_LOGO_ASCII_ART = """         `FT366178r<`f
-        `FT5ba3c9d><b`f
-       `FT366178<`f`FT5ba3c9U><U`f`FT366178>`f
-      `FT366178-`f`FT5ba3c9dU><Ub`f`FT366178-`f
-     `FT366178-`f`FT5ba3c9uUUL)UUe`f`FT366178-`f
-     `FT366178:`f`FT5ba3c9U}`f`FT9b6bc8iuc|`f`FT5ba3c9AU`f`FT366178:`f
-    `FT366178!`f`FT5ba3c9UU`f`FT9b6bc8vUUUUc`f`FT5ba3c9U&`f`FT366178!`f
-   `FT366178:`f`FT5ba3c9dU&`f`FT9b6bc8|UUUUc`f`FT5ba3c9UUb`f`FT366178:`f
-    `FT5ba3c9UU&`f`FT9b6bc8|UUUUc`f`FT5ba3c9UUU`f`FT366178-:`f
-  `FT366178!`f `FT5ba3c9UU&`f`FT9b6bc8|UUUUc`f`FT5ba3c9UUU`f `FT366178!`f
- `FT366178v`f  `FT5ba3c9UU&`f`FT9b6bc8|UUUUc`f`FT5ba3c9UUU`f  `FT366178v`f
-`FT366178:`f                  `FT366178:`f
-`FT366178!`f                  `FT366178!`f"""
+_LOGO_ASCII_ART = """              `F367->`f
+             `F367.!!:`f
+             `F5acU`f`F367>-`f`F5acU`f`F367_`f
+            `F5acdU`f`F367>-`f`F5acU&`f
+           `F5acdUU`f`F367>-`f`F5acUUb`f
+          `F5acdUUU`f`F367>-`f`F5acUUUb`f
+         `F5acuUUUU`f`F367>-`f`F5acUUUUo`f
+        `F367v`f`F5acUUUUU`f`F367>-`f`F5acUUUUU`f`F367c`f
+       `F367.`f`F5acUUUUAV`f`F96c:cf`f`F5acAUUUU`f`F367:`f
+      `F367.`f`F5acUUUUV`f`F96cuiiiic|`f`F5acUUUU`f`F367.`f
+      `F5acUUUUE`f`F96ciiiiiiic`f`F5acVUUU&`f
+     `F367:`f`F5acUUUU`f`F96cniiiiiiii!`f`F5acUUUU`f`F367:`f
+    `F367!-`f`F5acUUUU`f`F96c!iiiiiiii!`f`F5acUUUU`f`F367-!`f
+   `F367v!`f `F5acUUUU`f`F96c!iiiiiiii!`f`F5acUUUU`f `F367!v`f
+  `F367v!`f  `F5acUUUU`f`F96c!iiiiiiii!`f`F5acUUUU`f  `F367!v`f
+ `F367:!`f   `F5acUUUU`f`F96c!iiiiiiii!`f`F5acUUUU`f   `F367!v`f
+`F367:!`f    `F5acUUUU`f`F96c!iiiiiiii!`f`F5acUUUU`f    `F367!:`f
+`F367!`f     `F5acYYYY`f`F96c!YYYYYYYY!`f`F5acYYYY`f     `F367!`f"""
 
+# Real bug found while chasing what looked at first like a logo-sizing
+# regression (a "make the art 50% bigger" request): the actual widest
+# line on this whole page — by a wide margin, ~500 raw characters vs.
+# the art's own ~50 — was always the prose paragraphs below, written as
+# single long unwrapped lines. MicronPage renders with softWrap=false
+# (confirmed via BrowserScreen.kt's own real horizontalScroll/
+# TextMeasurer-sized-contentWidth setup — this app never reflows Micron
+# text, matching real NomadNet client behavior, since Micron itself has
+# no reflow concept), so the whole page's content width is sized to its
+# single widest line — meaning these paragraphs, not the art, were what
+# forced real horizontal scrolling even for plain text on an actual
+# on-device fresh-install browse. Every paragraph/bullet below is now
+# hard-wrapped at a real terminal-safe width (~44 characters, tuned
+# down from an initial ~48 after an on-device check found even that
+# still needed a few characters of horizontal scroll on the exact
+# MIN_MICRON_CONTENT_WIDTH-floor phone this is all about) with
+# literal newlines, matching how real NomadNet page authors actually
+# write body text for a format that never reflows client-side — not a
+# workaround, the correct way to author a Micron page. Re-wrap by hand
+# if this content changes again; there's no automated re-wrap step.
+#
+# Headings need their *own*, much narrower budget than body text, for
+# the same width-measurement reason — confirmed directly against
+# BrowserScreen.kt's own real contentWidth calculation, not guessed:
+# every block renders in the same monospace font, but a `>>` heading
+# measures at 20sp and `>` at 24sp against body text's ~12sp
+# (bodyMedium * 0.85), so a heading's real on-screen width is roughly
+# 1.7x/2x its own character count, not 1x. A 34-character `>>` heading
+# ("Why this page is boring on purpose") was, on its own, wider than
+# every hard-wrapped body paragraph below it despite looking short —
+# shortened to "Boring on purpose" instead of wrapped, since a heading
+# wrapping onto a second line reads as two separate headings, not one.
+# This app's own `>` H1 title line ("NomadPortal-Android") is close to
+# this same real limit purely from the app's own name length — a
+# structural cost of the H1 being what it is, not something wrapping
+# can fix, and not something this pass changed.
 _DEFAULT_INDEX = """>NomadPortal-Android
 `cA native Android app for Reticulum & NomadNet`a
 
@@ -140,29 +223,88 @@ _DEFAULT_INDEX = """>NomadPortal-Android
 
 -
 
-This page is being served live from an Android phone running NomadPortal-Android -- a native Kotlin/Compose app built around the real, embedded Reticulum and LXMF reference implementations (not a reimplementation), for infrastructure-free mesh communication. It's a different project from the original NomadPortal Docker server -- built for carrying in a pocket, not for running on infrastructure you administer.
-
->>What it does
-
-• Message people over LXMF: text, photos, audio, and files
-• Browse and host NomadNet pages, like this one
-• Connect over TCP and local Wi-Fi discovery (Bluetooth mesh and LoRa are on the way)
-• A panic-wipe safeguard that securely erases identity and message data in seconds
-• Never asks for location access, full stop
-
->>Why this page is boring on purpose
-
-Pages hosted by NomadPortal-Android are plain Micron markup only -- no Python, no executables, ever. A real NomadNet server can run scripts to build pages dynamically; this app deliberately never does, because a phone carried in someone's pocket is a different trust boundary than a server an operator administers directly. What you're reading is exactly the file it is, nothing more.
-
->>Permissions
-
-Every permission this app requests is optional -- denying any of them just turns that one feature off, the rest of the app keeps working normally. It never requests location access, under any circumstances.
+`!Open beta`! -- this app works and this page is
+proof, but it's still under active
+development. Expect rough edges, and expect
+things to keep changing. If that's not what
+you're looking for today, check back later;
+if it is, keep reading.
 
 -
 
-If you're reading this from another NomadNet client, you've found a real, live instance -- running on ordinary consumer hardware, nothing but an Android phone. NomadPortal-Android is under active development.
+If you're reading this from another NomadNet
+client, you've found a real, live instance
+of NomadPortal-Android -- this page is being
+served from an ordinary Android phone in
+someone's pocket, not a server. It's a
+native Kotlin/Compose app built around the
+real, embedded Reticulum and LXMF reference
+implementations (not a reimplementation),
+for infrastructure-free mesh communication
+-- a different project from the original
+NomadPortal Docker server, which is built
+for infrastructure you administer, not for
+carrying around.
 
-`[See examples.mu on this node`/page/examples.mu] for a quick tour of what this page's own markup can do.
+>>What it does
+
+• Message people over LXMF: text, photos,
+  audio, and files
+• Browse and host NomadNet pages, like this
+  one
+• Connect over TCP and local Wi-Fi discovery,
+  with Bluetooth mesh and RNode/LoRa support
+  in progress
+• A panic-wipe safeguard that securely erases
+  identity and message data in seconds
+• Never asks for location access, full stop
+
+>>Why get it
+
+If you're already on Reticulum, this is a
+way to carry your identity, contacts, and a
+node in your pocket instead of leaving them
+on a machine somewhere -- no separate server
+to run, no infrastructure to maintain, just
+a phone. If you're new to Reticulum and
+NomadNet, this page you're looking at right
+now is a real example of what the network
+actually looks like in practice: an ordinary
+phone, hosting a real page, reachable over
+whatever link happens to connect the two of
+you.
+
+There's no app-store listing yet -- get it
+directly from the source, build it yourself,
+and see exactly what's running:
+https://github.com/JamesM92/NomadPortal-Android
+
+>>Boring on purpose
+
+Pages hosted by NomadPortal-Android are
+plain Micron markup only -- no Python, no
+executables, ever. A real NomadNet server
+can run scripts to build pages dynamically;
+this app deliberately never does, because a
+phone carried in someone's pocket is a
+different trust boundary than a server an
+operator administers directly. What you're
+reading is exactly the file it is, nothing
+more.
+
+>>Permissions
+
+Every permission this app requests is
+optional -- denying any of them just turns
+that one feature off, the rest of the app
+keeps working normally. It never requests
+location access, under any circumstances.
+
+-
+
+`[See examples.mu on this node`/page/examples.mu]
+for a quick tour of what this page's own
+markup can do.
 """
 
 # A real file (not a synthetic fallback like _DEFAULT_INDEX above) —
@@ -194,10 +336,10 @@ Combine them: `!`_bold and underlined together`_`!
 
 >>Colors
 
-`Fa30Foreground color`f is set with a backtick, F, then a 3-digit shorthand hex code -- each digit doubled, so a30 becomes aa3300.
-`FT2e8b57Foreground color (precise)`f uses a backtick, F, T, then a full 6-digit hex code instead of the 3-digit shorthand.
+`Fa30Foreground color`f is set with a backtick, F, then a 3-digit shorthand hex code -- each digit doubled, so a30 becomes aa3300. This is the only form this app's own editor ever writes, and the only one used on this page.
+`FT2e8b57Foreground color (precise)`f uses a backtick, F, T, then a full 6-digit hex code instead of the 3-digit shorthand -- real, spec-valid Micron, but not every client renders it; a real client tested against this app's own hosted pages showed raw hex digits instead of a color where this form was used, so this app's own editor deliberately never writes it, even though it would let you match a color exactly rather than one of 16 shades per channel.
 `B502Background color`b works the same way, with B instead of F.
-`BT1a1a2e`FTe0c068Foreground and background together`f`b combine both on the same run -- this is what this editor's own Highlight button writes.
+`BT1a1a2e`FTe0c068Foreground and background together`f`b combines both on the same run using the precise form above, just to demonstrate the syntax -- this app's own editor writes `B223`Fdb6 instead (both 3-digit, the nearest representable shade of each), which is what its Highlight button actually produces.
 
 >>Alignment
 

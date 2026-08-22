@@ -53,6 +53,34 @@ androidxBiometric = "1.1.0"
 # work-runtime-ktx/maven-metadata.xml), same "not the newest alpha/
 # beta/rc" pinning convention as every other dependency here.
 androidxWork = "2.11.2"
+# Real, on-device-confirmed bug fix, not a preemptive bump: appcompat
+# 1.2.0 and camera-core both transitively pull androidx.fragment 1.2.5
+# (confirmed via `./gradlew :app:dependencies`), and nothing else in this
+# graph requests a newer one, so Gradle's conflict resolution settles on
+# that ancient version. 1.2.5's own FragmentActivity.startActivityForResult
+# override still carries a `checkForValidRequestCode` check rejecting any
+# requestCode >= 0x10000 (confirmed against real FragmentActivity.java
+# source at that version's era; removed entirely in current
+# androidx-main) — but ComponentActivity's own ActivityResultRegistry
+# (which every `rememberLauncherForActivityResult` call in this app goes
+# through) *deliberately* generates request codes starting at exactly
+# 0x00010000 (INITIAL_REQUEST_CODE_VALUE, confirmed against real
+# ActivityResultRegistry.kt source) specifically to avoid colliding with
+# legacy manually-assigned low codes. On a FragmentActivity subclass
+# (this app's MainActivity, required for BiometricPrompt — see
+# MainActivity's own doc comment) stuck on fragment 1.2.5, those two
+# real, verified-from-source facts are flatly incompatible: EVERY
+# activity-result launcher on ANY FragmentActivity throws
+# "IllegalArgumentException: Can only use lower 16 bits for requestCode"
+# on every single launch, deterministically, not intermittently — this
+# is exactly the real crash IdentitiesScreen.kt's import-identity file
+# picker hit on-device (100% reproducible, not the "long session/many
+# registrations" theory an earlier version of that file's own comment
+# guessed at before this was actually traced to its root cause).
+# Verified latest stable via Google Maven's own metadata
+# (dl.google.com/android/maven2/androidx/fragment/fragment/maven-
+# metadata.xml) — 1.9.0 is current and already ships the fix.
+androidxFragment = "1.9.0"
 
 [libraries]
 androidx-core-ktx = { group = "androidx.core", name = "core-ktx", version.ref = "coreKtx" }
@@ -88,6 +116,7 @@ androidx-camera-view = { group = "androidx.camera", name = "camera-view", versio
 zxing-core = { group = "com.google.zxing", name = "core", version.ref = "zxingCore" }
 androidx-biometric = { group = "androidx.biometric", name = "biometric", version.ref = "androidxBiometric" }
 androidx-work-runtime-ktx = { group = "androidx.work", name = "work-runtime-ktx", version.ref = "androidxWork" }
+androidx-fragment-ktx = { group = "androidx.fragment", name = "fragment-ktx", version.ref = "androidxFragment" }
 junit = { group = "junit", name = "junit", version.ref = "junit" }
 androidx-junit = { group = "androidx.test.ext", name = "junit", version.ref = "androidxJunit" }
 androidx-espresso-core = { group = "androidx.test.espresso", name = "espresso-core", version.ref = "espressoCore" }
