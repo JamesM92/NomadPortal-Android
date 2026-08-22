@@ -2567,45 +2567,77 @@ def _seconds_since_last_announce() -> Optional[float]:
     return None if last is None else time.time() - last
 
 
-def _check_send_allowed() -> tuple:
-    """(allowed, block_reason). block_reason is None when allowed.
+def _has_message_history_with(dest_hash_hex: str) -> bool:
+    """Whether this identity has ever sent to, or received from,
+    [dest_hash_hex] before — same "dest" (sent)/"source" (received)
+    field-name split `MessagingService.delete_conversation` already
+    scans by, reused here for `_check_send_allowed`'s own "no message
+    on file yet" condition (see that function's own doc comment)."""
+    if _messaging is None:
+        return False
+    for m in _messaging.sent_messages(user_sub=_active_user_sub):
+        if m.get("dest") == dest_hash_hex:
+            return True
+    for m in _messaging.received_messages(user_sub=_active_user_sub):
+        if m.get("source") == dest_hash_hex:
+            return True
+    return False
 
-    Blocking (not just skipping a background announce) is deliberate,
-    per explicit design direction: if every currently-active interface
-    has auto-announce set to 0 (disabled) and the last announce is older
-    than the strictest active threshold, this device can't autonomously
-    fix that (0 means exactly that: don't announce without being asked
-    to) — so the send itself has to stop and say why, rather than
-    silently going out over a possibly-stale/no-path identity. If
-    auto-announce IS enabled (> 0) on at least one active interface,
-    this announces first (broadcast, per this section's own doc comment)
-    and then allows the send through.
+
+def _check_send_allowed(dest_hash_hex: str) -> tuple:
+    """(allowed, block_reason). block_reason is None when allowed —
+    which, as of 2026-08-22, is always: this used to *block* the send
+    outright when every active interface had auto-announce disabled and
+    the identity's last announce was stale (see git history for the
+    original doc comment/reasoning). Reversed per explicit direction:
+    "when sending a message if the message time has elapsed or no
+    message on file, it must send an announce along with the message
+    so the destination knows how to route it back" — a real, needed
+    fix on top of this same day's other messaging-reliability work (see
+    messaging.py's _deliver()/_attempt_relay_retry doc comments): a
+    stale or never-announced identity isn't just a *reachability* risk
+    for the outbound send itself, it's a *reply-routing* risk for the
+    recipient — they may get the message fine (direct, or via relay)
+    but have no fresh path back to answer it. The fix for that is
+    "announce," not "stop and make the user do it manually" — this
+    function no longer has any reason to return False at all, so it
+    doesn't; kept as a (allowed, reason) tuple only so send_message()
+    and every other caller don't need to change shape.
+
+    Two independent triggers, either one announces:
+      - Staleness — this identity's own last announce is older than the
+        strictest currently-active interface's threshold (the original
+        check, unchanged).
+      - No message on file — this exact destination has never been
+        messaged before, in either direction (see
+        _has_message_history_with). A globally-recent announce doesn't
+        guarantee *this* peer, specifically, ever actually received it
+        — mesh flooding is topology-dependent, not per-destination
+        memory. Announcing again right around send time gives a
+        first-time contact the best real chance of a fresh path to
+        reply on, independent of the interval-based staleness check.
+
+    Never returns False anymore, but still returns False's shape
+    (`allowed=True` always) rather than becoming `None`/`-> None`, so a
+    caller checking the tuple doesn't need special-casing — same
+    "don't change a shape callers already rely on" reasoning as
+    _attempt_relay_retry's own lxmf_dest=None extension earlier this
+    session.
     """
     if _messaging is None:
         return True, None  # let send_message's own None-check handle this
 
     configs = _active_announce_configs()
-    if not configs:
-        return True, None  # nothing this section tracks is active — no policy to enforce
+    stale = False
+    if configs:
+        max_threshold = min(c["announce_max_seconds"] for c in configs)
+        since = _seconds_since_last_announce()
+        stale = since is None or since >= max_threshold
 
-    max_threshold = min(c["announce_max_seconds"] for c in configs)
-    since = _seconds_since_last_announce()
-    stale = since is None or since >= max_threshold
-
-    if not stale:
-        return True, None
-
-    any_auto_enabled = any(c["auto_announce_interval_seconds"] > 0 for c in configs)
-    if any_auto_enabled:
+    if stale or not _has_message_history_with(dest_hash_hex):
         _messaging.do_announce(user_sub=_active_user_sub)
-        return True, None
 
-    return False, (
-        "Your identity hasn't announced recently enough to reliably reach "
-        "this contact, and auto-announce is set to 0 (disabled) for every "
-        "currently active connection. Tap Announce now in Settings, or "
-        "set an auto-announce interval, then try again."
-    )
+    return True, None
 
 
 def _announce_loop() -> None:
@@ -2699,10 +2731,14 @@ def get_announce_status_json() -> str:
     identity's own hash), hosted_node_hash (nullable — null unless
     node hosting is actually on, set via set_node_hosting_enabled(True)
     calling browser.py's set_hosted(); see that method's own doc
-    comment), send_blocked + send_blocked_reason (a
-    read-only preview of what _check_send_allowed() would currently
-    decide — lets the UI show a warning before the user even tries to
-    send, not just react to a failed send afterward)."""
+    comment), send_blocked + send_blocked_reason (always False/null as
+    of 2026-08-22 — _check_send_allowed() no longer ever blocks a send,
+    it only announces when one is due and lets the send through
+    regardless; see that function's own doc comment for the real policy
+    change. Kept in this JSON shape rather than removed so Kotlin's own
+    AnnounceStatus/RealMessagingRepository parsing and the
+    ConversationScreen banner that reads it don't need a matching
+    change just to keep working — they simply never fire anymore)."""
     import json
     lxmf_address = None
     last_announce_at = None
@@ -2737,24 +2773,11 @@ def get_announce_status_json() -> str:
     if _browser is not None and getattr(_browser, "_hosted_hash", ""):
         hosted_node_hash = _browser._hosted_hash
 
-    # Preview only — never triggers an announce itself (unlike the real
-    # _check_send_allowed() call send_message() makes), so polling this
-    # for UI display can't have side effects.
-    configs = _active_announce_configs()
+    # Always False/null now — see this function's own doc comment for
+    # why (_check_send_allowed() no longer has a blocking outcome to
+    # preview).
     send_blocked = False
     send_blocked_reason = None
-    if configs:
-        max_threshold = min(c["announce_max_seconds"] for c in configs)
-        since = _seconds_since_last_announce()
-        stale = since is None or since >= max_threshold
-        if stale and not any(c["auto_announce_interval_seconds"] > 0 for c in configs):
-            send_blocked = True
-            send_blocked_reason = (
-                "Identity announce is stale and auto-announce is set to 0 "
-                "(disabled) for the active connection — sends will be "
-                "blocked until you announce manually or set an "
-                "auto-announce interval."
-            )
 
     return json.dumps({
         "interfaces": dict(_interface_announce_config),
@@ -3111,20 +3134,21 @@ def send_message(
     image_format: str = None,
 ) -> None:
     """Raises RuntimeError on failure — e.g. no delivery identity
-    registered, OR _check_send_allowed() blocked this send because the
-    identity's announce is stale and auto-announce is disabled on every
-    currently-active interface (see that function's own doc comment;
-    matches what get_announce_status_json()'s send_blocked/
-    send_blocked_reason already let the UI warn about proactively,
-    before the user even tries). Matches MessagingRepository.sendMessage's
-    `suspend fun` contract of surfacing failure via exception either way.
+    registered. _check_send_allowed() no longer blocks a send at all
+    (see that function's own doc comment for the 2026-08-22 policy
+    change) — it only ever announces, when it decides one is due,
+    before letting the send through either way. Still matches
+    MessagingRepository.sendMessage's `suspend fun` contract of
+    surfacing failure via exception, just with one fewer real failure
+    mode than before.
 
-    _check_send_allowed() runs first, synchronously — when it decides an
-    announce is due, that's a real (if usually fast) RNS announce call,
-    not just a state check, so this can occasionally add real latency to
-    a send. Accepted trade-off: correctness (the recipient actually
-    having a path to reach us back, or a relay having a fresh path to
-    reach *them*) matters more here than shaving this call's latency.
+    _check_send_allowed() runs first, synchronously, keyed to this
+    specific [dest_hash_hex] — when it decides an announce is due,
+    that's a real (if usually fast) RNS announce call, not just a state
+    check, so this can occasionally add real latency to a send.
+    Accepted trade-off: correctness (the recipient actually having a
+    path to reach us back, or a relay having a fresh path to reach
+    *them*) matters more here than shaving this call's latency.
 
     [attachment_data] is a Java `byte[]` on the Kotlin side — Chaquopy
     bridges that to a Python `bytes` object automatically, no manual
@@ -3136,9 +3160,7 @@ def send_message(
     LXMF's dedicated (codec-specific) audio field."""
     if _messaging is None:
         raise RuntimeError("Messaging not initialized yet")
-    allowed, block_reason = _check_send_allowed()
-    if not allowed:
-        raise RuntimeError(block_reason)
+    _check_send_allowed(dest_hash_hex)
     # Real regression found+fixed while investigating a live "No delivery
     # identity registered for this user" report: this call hardcoded ""
     # for both title and user_sub, missed by the sweep this module's own
