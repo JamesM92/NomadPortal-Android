@@ -34,9 +34,20 @@ app/src/main/python/**/__pycache__/
 *.egg-info/
 .pytest_cache/
 
-## Keystores — never commit signing material
+## Keystores — never commit *release* signing material
 *.jks
 *.keystore
+## Deliberate, documented exception: debug.keystore (repo root) is a
+## real, dedicated debug-signing key, committed on purpose so every
+## build — CI or local, any machine — shares one identical debug
+## certificate and updates actually work between builds (see
+## app/build.gradle.kts's own signingConfigs.debug doc comment for the
+## real on-device update failure this fixes). A debug key has none of
+## a release key's real security properties — Android itself refuses
+## to accept a debug-signed APK as a genuine release build no matter
+## what, so there's nothing sensitive being exposed here the way a
+## real release keystore would be.
+!debug.keystore
 
 ## OS cruft
 .DS_Store
