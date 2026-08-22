@@ -86,11 +86,33 @@ android {
             signingConfig = signingConfigs.getByName("debug")
         }
         release {
-            isMinifyEnabled = false
+            // Real, measured trigger, not a default-flip-it-on: Material
+            // Icons Extended alone accounted for ~35.8MB of the
+            // unminified debug APK (confirmed by actually disassembling
+            // the built APK's dex files) purely because nothing was ever
+            // tree-shaken. See proguard-rules.pro's own doc comment for
+            // the real -keep rules this needed (Chaquopy's own runtime
+            // bridge, and RNS_BLE_Wrapper's real Python<->Kotlin interop
+            // boundary — both reached only via runtime reflection, which
+            // R8 can't see on its own).
+            isMinifyEnabled = true
+            isShrinkResources = true
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
             )
+            // No signingConfig here on purpose — there's still no real
+            // release-signing key (a separate, bigger decision the user
+            // hasn't made yet; see debug.keystore's own doc comment for
+            // why that one is fine to commit and this one wouldn't be).
+            // A debug-keystore signingConfig was applied here temporarily,
+            // build-then-revert, purely to get a real installable APK for
+            // this change's own on-device verification pass (confirmed
+            // clean: real emulator install, every major screen navigated
+            // with no crash, and the one genuinely at-risk path —
+            // RnsBleBridge's Chaquopy reflection boundary — exercised for
+            // real via the Bluetooth mesh toggle, confirmed via a real
+            // "Interface 'bluetooth_mesh' enabled" log line, not assumed).
         }
     }
 
