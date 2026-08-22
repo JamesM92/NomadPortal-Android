@@ -32,6 +32,7 @@ import com.jamesm92.nomadportal.data.hosting.SiteFileRepository
 import com.jamesm92.nomadportal.data.hosting.blocksToMicron
 import com.jamesm92.nomadportal.data.hosting.parseMicronToBlocks
 import com.jamesm92.nomadportal.ui.components.AdaptiveTopAppBar
+import com.jamesm92.nomadportal.ui.components.CompactIconButton
 import com.jamesm92.nomadportal.ui.theme.NomadTextDim
 import kotlinx.coroutines.launch
 
@@ -126,26 +127,26 @@ fun SitePageEditorScreen(
                     Text(text = path.substringAfterLast('/'))
                 },
                 navigationIcon = {
-                    IconButton(onClick = onBack) {
+                    CompactIconButton(onClick = onBack) {
                         Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
                     }
                 },
                 actions = {
-                    IconButton(onClick = { switchMode(EditorMode.RICH) }, enabled = content != null) {
+                    CompactIconButton(onClick = { switchMode(EditorMode.RICH) }, enabled = content != null) {
                         Icon(
                             Icons.Filled.Brush,
                             contentDescription = "Rich text mode",
                             tint = if (mode == EditorMode.RICH) MaterialTheme.colorScheme.primary else NomadTextDim,
                         )
                     }
-                    IconButton(onClick = { switchMode(EditorMode.RAW) }, enabled = content != null) {
+                    CompactIconButton(onClick = { switchMode(EditorMode.RAW) }, enabled = content != null) {
                         Icon(
                             Icons.Filled.Code,
                             contentDescription = "Raw markup mode",
                             tint = if (mode == EditorMode.RAW) MaterialTheme.colorScheme.primary else NomadTextDim,
                         )
                     }
-                    IconButton(onClick = { save() }, enabled = !saving) {
+                    CompactIconButton(onClick = { save() }, enabled = !saving) {
                         Icon(Icons.Filled.Check, contentDescription = "Save")
                     }
                 },

@@ -28,6 +28,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import com.jamesm92.nomadportal.ui.components.AdaptiveTopAppBar
+import com.jamesm92.nomadportal.ui.components.CompactIconButton
 import com.jamesm92.nomadportal.ui.components.TentPortalMark
 import com.jamesm92.nomadportal.ui.messages.AttachmentFileProvider
 import com.jamesm92.nomadportal.ui.theme.NomadTextDim
@@ -77,7 +78,7 @@ fun AboutScreen(onBack: () -> Unit) {
             AdaptiveTopAppBar(
                 title = { Text("About") },
                 navigationIcon = {
-                    IconButton(onClick = onBack) {
+                    CompactIconButton(onClick = onBack) {
                         Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
                     }
                 },

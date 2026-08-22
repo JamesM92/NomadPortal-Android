@@ -99,6 +99,7 @@ import com.jamesm92.nomadportal.panicwipe.PanicWipe
 import com.jamesm92.nomadportal.security.DeviceCredentialGate
 import com.jamesm92.nomadportal.security.DeviceCredentialResult
 import com.jamesm92.nomadportal.ui.components.AdaptiveTopAppBar
+import com.jamesm92.nomadportal.ui.components.CompactIconButton
 import com.jamesm92.nomadportal.ui.components.Identicon
 import com.jamesm92.nomadportal.ui.components.PanicWipeLogo
 import com.jamesm92.nomadportal.ui.components.dismissKeyboardOnTap
@@ -819,13 +820,13 @@ fun RnshTerminalScreen(
                     }
                 },
                 navigationIcon = {
-                    IconButton(onClick = onBack) {
+                    CompactIconButton(onClick = onBack) {
                         Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
                     }
                 },
                 actions = {
                     if (status.state == RnshConnectionState.CONNECTING || status.state == RnshConnectionState.CONNECTED) {
-                        IconButton(onClick = { disconnectAndClearSession() }) {
+                        CompactIconButton(onClick = { disconnectAndClearSession() }) {
                             Icon(Icons.Filled.Close, contentDescription = "Disconnect")
                         }
                     }

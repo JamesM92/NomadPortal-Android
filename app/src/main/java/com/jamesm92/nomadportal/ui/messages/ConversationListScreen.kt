@@ -86,6 +86,7 @@ import com.jamesm92.nomadportal.data.messaging.PropagationTransferState
 import com.jamesm92.nomadportal.panicwipe.PanicWipe
 import com.jamesm92.nomadportal.ui.components.AddByAddressDialog
 import com.jamesm92.nomadportal.ui.components.AdaptiveTopAppBar
+import com.jamesm92.nomadportal.ui.components.CompactIconButton
 import com.jamesm92.nomadportal.ui.components.ContactAvatar
 import com.jamesm92.nomadportal.ui.components.PanicWipeLogo
 import com.jamesm92.nomadportal.ui.components.SearchField
@@ -341,7 +342,7 @@ fun ConversationListScreen(
                     // Home/Nodes/Settings; switching tabs is the way back,
                     // not a navigationIcon on a top-level screen.
                     actions = {
-                        IconButton(onClick = { syncDialogOpen = true }) {
+                        CompactIconButton(onClick = { syncDialogOpen = true }) {
                             Icon(
                                 imageVector = Icons.Filled.Sync,
                                 contentDescription = "Propagation sync status",

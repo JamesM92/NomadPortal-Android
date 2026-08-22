@@ -88,6 +88,7 @@ import com.jamesm92.nomadportal.data.browsing.PageCacheStore
 import com.jamesm92.nomadportal.data.identity.IdentityRepository
 import com.jamesm92.nomadportal.panicwipe.PanicWipe
 import com.jamesm92.nomadportal.ui.components.AdaptiveTopAppBar
+import com.jamesm92.nomadportal.ui.components.CompactIconButton
 import com.jamesm92.nomadportal.ui.components.HorizontalScrollIndicator
 import com.jamesm92.nomadportal.ui.components.PanicWipeLogo
 import com.jamesm92.nomadportal.ui.components.StatusDot
@@ -406,7 +407,7 @@ fun BrowserScreen(
                         }
                     },
                     navigationIcon = {
-                        IconButton(onClick = onBack) {
+                        CompactIconButton(onClick = onBack) {
                             Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back to sites")
                         }
                     },

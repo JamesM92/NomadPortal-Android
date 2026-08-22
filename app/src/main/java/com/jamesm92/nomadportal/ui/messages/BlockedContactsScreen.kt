@@ -28,6 +28,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.jamesm92.nomadportal.data.messaging.MessagingRepository
 import com.jamesm92.nomadportal.ui.components.AdaptiveTopAppBar
+import com.jamesm92.nomadportal.ui.components.CompactIconButton
 import com.jamesm92.nomadportal.ui.components.ContactAvatar
 import com.jamesm92.nomadportal.ui.theme.NomadTextDim
 import kotlinx.coroutines.launch
@@ -55,7 +56,7 @@ fun BlockedContactsScreen(repository: MessagingRepository, onBack: () -> Unit) {
             AdaptiveTopAppBar(
                 title = { Text("Blocked contacts") },
                 navigationIcon = {
-                    IconButton(onClick = onBack) {
+                    CompactIconButton(onClick = onBack) {
                         Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
                     }
                 },

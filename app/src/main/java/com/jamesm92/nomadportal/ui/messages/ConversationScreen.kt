@@ -69,6 +69,7 @@ import com.jamesm92.nomadportal.data.messaging.compressImageForSend
 import com.jamesm92.nomadportal.data.messaging.readAttachmentForSend
 import com.jamesm92.nomadportal.panicwipe.PanicWipe
 import com.jamesm92.nomadportal.ui.components.AdaptiveTopAppBar
+import com.jamesm92.nomadportal.ui.components.CompactIconButton
 import com.jamesm92.nomadportal.ui.components.ContactAvatar
 import com.jamesm92.nomadportal.ui.components.PanicWipeLogo
 import com.jamesm92.nomadportal.ui.components.dismissKeyboardOnTap
@@ -290,7 +291,7 @@ fun ConversationScreen(
                                     textStyle = MaterialTheme.typography.bodyMedium,
                                     modifier = Modifier.weight(1f, fill = false),
                                 )
-                                IconButton(onClick = {
+                                CompactIconButton(onClick = {
                                     val trimmed = nameDraft.trim()
                                     if (trimmed.isNotEmpty()) {
                                         scope.launch {
@@ -303,7 +304,7 @@ fun ConversationScreen(
                                 }) {
                                     Icon(Icons.Filled.Check, contentDescription = "Save name")
                                 }
-                                IconButton(onClick = {
+                                CompactIconButton(onClick = {
                                     nameDraft = liveContact.displayName
                                     editingName = false
                                 }) {
@@ -317,20 +318,20 @@ fun ConversationScreen(
                                     overflow = TextOverflow.Ellipsis,
                                     modifier = Modifier.weight(1f, fill = false),
                                 )
-                                IconButton(onClick = { editingName = true }) {
+                                CompactIconButton(onClick = { editingName = true }) {
                                     Icon(Icons.Filled.Edit, contentDescription = "Rename")
                                 }
                             }
                         }
                     },
                     navigationIcon = {
-                        IconButton(onClick = onBack) {
+                        CompactIconButton(onClick = onBack) {
                             Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
                         }
                     },
                     actions = {
                         Box {
-                            IconButton(onClick = { timerMenuExpanded = true }) {
+                            CompactIconButton(onClick = { timerMenuExpanded = true }) {
                                 Icon(
                                     imageVector = if (liveContact.disappearingSeconds > 0) Icons.Filled.Timer else Icons.Filled.TimerOff,
                                     contentDescription = if (liveContact.disappearingSeconds > 0) {

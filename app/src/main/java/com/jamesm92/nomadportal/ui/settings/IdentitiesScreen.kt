@@ -57,6 +57,7 @@ import com.jamesm92.nomadportal.data.identity.Identity
 import com.jamesm92.nomadportal.data.identity.IdentityRepository
 import com.jamesm92.nomadportal.data.messaging.readAttachmentForSend
 import com.jamesm92.nomadportal.ui.components.AdaptiveTopAppBar
+import com.jamesm92.nomadportal.ui.components.CompactIconButton
 import com.jamesm92.nomadportal.ui.messages.AttachmentFileProvider
 import com.jamesm92.nomadportal.ui.theme.NomadTextDim
 import java.io.File
@@ -167,12 +168,12 @@ fun IdentitiesScreen(repository: IdentityRepository, onBack: () -> Unit) {
             AdaptiveTopAppBar(
                 title = { Text("Identities") },
                 navigationIcon = {
-                    IconButton(onClick = onBack) {
+                    CompactIconButton(onClick = onBack) {
                         Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
                     }
                 },
                 actions = {
-                    IconButton(onClick = {
+                    CompactIconButton(onClick = {
                         // Real, on-device-traced crash this used to hit on
                         // every single launch (not intermittently, as an
                         // earlier version of this comment guessed): the

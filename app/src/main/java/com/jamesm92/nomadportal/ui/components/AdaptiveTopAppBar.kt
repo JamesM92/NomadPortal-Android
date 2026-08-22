@@ -1,45 +1,61 @@
 package com.jamesm92.nomadportal.ui.components
 
-import android.content.res.Configuration
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.RowScope
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
-import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.LocalMinimumInteractiveComponentSize
+import androidx.compose.foundation.layout.statusBars
+import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.ProvideTextStyle
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.unit.dp
 
 /**
  * Drop-in [TopAppBar] replacement, same three slots
- * (title/navigationIcon/actions) and same call-site shape — swaps to a
- * genuinely compact custom `Row` in landscape instead of Material3's
- * fixed ~64dp app bar, per explicit request ("when the phone is rotated
- * the header rows need to be as small as possible"). Landscape phone
- * screens are short on vertical space in the first place; a portrait-
- * sized header eating a large fraction of it is the actual complaint,
- * not anything wrong with the header in portrait.
+ * (title/navigationIcon/actions) and same call-site shape — a genuinely
+ * compact custom `Row` in *every* orientation, not Material3's own
+ * stock app bar.
  *
- * Zeroing [LocalMinimumInteractiveComponentSize] here (same trick as
- * [SearchField]/`BrowserScreen`'s address bar) means every existing
- * `IconButton` passed in via `navigationIcon`/`actions` shrinks to its
- * icon's own natural size automatically in landscape — none of the
- * call sites below needed to change their icon buttons themselves.
+ * Real third attempt at solving this specific complaint, not the
+ * first two: landscape got a compact custom Row early on (per explicit
+ * direction at the time: "when the phone is rotated the header rows
+ * need to be as small as possible"), but portrait stayed on the stock
+ * `TopAppBar`. A live report measured a genuine ~41px dead zone above
+ * the title in portrait beyond the real status bar (`dumpsys window`'s
+ * own real statusBars frame vs. the title TextView's own real
+ * uiautomator bounds — not screenshot pixel-guessing, which is what
+ * misled the first attempt at this into declaring victory prematurely).
  *
- * No custom landscape height is hard-coded: content sizes itself with
- * minimal padding, rather than guessing a fixed dp value that might
- * clip a taller title (e.g. Home's [AppLogo], which keeps its own
- * explicit `titleLarge` style regardless of orientation).
+ * Two real things had to be fixed together for this to actually work,
+ * both found the hard way across two failed attempts:
+ *
+ * 1. The title needs [ProvideTextStyle] with `titleLarge` explicitly —
+ *    a bare custom Row has no ambient text style of its own the way
+ *    stock `TopAppBar` provides internally, so without this the title
+ *    visibly shrinks (attempt #1's own real regression, confirmed
+ *    directly from a live report: "all you did was shrink the text").
+ * 2. Every icon button in `navigationIcon`/`actions` has to be
+ *    [CompactIconButton], not Material3's own stock `IconButton` — see
+ *    that composable's own doc comment for why: `IconButton` bakes in
+ *    a real 40dp height floor as of Material3 1.4.0 that no modifier
+ *    or CompositionLocal from this app can override, which is what
+ *    kept the top bar's own real rendered height tall regardless of
+ *    how compact this Row's own padding was (attempt #2's own real
+ *    failure — title position barely moved, confirmed by re-measuring
+ *    with real uiautomator bounds instead of trusting the first
+ *    attempt's own pixel-diffing).
+ *
+ * Applies [WindowInsets.statusBars] itself via [Modifier.windowInsetsPadding]
+ * — the one thing the stock [TopAppBar] was still doing correctly that
+ * this compact replacement has to keep doing itself.
  */
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun AdaptiveTopAppBar(
     title: @Composable () -> Unit,
@@ -47,22 +63,18 @@ fun AdaptiveTopAppBar(
     navigationIcon: @Composable () -> Unit = {},
     actions: @Composable RowScope.() -> Unit = {},
 ) {
-    val isLandscape = LocalConfiguration.current.orientation == Configuration.ORIENTATION_LANDSCAPE
-    if (isLandscape) {
-        CompositionLocalProvider(LocalMinimumInteractiveComponentSize provides 0.dp) {
-            Row(
-                modifier = modifier
-                    .fillMaxWidth()
-                    .background(MaterialTheme.colorScheme.surface)
-                    .padding(horizontal = 4.dp, vertical = 2.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                navigationIcon()
-                Box(modifier = Modifier.weight(1f).padding(horizontal = 4.dp)) { title() }
-                actions()
-            }
+    Row(
+        modifier = modifier
+            .fillMaxWidth()
+            .background(MaterialTheme.colorScheme.surface)
+            .windowInsetsPadding(WindowInsets.statusBars)
+            .padding(horizontal = 4.dp, vertical = 2.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        navigationIcon()
+        Box(modifier = Modifier.weight(1f).padding(horizontal = 4.dp)) {
+            ProvideTextStyle(MaterialTheme.typography.titleLarge) { title() }
         }
-    } else {
-        TopAppBar(title = title, navigationIcon = navigationIcon, actions = actions, modifier = modifier)
+        actions()
     }
 }

@@ -45,6 +45,7 @@ import androidx.compose.ui.unit.dp
 import com.jamesm92.nomadportal.data.hosting.SiteFileEntry
 import com.jamesm92.nomadportal.data.hosting.SiteFileRepository
 import com.jamesm92.nomadportal.ui.components.AdaptiveTopAppBar
+import com.jamesm92.nomadportal.ui.components.CompactIconButton
 import com.jamesm92.nomadportal.ui.theme.NomadTextDim
 import kotlinx.coroutines.launch
 
@@ -95,7 +96,7 @@ fun SiteFilesScreen(
                     )
                 },
                 navigationIcon = {
-                    IconButton(onClick = {
+                    CompactIconButton(onClick = {
                         if (currentPath.isEmpty()) {
                             onBack()
                         } else {
@@ -112,7 +113,7 @@ fun SiteFilesScreen(
                     // flat structure). A menu with exactly one item
                     // left in it would just be an extra tap for no
                     // reason.
-                    IconButton(onClick = { creatingPage = true }) {
+                    CompactIconButton(onClick = { creatingPage = true }) {
                         Icon(Icons.Filled.Add, contentDescription = "New page")
                     }
                 },
