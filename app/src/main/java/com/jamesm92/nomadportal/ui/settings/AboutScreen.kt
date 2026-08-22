@@ -135,7 +135,17 @@ fun AboutScreen(onBack: () -> Unit) {
                     contentDescription = null,
                     modifier = Modifier.padding(end = 8.dp),
                 )
-                Text(if (sharingApk) "Preparing…" else "Share this app")
+                // "Share Installer", not "Share this app" (the original
+                // label) or a Bluetooth-only-sounding one like "Bluetooth
+                // Share Installer" — per follow-up direction. Names what
+                // actually gets handed over (the real .apk installer
+                // file, not some abstract "the app") without promising a
+                // Bluetooth-only path this button doesn't actually take
+                // (the system share sheet — see shareInstalledApk's own
+                // doc comment for why that's deliberate); the Bluetooth
+                // icon alongside it already signals the real headline
+                // use case without the label itself overclaiming.
+                Text(if (sharingApk) "Preparing…" else "Share Installer")
             }
         }
     }
