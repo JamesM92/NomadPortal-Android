@@ -2,6 +2,7 @@ package com.jamesm92.nomadportal.ui.settings
 
 import android.content.Context
 import android.os.Process
+import com.jamesm92.nomadportal.BuildConfig
 import java.io.File
 
 /**
@@ -47,6 +48,22 @@ object DebugLogExporter {
      * noise is filtered by the logging framework itself, not read
      * into memory first) and it's the same mechanism `adb logcat`
      * callers already reach for. */
+    /** Real gap found via a direct user question ("does the debug log include the build
+     * # and etc?") -- it didn't. Build/commit tracking now spans two composite-built
+     * repos (see the apk-delivery-location memory's build-number scheme), so a pasted
+     * log with no header gives no way to tell which of several near-identical test
+     * builds it actually came from. `BuildConfig.GIT_SHA`/`RNSBLE_GIT_SHA` are populated
+     * at Gradle configuration time from each repo's own real `git rev-parse --short
+     * HEAD` (see app/build.gradle.kts). */
+    private fun logHeader(): String {
+        val timestamp = java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss", java.util.Locale.US)
+            .format(java.util.Date())
+        return "NomadPortal-Android ${BuildConfig.VERSION_NAME} (versionCode ${BuildConfig.VERSION_CODE}) " +
+            "-- nomadportal-android@${BuildConfig.GIT_SHA} rnsble@${BuildConfig.RNSBLE_GIT_SHA} " +
+            "-- captured $timestamp\n" +
+            "----------------------------------------------------------------\n"
+    }
+
     fun captureLogText(): String? {
         return try {
             val pid = Process.myPid()
@@ -71,7 +88,7 @@ object DebugLogExporter {
             )
             val output = process.inputStream.bufferedReader().use { it.readText() }
             process.waitFor()
-            output
+            logHeader() + output
         } catch (e: Exception) {
             null
         }

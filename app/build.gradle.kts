@@ -4,6 +4,29 @@ plugins {
     alias(libs.plugins.chaquopy)
 }
 
+// Real gap found via a direct user question ("does the debug log include the build #
+// and etc?") -- it didn't. With build/commit tracking now spanning two composite-built
+// repos (see the apk-delivery-location memory's build-number scheme), the in-app debug
+// log needs to self-identify which commit of *both* NomadPortal-Android and the
+// composite-built RNS_BLE_Wrapper sibling it was actually built from, not rely on
+// whoever's testing to remember which upload filename they installed.
+fun gitShortSha(dir: File): String = try {
+    val process = ProcessBuilder("git", "rev-parse", "--short", "HEAD")
+        .directory(dir)
+        .redirectErrorStream(true)
+        .start()
+    val output = process.inputStream.bufferedReader().readText().trim()
+    process.waitFor()
+    output.ifBlank { "unknown" }
+} catch (e: Exception) {
+    "unknown"
+}
+
+val nomadPortalGitSha = gitShortSha(rootDir)
+// Matches settings.gradle.kts's own RNS_BLE_WRAPPER_DIR override/default resolution.
+val rnsBleWrapperDir = File(rootDir, System.getenv("RNS_BLE_WRAPPER_DIR") ?: "../RNS_BLE_Wrapper")
+val rnsBleWrapperGitSha = gitShortSha(rnsBleWrapperDir)
+
 android {
     namespace = "com.jamesm92.nomadportal"
     // compileSdk 37: Chaquopy 17.0's own demo pins compileSdk 36, but that
@@ -38,6 +61,9 @@ android {
         // installable beta build instead of sitting merged-but-
         // unreleased indefinitely.
         versionName = "0.0.2"
+
+        buildConfigField("String", "GIT_SHA", "\"$nomadPortalGitSha\"")
+        buildConfigField("String", "RNSBLE_GIT_SHA", "\"$rnsBleWrapperGitSha\"")
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
 
@@ -123,6 +149,7 @@ android {
 
     buildFeatures {
         compose = true
+        buildConfig = true
     }
 
     packaging {
