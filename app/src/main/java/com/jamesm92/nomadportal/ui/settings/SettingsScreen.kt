@@ -122,7 +122,6 @@ import com.jamesm92.nomadportal.data.messaging.AnnounceStatus
 import com.jamesm92.nomadportal.data.rnsh.RnshHistoryRepository
 import com.jamesm92.nomadportal.data.messaging.ContactIcon
 import com.jamesm92.nomadportal.data.messaging.ICON_APPEARANCE_NAMES
-import com.jamesm92.nomadportal.data.messaging.InterfaceAnnounceConfig
 import com.jamesm92.nomadportal.data.messaging.MdiIconRepository
 import com.jamesm92.nomadportal.data.messaging.MessagingRepository
 import com.jamesm92.nomadportal.data.messaging.materialIconFor
@@ -418,22 +417,6 @@ fun SettingsScreen(
                                 scope.launch { tcpConnectionsRepository.addConnection(name, host, port) }
                             },
                         )
-                        announceStatus?.interfaces?.get(AnnounceStatus.INTERFACE_TCP)?.let { config ->
-                            HorizontalDivider()
-                            InterfaceAnnounceTab(
-                                config = config,
-                                onAnnounceMaxChange = {
-                                    scope.launch {
-                                        messagingRepository.setAnnounceMax(AnnounceStatus.INTERFACE_TCP, it)
-                                    }
-                                },
-                                onAutoAnnounceIntervalChange = {
-                                    scope.launch {
-                                        messagingRepository.setAutoAnnounceInterval(AnnounceStatus.INTERFACE_TCP, it)
-                                    }
-                                },
-                            )
-                        }
                     }
                 }
 
@@ -455,25 +438,7 @@ fun SettingsScreen(
                                 },
                             )
                         },
-                    ) {
-                        announceStatus?.interfaces?.get(AnnounceStatus.INTERFACE_BLUETOOTH)?.let { config ->
-                            InterfaceAnnounceTab(
-                                config = config,
-                                onAnnounceMaxChange = {
-                                    scope.launch {
-                                        messagingRepository.setAnnounceMax(AnnounceStatus.INTERFACE_BLUETOOTH, it)
-                                    }
-                                },
-                                onAutoAnnounceIntervalChange = {
-                                    scope.launch {
-                                        messagingRepository.setAutoAnnounceInterval(
-                                            AnnounceStatus.INTERFACE_BLUETOOTH, it,
-                                        )
-                                    }
-                                },
-                            )
-                        }
-                    }
+                    ) {}
                 }
 
                 item {
@@ -488,23 +453,7 @@ fun SettingsScreen(
                                 onCheckedChange = { scope.launch { interfaceController.setRNodeEnabled(it) } },
                             )
                         },
-                    ) {
-                        announceStatus?.interfaces?.get(AnnounceStatus.INTERFACE_RNODE)?.let { config ->
-                            InterfaceAnnounceTab(
-                                config = config,
-                                onAnnounceMaxChange = {
-                                    scope.launch {
-                                        messagingRepository.setAnnounceMax(AnnounceStatus.INTERFACE_RNODE, it)
-                                    }
-                                },
-                                onAutoAnnounceIntervalChange = {
-                                    scope.launch {
-                                        messagingRepository.setAutoAnnounceInterval(AnnounceStatus.INTERFACE_RNODE, it)
-                                    }
-                                },
-                            )
-                        }
-                    }
+                    ) {}
                 }
 
                 item {
@@ -519,25 +468,7 @@ fun SettingsScreen(
                                 onCheckedChange = { scope.launch { interfaceController.setWifiDiscoveryEnabled(it) } },
                             )
                         },
-                    ) {
-                        announceStatus?.interfaces?.get(AnnounceStatus.INTERFACE_WIFI_DISCOVERY)?.let { config ->
-                            InterfaceAnnounceTab(
-                                config = config,
-                                onAnnounceMaxChange = {
-                                    scope.launch {
-                                        messagingRepository.setAnnounceMax(AnnounceStatus.INTERFACE_WIFI_DISCOVERY, it)
-                                    }
-                                },
-                                onAutoAnnounceIntervalChange = {
-                                    scope.launch {
-                                        messagingRepository.setAutoAnnounceInterval(
-                                            AnnounceStatus.INTERFACE_WIFI_DISCOVERY, it,
-                                        )
-                                    }
-                                },
-                            )
-                        }
-                    }
+                    ) {}
                 }
 
                 item {
@@ -604,29 +535,41 @@ fun SettingsScreen(
                 }
 
                 item {
+                    // Real simplification, 2026-08-22: this used to carry a
+                    // master on/off switch on top of four separately-tuned
+                    // per-interface announce tabs (TCP/Bluetooth/RNode/LAN).
+                    // Removed per explicit direction, once RNS's own
+                    // on-demand Path Request mechanism was understood to
+                    // already handle reachability reactively — see
+                    // AnnounceStatus's own doc comment. Just one field now:
+                    // the global periodic re-announce cadence, 0 = off.
                     CollapsibleSection(
                         title = "Auto Announce",
                         icon = Icons.Filled.Campaign,
                         expanded = SettingsSection.ANNOUNCE in expandedSections,
                         onToggleExpanded = { toggleSection(SettingsSection.ANNOUNCE) },
-                        headerTrailing = {
-                            announceStatus?.let { status ->
-                                Switch(
-                                    checked = status.autoAnnounceMasterEnabled,
-                                    onCheckedChange = {
-                                        scope.launch { messagingRepository.setAutoAnnounceMaster(it) }
-                                    },
-                                )
-                            }
-                        },
                     ) {
                         announceStatus?.let { status ->
-                            // Manual trigger, independent of the auto-announce
-                            // toggle above — moved here from Home's own
-                            // IdentitySection (same "Announce now" action, just
-                            // relocated). Announce interval configuration for
-                            // each interface still lives in that interface's
-                            // own section (TCP/Bluetooth/RNode/LAN), unaffected.
+                            Column(modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp)) {
+                                Text("Auto-announce (minutes)", style = MaterialTheme.typography.labelMedium)
+                                Text(
+                                    "How often this device proactively re-announces on its own. 0 disables auto-announce.",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = NomadTextDim,
+                                )
+                                MinutesField(
+                                    seconds = status.autoAnnounceIntervalSeconds,
+                                    allowZero = true,
+                                    onCommit = {
+                                        scope.launch { messagingRepository.setAutoAnnounceInterval(it) }
+                                    },
+                                    modifier = Modifier.width(64.dp).padding(top = 4.dp),
+                                )
+                            }
+                            // Manual trigger, independent of the interval
+                            // above — moved here from Home's own
+                            // IdentitySection (same "Announce now" action,
+                            // just relocated).
                             TextButton(
                                 onClick = { scope.launch { messagingRepository.announceNow() } },
                                 modifier = Modifier.padding(start = 8.dp),
@@ -1922,61 +1865,6 @@ private fun TcpConnectionAddRow(onAdd: (name: String, host: String, port: Int) -
             }
             Spacer(modifier = Modifier.width(24.dp))
         }
-    }
-}
-
-/**
- * Per-interface announce policy: two number-of-minutes fields (message
- * max / auto-announce interval) — see [InterfaceAnnounceConfig]'s own
- * doc comment for what each controls. **0 in the auto field disables
- * auto-announce for that interface — there's no separate enabled
- * switch**, matching [InterfaceAnnounceConfig.autoAnnounceEnabled]'s own
- * derivation.
- */
-@Composable
-private fun InterfaceAnnounceTab(
-    config: InterfaceAnnounceConfig,
-    onAnnounceMaxChange: (seconds: Int) -> Unit,
-    onAutoAnnounceIntervalChange: (seconds: Int) -> Unit,
-) {
-    // Smaller than Main's own text — per explicit feedback that the
-    // settings *sub-tabs* specifically (not Main) run oversized; this
-    // composable is sub-tab-only (Main never renders per-interface
-    // fields), so it's safe to shrink further without touching Main's
-    // own text sizes. labelMedium/labelSmall (not a hand-derived
-    // fraction of bodyLarge) — two distinct label-tier roles preserves
-    // the original "label bigger than hint" relationship exactly.
-    val labelStyle = MaterialTheme.typography.labelMedium
-    val hintStyle = MaterialTheme.typography.labelSmall
-
-    Column(modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp)) {
-        Text("Message (minutes)", style = labelStyle)
-        Text(
-            "How stale the last announce can get before a send needs a fresh one first.",
-            style = hintStyle,
-            color = NomadTextDim,
-        )
-        MinutesField(
-            seconds = config.announceMaxSeconds,
-            allowZero = false,
-            onCommit = onAnnounceMaxChange,
-            modifier = Modifier.width(64.dp).padding(top = 4.dp),
-        )
-
-        Spacer(modifier = Modifier.height(14.dp))
-
-        Text("Auto-announce (minutes)", style = labelStyle)
-        Text(
-            "How often this device proactively re-announces on its own. 0 disables auto-announce for this connection.",
-            style = hintStyle,
-            color = NomadTextDim,
-        )
-        MinutesField(
-            seconds = config.autoAnnounceIntervalSeconds,
-            allowZero = true,
-            onCommit = onAutoAnnounceIntervalChange,
-            modifier = Modifier.width(64.dp).padding(top = 4.dp),
-        )
     }
 }
 

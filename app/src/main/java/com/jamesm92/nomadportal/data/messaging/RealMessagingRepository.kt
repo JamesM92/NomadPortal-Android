@@ -128,27 +128,15 @@ class RealMessagingRepository(private val settings: SettingsRepository) : Messag
         }
     }.flowOn(Dispatchers.IO)
 
-    override suspend fun setAnnounceMax(interfaceKey: String, seconds: Int) {
+    override suspend fun setAutoAnnounceInterval(seconds: Int) {
         withContext(Dispatchers.IO) {
-            orchestrator.callAttr("set_announce_max", interfaceKey, seconds)
-        }
-    }
-
-    override suspend fun setAutoAnnounceInterval(interfaceKey: String, seconds: Int) {
-        withContext(Dispatchers.IO) {
-            orchestrator.callAttr("set_auto_announce_interval", interfaceKey, seconds)
+            orchestrator.callAttr("set_auto_announce_interval", seconds)
         }
     }
 
     override suspend fun announceNow(): Boolean = withContext(Dispatchers.IO) {
         val obj = JSONObject(orchestrator.callAttr("announce_now").toString())
         obj.optBoolean("success", false)
-    }
-
-    override suspend fun setAutoAnnounceMaster(enabled: Boolean) {
-        withContext(Dispatchers.IO) {
-            orchestrator.callAttr("set_auto_announce_master", enabled)
-        }
     }
 
     override suspend fun setDisplayName(name: String): Boolean = withContext(Dispatchers.IO) {
@@ -280,20 +268,8 @@ class RealMessagingRepository(private val settings: SettingsRepository) : Messag
 
     private fun fetchAnnounceStatus(): AnnounceStatus {
         val obj = JSONObject(orchestrator.callAttr("get_announce_status_json").toString())
-        val interfacesObj = obj.getJSONObject("interfaces")
-        val interfaces = interfacesObj.keys().asSequence().associateWith { key ->
-            val cfg = interfacesObj.getJSONObject(key)
-            InterfaceAnnounceConfig(
-                announceMaxSeconds = cfg.optInt("announce_max_seconds", AnnounceStatus.MAX_SECONDS),
-                autoAnnounceIntervalSeconds = cfg.optInt(
-                    "auto_announce_interval_seconds",
-                    AnnounceStatus.MAX_SECONDS,
-                ),
-            )
-        }
         return AnnounceStatus(
-            interfaces = interfaces,
-            autoAnnounceMasterEnabled = obj.optBoolean("auto_announce_master_enabled", true),
+            autoAnnounceIntervalSeconds = obj.optInt("auto_announce_interval_seconds", 0),
             lastAnnounceAtMillis = if (obj.isNull("last_announce_at")) {
                 null
             } else {

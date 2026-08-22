@@ -422,7 +422,7 @@ def _start_call_manager() -> None:
     deferred step) covers periodic re-announcing beyond that.
 
     A dedicated Settings toggle for the recurring interval (mirroring
-    _interface_announce_config's existing per-interface pattern) is
+    _auto_announce_interval_seconds's own global-cadence pattern) is
     still deliberately NOT built — per explicit direction ("eventually
     the call address auto announce will need its own auto announce
     toggle and manual announce toggle"), the underlying mechanism (an
@@ -546,12 +546,12 @@ def set_bluetooth_mesh_bridge(bridge) -> None:
 
     `_active_interfaces["bluetooth_mesh"]` (see `_set_interface`) is
     deliberately NOT used for this any more — that dict is this app's
-    own master-toggle-state/auto-announce-cadence bookkeeping (see
-    `_active_announce_configs`), a real, separate concern from the
-    actual dynamically-many RNS Interface objects this now manages. A
-    plain sentinel value is still recorded there so the existing
-    announce-cadence code (which only ever reads the dict's *keys*,
-    never the values) keeps working unchanged.
+    own general "is this toggle currently on" bookkeeping (also read by
+    `_set_interface`'s own detach() calls), a real, separate concern
+    from the actual dynamically-many RNS Interface objects this now
+    manages. A plain sentinel value is still recorded there so anything
+    else checking `"bluetooth_mesh" in _active_interfaces` (membership,
+    never the value itself) keeps working unchanged.
     """
     global _bluetooth_mesh_manager
     if not is_ready():
@@ -2174,13 +2174,13 @@ def set_messages_contacts_only(enabled: bool) -> None:
     `_on_delivery`/`_allows_sender` — see that function's own doc
     comment; this is just the bridge setter.
 
-    In-memory on the Python side (mirrors `set_auto_announce_master`'s
+    In-memory on the Python side (mirrors `set_auto_announce_interval`'s
     own shape) — the real persisted copy lives in Kotlin's DataStore
     (SettingsRepository), replayed into this at app startup via the
     exact same `NomadPortalApp.kt` boot-sequence pattern the TCP/
-    Bluetooth/Wi-Fi/node-hosting toggles already use. Unlike auto-
-    announce-master (which is allowed to silently reset to its documented
-    default on every restart), a *privacy*-protective toggle silently
+    Bluetooth/Wi-Fi/node-hosting toggles already use. Unlike the global
+    auto-announce interval (which is allowed to silently reset to its
+    documented default on every restart), a *privacy*-protective toggle silently
     resetting to permissive would be a real footgun — that's specifically
     why this one gets a real boot-time replay rather than being left
     ephemeral like that one."""
@@ -2237,7 +2237,7 @@ def set_retry_via_relay(enabled: bool) -> None:
     messaging.py's `_should_retry_via_relay`/`_attempt_relay_retry` — see
     that module's own doc comments; this is just the bridge setter.
 
-    In-memory only (mirrors `set_auto_announce_master`'s own shape),
+    In-memory only (mirrors `set_auto_announce_interval`'s own shape),
     deliberately **not** given the real DataStore persistence
     `set_messages_contacts_only` gets — this is a delivery-reliability
     preference, not a privacy-protective one, so resetting to off on
@@ -2659,83 +2659,37 @@ def delete_conversation(hash_hex: str) -> bool:
 # UI-agnostic port" convention).
 # ---------------------------------------------------------------------------
 
-# Per-interface: two independent numbers, per explicit design direction
-# (settled into a plain 2-column table, one row per interface —
-# "protocol | message | auto" — after a few rounds of iteration) —
-# "announce_max_seconds" is how stale the last announce is allowed to
-# get before a *send* needs a fresh one first ("message" column); "auto
-# _announce_interval_seconds" is how often this device proactively
-# re-announces on its own initiative, independent of whether a message
-# happens to be going out ("auto" column) — **0 means disabled** for
-# that interface, no separate enabled flag. RNS's own announce() call
-# always broadcasts to every currently-active interface at once —
-# there's no public API to target one specific interface (this was
-# explicitly confirmed rather than assumed: no such method found, and it
-# can't be verified further without RNS itself being importable in this
-# dev environment, only in the Android build's Chaquopy cache). So
-# per-interface config here drives *timing* decisions (which interfaces
-# being active determines which thresholds apply), never *which
-# interface carries the actual announce packet* — that's always
-# "however many are active, all of them," by RNS's own design.
-_interface_announce_config: dict = {
-    # auto_announce_interval_seconds defaults to 0 (off) on every
-    # interface, per explicit direction: a freshly created account
-    # shouldn't start out proactively broadcasting its presence on a
-    # timer before the user has actually decided they want that — same
-    # "silent by default" posture node hosting's own auto_announce
-    # already has (see nomadnet_web.site_server.SiteServer's docstring).
-    # A brand-new identity still announces once regardless (this
-    # section's own module doc comment explains why that one is a
-    # protocol requirement, not a policy choice) — this only concerns
-    # the *periodic re*-announce on top of that baseline.
-    # announce_max_seconds (the "Message" column — how stale the last
-    # announce may get before a send needs a fresh one first) is a
-    # separate concept and unaffected by this.
-    "tcp": {
-        "announce_max_seconds": 3 * 60 * 60,
-        "auto_announce_interval_seconds": 0,
-    },
-    "bluetooth_mesh": {
-        "announce_max_seconds": 15 * 60,
-        "auto_announce_interval_seconds": 0,
-    },
-    "rnode": {
-        "announce_max_seconds": 3 * 60 * 60,
-        "auto_announce_interval_seconds": 0,
-    },
-    "wifi_discovery": {
-        "announce_max_seconds": 3 * 60 * 60,
-        "auto_announce_interval_seconds": 0,
-    },
-}
-# How often the background loop wakes up to check whether any active
-# interface's auto_announce_interval_seconds has elapsed.
+# Real simplification, 2026-08-22: this used to be a *per-interface*
+# 2-column table (tcp/bluetooth_mesh/rnode/wifi_discovery, each with its
+# own "message"/announce_max_seconds staleness threshold and its own
+# "auto"/auto_announce_interval_seconds periodic cadence). Removed per
+# explicit direction, once RNS's own on-demand Path Request mechanism
+# (Transport.request_path, confirmed real against the vendored
+# RNS/Transport.py during the same-day per-neighbor-BLE-routing work)
+# was understood to already solve *reachability* reactively: a peer
+# that needs a fresh path to this identity issues its own Path Request
+# when it actually tries to reach it, rather than depending on this
+# device having recently self-announced on a timer. Per-interface
+# tuning was solving a problem that mostly didn't need solving at this
+# layer, and RNS's own announce() call broadcasts to every active
+# interface at once regardless (there's no way to target one specific
+# interface) — so a single global cadence is both simpler and no less
+# correct than four independently-tuned ones ever was.
+#
+# What's left: one global periodic re-announce interval. 0 means
+# disabled — no separate enabled flag, matching the 0-means-disabled
+# convention this section already used everywhere. Defaults to 0 (off)
+# on a fresh install, same "don't proactively broadcast presence on a
+# timer before the user has decided they want that" reasoning as
+# before — a brand-new identity still announces once regardless (a
+# real LXMF protocol requirement, not a policy choice; see this
+# section's own module doc comment).
+_auto_announce_interval_seconds = 0
+
+# How often the background loop wakes up to check whether
+# _auto_announce_interval_seconds has elapsed.
 ANNOUNCE_LOOP_TICK = 30
 _announce_loop_started = False
-
-# Master auto-announce switch shown on Settings' Main tab, on top of
-# each interface's own auto_announce_interval_seconds. Off zeroes every
-# interface's interval (disabling all of them, same 0-means-disabled
-# semantics as everywhere else in this section) while remembering each
-# one's prior nonzero value in _auto_announce_last_intervals, so turning
-# it back on restores exactly what was configured before rather than
-# resetting to defaults. Defaults False, matching every per-interface
-# interval above defaulting to 0 — the UI's own toggle should honestly
-# read "off" from a fresh install, not show "on" while every interface
-# underneath it is individually at 0 auto-announce anyway.
-_auto_announce_master_enabled = False
-_auto_announce_last_intervals: dict = {}
-
-
-def _active_announce_configs() -> list:
-    """Configs for whichever known interfaces (bluetooth_mesh/rnode/tcp)
-    are currently active — empty if none of the active interfaces are
-    ones this section tracks (e.g. only wifi_discovery is on)."""
-    return [
-        _interface_announce_config[key]
-        for key in _active_interfaces
-        if key in _interface_announce_config
-    ]
 
 
 def _seconds_since_last_announce() -> Optional[float]:
@@ -2763,29 +2717,18 @@ def _has_message_history_with(dest_hash_hex: str) -> bool:
 
 
 def _check_send_allowed(dest_hash_hex: str) -> tuple:
-    """(allowed, block_reason). block_reason is None when allowed —
-    which, as of 2026-08-22, is always: this used to *block* the send
-    outright when every active interface had auto-announce disabled and
-    the identity's last announce was stale (see git history for the
-    original doc comment/reasoning). Reversed per explicit direction:
-    "when sending a message if the message time has elapsed or no
-    message on file, it must send an announce along with the message
-    so the destination knows how to route it back" — a real, needed
-    fix on top of this same day's other messaging-reliability work (see
-    messaging.py's _deliver()/_attempt_relay_retry doc comments): a
-    stale or never-announced identity isn't just a *reachability* risk
-    for the outbound send itself, it's a *reply-routing* risk for the
-    recipient — they may get the message fine (direct, or via relay)
-    but have no fresh path back to answer it. The fix for that is
-    "announce," not "stop and make the user do it manually" — this
-    function no longer has any reason to return False at all, so it
-    doesn't; kept as a (allowed, reason) tuple only so send_message()
-    and every other caller don't need to change shape.
+    """(allowed, block_reason). block_reason is always None — this used
+    to *block* the send outright when auto-announce was disabled and
+    the identity's last announce was stale; reversed per earlier
+    direction (see git history) to announce instead of blocking.
 
-    Two independent triggers, either one announces:
-      - Staleness — this identity's own last announce is older than the
-        strictest currently-active interface's threshold (the original
-        check, unchanged).
+    Real simplification, 2026-08-22: the staleness-based trigger (was:
+    "announce if the last one is older than the strictest active
+    interface's threshold") is gone along with the rest of the
+    per-interface announce-config table — see this section's own
+    module comment for why leaning on RNS's own on-demand Path Request
+    mechanism made that threshold mostly redundant. What's left is the
+    one trigger that isn't about staleness at all:
       - No message on file — this exact destination has never been
         messaged before, in either direction (see
         _has_message_history_with). A globally-recent announce doesn't
@@ -2793,26 +2736,16 @@ def _check_send_allowed(dest_hash_hex: str) -> tuple:
         — mesh flooding is topology-dependent, not per-destination
         memory. Announcing again right around send time gives a
         first-time contact the best real chance of a fresh path to
-        reply on, independent of the interval-based staleness check.
+        reply on.
 
-    Never returns False anymore, but still returns False's shape
-    (`allowed=True` always) rather than becoming `None`/`-> None`, so a
-    caller checking the tuple doesn't need special-casing — same
-    "don't change a shape callers already rely on" reasoning as
-    _attempt_relay_retry's own lxmf_dest=None extension earlier this
-    session.
+    Never returns False, but still returns False's shape (`allowed=True`
+    always) rather than becoming `None`/`-> None`, so a caller checking
+    the tuple doesn't need special-casing.
     """
     if _messaging is None:
         return True, None  # let send_message's own None-check handle this
 
-    configs = _active_announce_configs()
-    stale = False
-    if configs:
-        max_threshold = min(c["announce_max_seconds"] for c in configs)
-        since = _seconds_since_last_announce()
-        stale = since is None or since >= max_threshold
-
-    if stale or not _has_message_history_with(dest_hash_hex):
+    if not _has_message_history_with(dest_hash_hex):
         _messaging.do_announce(user_sub=_active_user_sub)
 
     return True, None
@@ -2821,14 +2754,10 @@ def _check_send_allowed(dest_hash_hex: str) -> tuple:
 def _announce_loop() -> None:
     while True:
         time.sleep(ANNOUNCE_LOOP_TICK)
-        if _messaging is None:
-            continue
-        configs = _active_announce_configs()
-        due = [c for c in configs if c["auto_announce_interval_seconds"] > 0]
-        if not due:
+        if _messaging is None or _auto_announce_interval_seconds <= 0:
             continue
         since = _seconds_since_last_announce()
-        if since is None or since >= min(c["auto_announce_interval_seconds"] for c in due):
+        if since is None or since >= _auto_announce_interval_seconds:
             _messaging.do_announce(user_sub=_active_user_sub)
 
 
@@ -2879,12 +2808,12 @@ def start_disappearing_sweep_loop() -> None:
 
 
 def get_announce_status_json() -> str:
-    """[AnnounceStatus] shape: interfaces (tcp/bluetooth_mesh/rnode/
-    wifi_discovery -> {announce_max_seconds,
-    auto_announce_interval_seconds} — always all four keys regardless of
-    which are currently active; auto_announce_interval_seconds == 0
-    means disabled for that interface, there's no separate enabled
-    flag), last_announce_at (unix seconds, nullable), lxmf_address
+    """[AnnounceStatus] shape: auto_announce_interval_seconds (the one
+    global periodic re-announce cadence, real simplification 2026-08-22
+    replacing what used to be a separate table per interface — see this
+    module's own _auto_announce_interval_seconds doc comment for why;
+    0 means disabled, there's no separate enabled flag),
+    last_announce_at (unix seconds, nullable), lxmf_address
     (nullable — null before the delivery router exists, e.g. RNS still
     starting up), public_key (nullable, hex — this identity's real RNS
     public key; see messaging.py's own get_announce_status doc comment.
@@ -2958,8 +2887,7 @@ def get_announce_status_json() -> str:
     send_blocked_reason = None
 
     return json.dumps({
-        "interfaces": dict(_interface_announce_config),
-        "auto_announce_master_enabled": _auto_announce_master_enabled,
+        "auto_announce_interval_seconds": _auto_announce_interval_seconds,
         "last_announce_at": last_announce_at,
         "lxmf_address": lxmf_address,
         "public_key": public_key,
@@ -3239,55 +3167,16 @@ def export_identity_file_bytes(identity_id: str):
     return _identity_store.export_key_bytes(identity_id)
 
 
-def set_auto_announce_master(enabled: bool) -> None:
-    """The single aggregate toggle Settings' Main tab carries, on top of
-    each interface's own auto_announce_interval_seconds (Settings'
-    per-interface tabs). Off zeroes every interface's interval —
-    disabling all of them via the same 0-means-disabled convention used
-    everywhere else in this section — while remembering each one's
-    prior nonzero value so turning it back on restores exactly what was
-    configured before, not a reset to defaults."""
-    global _auto_announce_master_enabled
-    _auto_announce_master_enabled = bool(enabled)
-    if enabled:
-        for key, cfg in _interface_announce_config.items():
-            if cfg["auto_announce_interval_seconds"] == 0 and key in _auto_announce_last_intervals:
-                cfg["auto_announce_interval_seconds"] = _auto_announce_last_intervals[key]
-    else:
-        for key, cfg in _interface_announce_config.items():
-            if cfg["auto_announce_interval_seconds"] > 0:
-                _auto_announce_last_intervals[key] = cfg["auto_announce_interval_seconds"]
-            cfg["auto_announce_interval_seconds"] = 0
-
-
-def set_announce_max(interface_key: str, seconds: int) -> None:
-    """`interface_key` must be one of _interface_announce_config's keys
-    ("tcp"/"bluetooth_mesh"/"rnode"/"wifi_discovery") — silently ignored
-    otherwise rather than raising, so a future Kotlin-side typo/
-    version-skew can't crash this call. Clamped to [1 minute, 24 hours]
-    — below a minute risks flooding, beyond 24h risks peers' paths aging
-    out regardless. Unlike set_auto_announce_interval, 0 has no special
-    meaning here — a send-blocking "message max" of 0 would mean every
-    send always requires a fresh announce, which is legal but almost
-    certainly not what typing 0 into this field means to a user, so it's
-    clamped to the same [1min, 24h] floor as anything else."""
-    if interface_key not in _interface_announce_config:
-        log.warning("Ignoring announce_max for unknown interface '%s'", interface_key)
-        return
-    _interface_announce_config[interface_key]["announce_max_seconds"] = max(
-        60, min(24 * 60 * 60, int(seconds))
-    )
-
-
-def set_auto_announce_interval(interface_key: str, seconds: int) -> None:
-    """0 means disabled for this interface — no separate enabled flag
-    (see this section's module-level doc comment). Any nonzero value is
-    clamped to [1 minute, 24 hours], same reasoning as set_announce_max."""
-    if interface_key not in _interface_announce_config:
-        log.warning("Ignoring auto_announce_interval for unknown interface '%s'", interface_key)
-        return
-    clamped = 0 if seconds <= 0 else max(60, min(24 * 60 * 60, int(seconds)))
-    _interface_announce_config[interface_key]["auto_announce_interval_seconds"] = clamped
+def set_auto_announce_interval(seconds: int) -> None:
+    """The one global periodic re-announce cadence — real simplification,
+    2026-08-22, replacing what used to be four independently-tuned
+    per-interface values plus a separate master on/off toggle (see this
+    module's own _auto_announce_interval_seconds doc comment for why).
+    0 means disabled — no separate enabled flag. Any nonzero value is
+    clamped to [1 minute, 24 hours] — below a minute risks flooding,
+    beyond 24h risks peers' paths aging out regardless."""
+    global _auto_announce_interval_seconds
+    _auto_announce_interval_seconds = 0 if seconds <= 0 else max(60, min(24 * 60 * 60, int(seconds)))
 
 
 def announce_now() -> str:

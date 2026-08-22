@@ -18,7 +18,7 @@ data class HostedNodeStatus(
     /** Null unless [enabled]. */
     val nodeName: String?,
     /** 0 means auto-announce disabled — no separate enabled flag, same
-     * convention as [com.jamesm92.nomadportal.data.messaging.InterfaceAnnounceConfig]. */
+     * convention as [com.jamesm92.nomadportal.data.messaging.AnnounceStatus.autoAnnounceIntervalSeconds]. */
     val announceIntervalSeconds: Int,
     /** Null if this node has never announced yet. */
     val lastAnnounceAtMillis: Long?,

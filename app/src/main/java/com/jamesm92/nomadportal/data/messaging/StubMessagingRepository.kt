@@ -149,13 +149,7 @@ class StubMessagingRepository(private val scope: CoroutineScope) : MessagingRepo
 
     private val announceStatus = MutableStateFlow(
         AnnounceStatus(
-            interfaces = mapOf(
-                AnnounceStatus.INTERFACE_TCP to InterfaceAnnounceConfig(3 * 60 * 60, 6 * 60 * 60),
-                AnnounceStatus.INTERFACE_BLUETOOTH to InterfaceAnnounceConfig(15 * 60, 30 * 60),
-                AnnounceStatus.INTERFACE_RNODE to InterfaceAnnounceConfig(3 * 60 * 60, 6 * 60 * 60),
-                AnnounceStatus.INTERFACE_WIFI_DISCOVERY to InterfaceAnnounceConfig(3 * 60 * 60, 6 * 60 * 60),
-            ),
-            autoAnnounceMasterEnabled = true,
+            autoAnnounceIntervalSeconds = 15 * 60,
             lastAnnounceAtMillis = System.currentTimeMillis(),
             lxmfAddress = "stub0000000000000000000000000000",
             publicKeyHex = "ab".repeat(64), // 128 hex chars, matches the real 64-byte public key shape
@@ -190,16 +184,8 @@ class StubMessagingRepository(private val scope: CoroutineScope) : MessagingRepo
         announceStatus.value = announceStatus.value.copy(retryViaRelay = enabled)
     }
 
-    override suspend fun setAnnounceMax(interfaceKey: String, seconds: Int) {
-        updateInterfaceConfig(interfaceKey) { it.copy(announceMaxSeconds = seconds) }
-    }
-
-    override suspend fun setAutoAnnounceInterval(interfaceKey: String, seconds: Int) {
-        updateInterfaceConfig(interfaceKey) { it.copy(autoAnnounceIntervalSeconds = seconds) }
-    }
-
-    override suspend fun setAutoAnnounceMaster(enabled: Boolean) {
-        announceStatus.value = announceStatus.value.copy(autoAnnounceMasterEnabled = enabled)
+    override suspend fun setAutoAnnounceInterval(seconds: Int) {
+        announceStatus.value = announceStatus.value.copy(autoAnnounceIntervalSeconds = seconds)
     }
 
     override suspend fun setDisplayName(name: String): Boolean {
@@ -212,16 +198,6 @@ class StubMessagingRepository(private val scope: CoroutineScope) : MessagingRepo
             iconAppearance = ContactIcon.Appearance(glyphName, background, foreground),
         )
         return true
-    }
-
-    private fun updateInterfaceConfig(
-        interfaceKey: String,
-        transform: (InterfaceAnnounceConfig) -> InterfaceAnnounceConfig,
-    ) {
-        val current = announceStatus.value.interfaces[interfaceKey] ?: return
-        announceStatus.value = announceStatus.value.copy(
-            interfaces = announceStatus.value.interfaces + (interfaceKey to transform(current)),
-        )
     }
 
     override suspend fun announceNow(): Boolean {

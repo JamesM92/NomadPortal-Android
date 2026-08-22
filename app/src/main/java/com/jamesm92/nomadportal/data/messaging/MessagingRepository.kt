@@ -91,23 +91,16 @@ interface MessagingRepository {
     fun contact(contactHash: String): Contact?
 
     /**
-     * Auto-announce status/config, per interface — see [AnnounceStatus]'s
-     * own doc comment for why this exists at all (announcing at least
-     * once is an LXMF protocol requirement for this identity to be
-     * reachable, not just a cosmetic feature).
+     * Auto-announce status/config — see [AnnounceStatus]'s own doc
+     * comment for why this exists at all (announcing at least once is
+     * an LXMF protocol requirement for this identity to be reachable,
+     * not just a cosmetic feature).
      */
     fun announceStatus(): Flow<AnnounceStatus>
 
-    /** [interfaceKey] is one of [AnnounceStatus.INTERFACE_TCP]/
-     * [AnnounceStatus.INTERFACE_BLUETOOTH]/[AnnounceStatus.INTERFACE_RNODE]/
-     * [AnnounceStatus.INTERFACE_WIFI_DISCOVERY]. */
-    suspend fun setAnnounceMax(interfaceKey: String, seconds: Int)
-
-    /** 0 disables auto-announce for this interface — no separate enabled flag. */
-    suspend fun setAutoAnnounceInterval(interfaceKey: String, seconds: Int)
-
-    /** The single aggregate toggle on top of every interface's own auto-announce interval. */
-    suspend fun setAutoAnnounceMaster(enabled: Boolean)
+    /** The one global periodic re-announce cadence. 0 disables it — no
+     * separate enabled flag. */
+    suspend fun setAutoAnnounceInterval(seconds: Int)
 
     /** Manual "Announce now" trigger. Returns true on success. */
     suspend fun announceNow(): Boolean
