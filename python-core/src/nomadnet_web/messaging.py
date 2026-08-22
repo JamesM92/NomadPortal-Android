@@ -30,6 +30,78 @@ PATH_WAIT = 10  # seconds to wait for identity recall after path request
 # before waiting on a round trip through Chaquopy).
 MAX_ATTACHMENT_BYTES = 10 * 1024 * 1024
 
+# Real interop bug, found via a live report ("our logos arent being
+# rendered properly by the meshchat client, but is fine from nomadportal
+# to nomad portal"). The underscore->hyphen conversion this module
+# already applies before sending FIELD_ICON_APPEARANCE (see
+# _deliver()'s own comment) fixes *separator style* — "music_note" ->
+# "music-note" — but roughly half of IconAppearance.kt's own curated
+# glyph names (and identity_store.py's _ICON_NAMES, the pool a fresh
+# identity's default icon is drawn from) are Google's own Material
+# Icons/Symbols vocabulary, not MDI's: same idea, genuinely different
+# *words*, not just punctuation — e.g. "person" isn't an MDI name at
+# all (MDI's is "account"), "sunny" isn't ("weather-sunny" is),
+# "favorite" isn't ("heart" is). MeshChat/Sideband resolve strictly
+# against the real `@mdi/js` package (confirmed directly against
+# MeshChat's own MaterialDesignIcon.vue source: it PascalCases the
+# hyphenated name and looks it up as `mdi<Name>` in that package,
+# falling back to a "?" glyph on any miss) — a hyphenated-but-still-
+# wrong word misses exactly the same way a wrong separator would.
+#
+# Every value below was verified against this app's own bundled real
+# MDI catalog (app/src/main/assets/mdi_icons.json, ~7400 real names) —
+# not guessed — by checking which of IconAppearance.kt's ~192 curated
+# keys the hyphenated form of actually resolves in that data (33 did
+# not) and picking each one's closest real match from that same
+# catalog. Applied at send time (see _deliver() below), not by
+# migrating already-stored identities' own persisted glyph field, so
+# this retroactively fixes every existing identity's outbound messages
+# too, not just newly-created ones.
+_MDI_WIRE_NAME = {
+    "person": "account",
+    "face": "face-man",
+    "directions_walk": "walk",
+    "directions_run": "run",
+    "directions_bike": "bike",
+    "directions_car": "car",
+    "directions_boat": "sail-boat",
+    "cabin": "cabin-a-frame",
+    "park": "pine-tree",
+    "pets": "paw",
+    "favorite": "heart",
+    "local_cafe": "coffee",
+    "restaurant": "silverware-fork-knife",
+    "campaign": "bullhorn",
+    "explore": "compass",
+    "place": "map-marker",
+    "public": "earth",
+    "language": "web",
+    "science": "flask",
+    "build": "wrench",
+    "code": "code-braces",
+    "computer": "desktop-classic",
+    "smartphone": "cellphone",
+    "sports_esports": "gamepad-variant",
+    "flight": "airplane",
+    "eco": "leaf",
+    "work": "briefcase",
+    "medical_services": "medical-bag",
+    "visibility": "eye",
+    "sunny": "weather-sunny",
+    "nightlight": "weather-night",
+    "ac_unit": "snowflake",
+    "whatshot": "fire",
+}
+
+
+def _glyph_wire_name(raw_glyph: str) -> str:
+    """A stored/local glyph name -> the real MDI name to actually put on
+    the wire. Extracted out of _deliver() specifically so this pure,
+    no-I/O lookup is independently testable — see _MDI_WIRE_NAME's own
+    doc comment for the real bug and verification behind it."""
+    return _MDI_WIRE_NAME.get(raw_glyph, raw_glyph.replace("_", "-"))
+
+
 # LXMessage.method's real int constants (confirmed directly against the
 # installed LXMF package's LXMessage.py, not guessed) — mapped to the
 # lowercase labels this app surfaces in delivery-diagnostics. UNKNOWN/
@@ -1230,7 +1302,19 @@ class MessagingService:
                     # tolerates both separators (materialIconFor's
                     # own `.replace('-', '_')`), so only the send
                     # side needs converting.
-                    glyph = (icon.get("glyph") or "?").replace("_", "-")
+                    #
+                    # _MDI_WIRE_NAME's own doc comment covers the real,
+                    # bigger half of this: for roughly a third of this
+                    # app's own curated glyph names, separator style
+                    # was never the only problem — the word itself
+                    # isn't a real MDI name at all. Checked first (by
+                    # the raw, underscored key, matching how these
+                    # names are actually stored) since it's a curated,
+                    # verified table; the hyphen substitution stays as
+                    # the fallback for every name not in it (already-
+                    # correct MDI names, and any genuinely unknown one)
+                    # — unchanged behavior for those.
+                    glyph = _glyph_wire_name(icon.get("glyph") or "?")
                     fields[0x04] = [
                         glyph,
                         _hex_to_icon_bytes(icon.get("fg", "#ffffff")),

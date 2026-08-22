@@ -24,7 +24,7 @@ import types
 import pytest
 
 import RNS
-from nomadnet_web.messaging import MessagingService
+from nomadnet_web.messaging import MessagingService, _MDI_WIRE_NAME, _glyph_wire_name
 
 LONG_MESSAGE = "x" * 500  # comfortably past the old 120-char preview cutoff
 DEST_HASH = "aa" * 16
@@ -582,3 +582,59 @@ def test_import_scanned_contact_makes_the_identity_immediately_recallable(tmp_pa
     recalled = RNS.Identity.recall(bytes.fromhex(dest_hash_hex), _no_use=True)
     assert recalled is not None
     assert recalled.get_public_key() == real_identity.get_public_key()
+
+
+# ---------------------------------------------------------------------------
+# _glyph_wire_name / _MDI_WIRE_NAME
+#
+# Real interop bug: "our logos arent being rendered properly by the
+# meshchat client, but is fine from nomadportal to nomad portal." MeshChat
+# resolves an inbound FIELD_ICON_APPEARANCE glyph name strictly against
+# the real `@mdi/js` package (PascalCased, looked up as `mdi<Name>`,
+# falling back to a "?" glyph on any miss — confirmed directly against
+# MeshChat's own MaterialDesignIcon.vue source). Roughly a third of this
+# app's own curated glyph names are Google's Material Icons/Symbols
+# vocabulary, not MDI's — genuinely different *words*, not just an
+# underscore-vs-hyphen separator mismatch (the bug an earlier fix already
+# covered). See _MDI_WIRE_NAME's own doc comment for the full story.
+# ---------------------------------------------------------------------------
+
+
+def test_glyph_wire_name_maps_known_non_mdi_names_to_their_real_mdi_equivalent():
+    assert _glyph_wire_name("person") == "account"
+    assert _glyph_wire_name("sunny") == "weather-sunny"
+    assert _glyph_wire_name("favorite") == "heart"
+    assert _glyph_wire_name("directions_walk") == "walk"
+
+
+def test_glyph_wire_name_falls_back_to_plain_hyphenation_for_unmapped_names():
+    # "music_note" *is* already a real MDI name once hyphenated — not in
+    # _MDI_WIRE_NAME at all, same as any name this table doesn't know
+    # about (a genuinely unrecognized/future glyph). Unchanged behavior
+    # for these, matching the pre-existing fix this one sits on top of.
+    assert _glyph_wire_name("music_note") == "music-note"
+    assert _glyph_wire_name("hiking") == "hiking"
+
+
+def test_mdi_wire_name_table_targets_are_all_real_mdi_names():
+    """Every _MDI_WIRE_NAME value must actually exist in this app's own
+    bundled real MDI catalog (app/src/main/assets/mdi_icons.json, the
+    same ~7400-name data MdiIconRepository.kt loads on the Kotlin side)
+    — not just look plausible. Guards against a future entry being added
+    by guess rather than by checking the real data, the exact mistake
+    this whole fix exists to correct in the other direction."""
+    import json
+    from pathlib import Path
+
+    catalog_path = (
+        Path(__file__).resolve().parent.parent.parent
+        / "app" / "src" / "main" / "assets" / "mdi_icons.json"
+    )
+    with open(catalog_path, encoding="utf-8-sig") as f:
+        real_mdi_names = set(json.load(f).keys())
+
+    for local_name, wire_name in _MDI_WIRE_NAME.items():
+        assert wire_name in real_mdi_names, (
+            f"_MDI_WIRE_NAME[{local_name!r}] = {wire_name!r} is not a "
+            f"real MDI name in the bundled catalog"
+        )
