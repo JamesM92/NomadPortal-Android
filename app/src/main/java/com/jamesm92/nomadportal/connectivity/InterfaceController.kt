@@ -48,6 +48,47 @@ data class BluetoothMeshStatus(
     val neighborCount: Int,
     /** Null if no neighbor has been sighted since Bluetooth mesh last started. */
     val lastActivityAtMillis: Long?,
+    /** Every distinct neighbor id this device has ever sighted, across
+     * every past Bluetooth-mesh session, not just the ones still in
+     * [neighborCount]'s own rolling window — a real mesh-health signal
+     * ("how many different devices has this phone ever met") distinct
+     * from "who's around right now." Persisted (see
+     * [BluetoothMeshManager]'s own doc comment for where/how), so this
+     * only ever grows, restart or not. 0 before Bluetooth mesh has ever
+     * run on this device. */
+    val lifetimeUniqueNeighborCount: Int,
+    /** Per-neighbor breakdown for whoever's still in the rolling
+     * window — real backing for a per-neighbor signal-strength/last-
+     * seen row, the same "live per-connection status" TCP already has
+     * (see NetworkScreen's own "Live per-connection status is
+     * available for TCP and Bluetooth mesh" copy, written before this
+     * existed to back it). Empty list, not null, when nothing's
+     * currently in range. */
+    val neighbors: List<BluetoothNeighbor>,
+)
+
+/** One currently-in-range Bluetooth-mesh neighbor. [id] is the raw
+ * link-layer peer id (a BLE MAC address, e.g. "AA:BB:CC:DD:EE:FF") —
+ * this layer has no route to a friendlier name (RNS-level identity
+ * resolution is a separate, higher layer that doesn't know which
+ * physical BLE peer any given announce actually arrived over). */
+data class BluetoothNeighbor(
+    val id: String,
+    /** Real signal strength, dBm — confirmed real data already
+     * arriving via RNS_BLE_Wrapper's own MeshScanner (Android's
+     * standard BLE scan-result RSSI field, no new permission needed),
+     * previously received by this app's own event stream but never
+     * actually read. `0` (not a real, physically-possible BLE reading
+     * — genuine RSSI is always negative, typically -30 to -100) means
+     * "not actually known": RnsBleBridge.kt's own real conversion
+     * coerces the rare `rssi = null` case (MeshTransport.kt's own
+     * `NeighborSeen(peerId, rssi = null)` call site) to a plain `0`
+     * before this app ever sees the event at all, so there's no real
+     * nullable signal left to preserve by this point — a UI rendering
+     * this is expected to treat exactly 0 as "unknown," not display
+     * it as a real reading. */
+    val rssi: Int,
+    val lastSeenAtMillis: Long,
 )
 
 /**

@@ -69,19 +69,43 @@ class BluetoothMeshManager(
 
     private var eventsJob: Job? = null
 
-    // Neighbor peer ID -> last time it was sighted. Plain, not thread-
-    // safe-hardened (ConcurrentHashMap etc.) — every read/write here
-    // happens on `scope`'s own dispatcher via the single events-collecting
-    // coroutine and the sweep loop below, never concurrently from two
-    // different threads.
-    private val neighborLastSeenAt = mutableMapOf<String, Long>()
-    // Separate from neighborLastSeenAt's own max — that map gets pruned
-    // of stale entries (see the sweep loop below), but "when did activity
+    // Neighbor peer ID -> (last time it was sighted, most recent RSSI).
+    // Plain, not thread-safe-hardened (ConcurrentHashMap etc.) — every
+    // read/write here happens on `scope`'s own dispatcher via the single
+    // events-collecting coroutine and the sweep loop below, never
+    // concurrently from two different threads.
+    private val neighborInfo = mutableMapOf<String, NeighborInfo>()
+    // Separate from neighborInfo's own max — that map gets pruned of
+    // stale entries (see the sweep loop below), but "when did activity
     // last happen at all" shouldn't reset to null just because every
     // neighbor has since gone quiet.
     private var lastActivityAtMillis: Long? = null
-    private val _status = MutableStateFlow(BluetoothMeshStatus(neighborCount = 0, lastActivityAtMillis = null))
+
+    // Every distinct neighbor id ever sighted, across every past
+    // Bluetooth-mesh session on this device — see BluetoothMeshStatus.
+    // lifetimeUniqueNeighborCount's own doc comment for why this is a
+    // real, separate metric from neighborInfo's own rolling window.
+    // Plain SharedPreferences, not this app's usual DataStore
+    // (SettingsRepository) — this class doesn't otherwise take a
+    // SettingsRepository dependency at all, and a single growing
+    // Set<String> is exactly what SharedPreferences.getStringSet/
+    // putStringSet already exists for; no reason to widen this class's
+    // constructor just to route through DataStore for one field.
+    private val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+    private val lifetimeNeighborIds: MutableSet<String> =
+        prefs.getStringSet(KEY_LIFETIME_NEIGHBOR_IDS, emptySet())?.toMutableSet() ?: mutableSetOf()
+
+    private val _status = MutableStateFlow(
+        BluetoothMeshStatus(
+            neighborCount = 0,
+            lastActivityAtMillis = null,
+            lifetimeUniqueNeighborCount = lifetimeNeighborIds.size,
+            neighbors = emptyList(),
+        ),
+    )
     val status: StateFlow<BluetoothMeshStatus> = _status.asStateFlow()
+
+    private data class NeighborInfo(val lastSeenAtMillis: Long, val rssi: Int)
 
     private val serviceConnection = object : ServiceConnection {
         override fun onServiceConnected(name: ComponentName?, binder: IBinder?) {
@@ -111,8 +135,9 @@ class BluetoothMeshManager(
                     bridge.events.collect { event ->
                         if (event is PacketEvent.NeighborSeen) {
                             val now = System.currentTimeMillis()
-                            neighborLastSeenAt[event.neighborId] = now
+                            neighborInfo[event.neighborId] = NeighborInfo(now, event.rssi)
                             lastActivityAtMillis = now
+                            recordLifetimeNeighborIfNew(event.neighborId)
                             publishStatus()
                         }
                     }
@@ -126,7 +151,7 @@ class BluetoothMeshManager(
                 while (true) {
                     delay(NEIGHBOR_SWEEP_INTERVAL_MS)
                     val cutoff = System.currentTimeMillis() - NEIGHBOR_STALE_AFTER_MS
-                    val staleRemoved = neighborLastSeenAt.entries.removeIf { it.value < cutoff }
+                    val staleRemoved = neighborInfo.entries.removeIf { it.value.lastSeenAtMillis < cutoff }
                     if (staleRemoved) publishStatus()
                 }
             }
@@ -136,16 +161,31 @@ class BluetoothMeshManager(
             bound = false
             eventsJob?.cancel()
             eventsJob = null
-            neighborLastSeenAt.clear()
+            neighborInfo.clear()
             lastActivityAtMillis = null
             publishStatus()
         }
     }
 
+    /** Persists [neighborId] into [lifetimeNeighborIds]/SharedPreferences
+     * the first time this device ever sights it — a no-op (no write at
+     * all) for every subsequent sighting of an already-known neighbor,
+     * so this isn't hitting disk on every single announce, only on a
+     * real first-time addition. */
+    private fun recordLifetimeNeighborIfNew(neighborId: String) {
+        if (lifetimeNeighborIds.add(neighborId)) {
+            prefs.edit().putStringSet(KEY_LIFETIME_NEIGHBOR_IDS, lifetimeNeighborIds).apply()
+        }
+    }
+
     private fun publishStatus() {
         _status.value = BluetoothMeshStatus(
-            neighborCount = neighborLastSeenAt.size,
+            neighborCount = neighborInfo.size,
             lastActivityAtMillis = lastActivityAtMillis,
+            lifetimeUniqueNeighborCount = lifetimeNeighborIds.size,
+            neighbors = neighborInfo.map { (id, info) ->
+                BluetoothNeighbor(id = id, rssi = info.rssi, lastSeenAtMillis = info.lastSeenAtMillis)
+            },
         )
     }
 
@@ -185,13 +225,20 @@ class BluetoothMeshManager(
         // explicitly here too, rather than depending on it.
         eventsJob?.cancel()
         eventsJob = null
-        neighborLastSeenAt.clear()
+        neighborInfo.clear()
         lastActivityAtMillis = null
+        // lifetimeNeighborIds deliberately NOT cleared here — stopping
+        // Bluetooth mesh (or the service disconnecting) isn't "this
+        // device has never met these neighbors," the whole point of
+        // this counter is that it survives exactly this kind of
+        // session boundary.
         publishStatus()
     }
 
     private companion object {
         const val TAG = "BluetoothMeshManager"
+        const val PREFS_NAME = "bluetooth_mesh_manager"
+        const val KEY_LIFETIME_NEIGHBOR_IDS = "lifetime_neighbor_ids"
         const val NEIGHBOR_SWEEP_INTERVAL_MS = 15_000L
         // A neighbor not re-sighted within this window drops out of
         // status's neighborCount — deliberately not trying to match

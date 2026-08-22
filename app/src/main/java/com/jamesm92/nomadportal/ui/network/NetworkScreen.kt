@@ -37,6 +37,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import com.jamesm92.nomadportal.connectivity.BluetoothMeshStatus
+import com.jamesm92.nomadportal.connectivity.BluetoothNeighbor
 import com.jamesm92.nomadportal.connectivity.InterfaceByteStats
 import com.jamesm92.nomadportal.connectivity.InterfaceController
 import com.jamesm92.nomadportal.connectivity.TcpConnection
@@ -135,7 +136,14 @@ fun NetworkScreen(
     val wifiDiscoveryEnabled by interfaceController.wifiDiscoveryEnabled.collectAsState()
     val tcpConnections by tcpConnectionsRepository.connections().collectAsState(initial = emptyList())
     val bluetoothMeshStatus by interfaceController.bluetoothMeshStatus()
-        .collectAsState(initial = BluetoothMeshStatus(neighborCount = 0, lastActivityAtMillis = null))
+        .collectAsState(
+            initial = BluetoothMeshStatus(
+                neighborCount = 0,
+                lastActivityAtMillis = null,
+                lifetimeUniqueNeighborCount = 0,
+                neighbors = emptyList(),
+            ),
+        )
     val interfaceByteStats by interfaceController.interfaceByteStats().collectAsState(initial = emptyMap())
 
     // Both default collapsed except Announces — per a real on-device
@@ -227,6 +235,33 @@ fun NetworkScreen(
                     },
                     byteStats = interfaceByteStats[AnnounceStatus.INTERFACE_BLUETOOTH],
                 )
+                // Per explicit direction, after a real source-verified
+                // check of what RNS_BLE_Wrapper actually provides (both
+                // real signal-strength data, already arriving over this
+                // app's own event stream but never read before now, and
+                // a genuinely different metric from the rolling-window
+                // neighborCount above): lifetime unique neighbors, and a
+                // real per-neighbor breakdown — the same "live
+                // per-connection status" TCP already has (see the
+                // section's own intro copy above, written before this
+                // existed to back it).
+                if (bluetoothMeshEnabled && bluetoothMeshStatus.lifetimeUniqueNeighborCount > 0) {
+                    Text(
+                        text = "Lifetime: ${bluetoothMeshStatus.lifetimeUniqueNeighborCount} " +
+                            "unique neighbor" +
+                            (if (bluetoothMeshStatus.lifetimeUniqueNeighborCount == 1) "" else "s"),
+                        style = MaterialTheme.typography.labelSmall,
+                        color = NomadTextDim,
+                        modifier = Modifier.padding(start = 44.dp, end = 16.dp, bottom = 4.dp),
+                    )
+                }
+                if (bluetoothMeshEnabled) {
+                    // Same "plain forEach, stays small" reasoning as
+                    // tcpConnections above — a phone's own immediate BLE
+                    // neighborhood is realistically single/low-double
+                    // digits, not an Announces-section-scale list.
+                    bluetoothMeshStatus.neighbors.forEach { neighbor -> BluetoothNeighborRow(neighbor) }
+                }
                 HorizontalDivider()
 
                 InterfaceStatusRow(
@@ -374,6 +409,44 @@ private fun TcpConnectionStatusRow(connection: TcpConnection) {
                     "↑${formatBytes(connection.txBytesPerSecond.toLong())}/s",
                 style = MaterialTheme.typography.labelSmall,
                 color = NomadTextDim,
+            )
+        }
+    }
+}
+
+/** Sub-row under Bluetooth mesh for each currently-in-range neighbor —
+ * same read-only status framing as [TcpConnectionStatusRow], the real
+ * per-neighbor counterpart to that per-connection one. [neighbor]'s own
+ * id is a raw BLE MAC address (see [BluetoothNeighbor]'s own doc
+ * comment for why there's no friendlier name available at this layer).
+ */
+@Composable
+private fun BluetoothNeighborRow(neighbor: BluetoothNeighbor) {
+    Row(
+        modifier = Modifier.fillMaxWidth().padding(start = 44.dp, end = 16.dp, top = 4.dp, bottom = 4.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(12.dp),
+    ) {
+        StatusDot(color = NomadAccent2, size = 8.dp)
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                text = neighbor.id,
+                style = MaterialTheme.typography.bodyMedium,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+            Text(
+                // 0 means "no real RSSI reported for this sighting" —
+                // see BluetoothNeighbor.rssi's own doc comment for why
+                // that's the honest reading rather than a fabricated
+                // one; shown as "signal: n/a" rather than a nonsensical
+                // "0 dBm".
+                text = (if (neighbor.rssi != 0) "${neighbor.rssi} dBm" else "signal: n/a") +
+                    " · ${formatRelativeTime(neighbor.lastSeenAtMillis)}",
+                style = MaterialTheme.typography.labelSmall,
+                color = NomadTextDim,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
             )
         }
     }
