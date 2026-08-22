@@ -358,40 +358,28 @@ private fun TcpConnectionStatusRow(connection: TcpConnection) {
             )
             // Per explicit direction ("the lifetime data up and down
             // should be per connection in tcp, and should show current
-            // speed") — this used to only exist as one aggregate total
-            // shared across every TCP connection at once (the "TCP"
-            // InterfaceStatusRow's own byteStats, above); real
-            // per-connection data now (see get_tcp_connections_json's
-            // own doc comment for the .name-collision bug that used to
-            // make this impossible to build correctly even if it had
-            // been tried). Same "only show once there's real data"
-            // convention InterfaceStatusRow's own byteStats already
-            // uses. Speed only ever shows while actually flowing (both
-            // 0 while idle, or detached) — a "0 B/s" readout sitting
-            // there permanently would just be noise.
-            if (connection.lifetimeRxBytes > 0 || connection.lifetimeTxBytes > 0) {
+            // speed"), then refined by immediate follow-up direction
+            // once the combined line was actually seen live on-device
+            // ("the current speed should be on its own row so we avoid
+            // wrapping, we dont need the lifetime now"): current speed
+            // only, its own row — real per-connection data (see
+            // get_tcp_connections_json's own doc comment for the real
+            // .name-collision bug this sits on top of the fix for).
+            // Only shown while actually flowing (both 0 while idle, or
+            // detached) — a "0 B/s" readout sitting there permanently
+            // would just be noise, same "only show once there's real
+            // data" convention InterfaceStatusRow's own byteStats
+            // already uses for its own lifetime line above.
+            if (connection.rxBytesPerSecond >= 1.0 || connection.txBytesPerSecond >= 1.0) {
                 Text(
-                    text = "Lifetime: ↓${formatBytes(connection.lifetimeRxBytes)} " +
-                        "↑${formatBytes(connection.lifetimeTxBytes)}" +
-                        speedSuffix(connection.rxBytesPerSecond, connection.txBytesPerSecond),
+                    text = "↓${formatBytes(connection.rxBytesPerSecond.toLong())}/s " +
+                        "↑${formatBytes(connection.txBytesPerSecond.toLong())}/s",
                     style = MaterialTheme.typography.labelSmall,
                     color = NomadTextDim,
                 )
             }
         }
     }
-}
-
-/** " · ↓12.3 KB/s ↑410 B/s" when either direction actually has live
- * throughput right now, otherwise "" — appended straight onto the
- * lifetime line rather than a separate Text, since it's only ever
- * relevant alongside a lifetime total that's already non-zero (a
- * connection can't have live speed without having moved at least some
- * bytes already). See [formatBytes]'s own doc comment for the unit
- * convention this reuses for the numeric part. */
-private fun speedSuffix(rxBps: Double, txBps: Double): String {
-    if (rxBps < 1.0 && txBps < 1.0) return ""
-    return " · ↓${formatBytes(rxBps.toLong())}/s ↑${formatBytes(txBps.toLong())}/s"
 }
 
 /** Same bucketing convention as every other screen's own local copy of
