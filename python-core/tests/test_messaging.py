@@ -423,6 +423,62 @@ def test_record_send_result_failed_does_not_set_real_id(tmp_path):
     assert kwargs["real_id"] is None
 
 
+def test_attempt_relay_retry_with_no_resolved_destination_builds_by_hash(tmp_path):
+    """Real regression test for a live report: "I can receive messages
+    from other clients, but can't send it even after they have sent a
+    fresh announce." Root cause was in `_deliver()` (see that function's
+    own doc comment for the full story) — this covers the fix's other
+    half, `_attempt_relay_retry` itself, which now has a real second
+    call site with no resolved `RNS.Destination` at all
+    (`lxmf_dest=None`).
+
+    Unlike `_should_retry_via_relay`'s own tests above, this one *does*
+    exercise real `LXMF.LXMessage` construction — deliberately: unlike
+    `router.handle_outbound()` (a genuinely live-RNS-dependent call,
+    stubbed out here same as `_FakeRouter` does for
+    `get_outbound_propagation_node` above), `LXMessage.__init__` itself
+    does no network I/O (confirmed directly against the installed LXMF
+    source) — only sets attributes — so there's no real reason to fake
+    it too."""
+    import LXMF
+
+    store = _StubMessageStore()
+    svc = MessagingService(storage_path=str(tmp_path), message_store=store)
+
+    sent = []
+
+    class _HandleOutboundRouter:
+        def handle_outbound(self, msg):
+            sent.append(msg)
+
+    dest_hash = b"\xcc" * 16
+    # A real RNS.Destination, not a stand-in — LXMessage.__init__ (see
+    # the source excerpt in the failure this test originally caught)
+    # validates `source` with `isinstance(source, RNS.Destination) or
+    # source == None`, same as `destination`. OUT (not IN, which is what
+    # a router's own real delivery destination actually is) deliberately
+    # — Destination.__init__ only calls RNS.Transport.register_destination()
+    # for IN, and that needs a live Reticulum instance (Transport.owner)
+    # this test harness doesn't build, same as everywhere else in this
+    # file. OUT still satisfies LXMessage's own isinstance check, which
+    # is all this test needs from it.
+    source_dest = RNS.Destination(
+        RNS.Identity(), RNS.Destination.OUT, RNS.Destination.SINGLE, "lxmf", "delivery",
+    )
+
+    svc._attempt_relay_retry(
+        "msg1", dest_hash.hex(), None, source_dest,
+        "hello", "", {}, _HandleOutboundRouter(),
+        dest_hash=dest_hash,
+    )
+
+    assert len(sent) == 1
+    relay_msg = sent[0]
+    assert isinstance(relay_msg, LXMF.LXMessage)
+    assert relay_msg.destination_hash == dest_hash
+    assert relay_msg.desired_method == LXMF.LXMessage.PROPAGATED
+
+
 # ---------------------------------------------------------------------------
 # mark_unread
 # ---------------------------------------------------------------------------

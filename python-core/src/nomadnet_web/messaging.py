@@ -306,6 +306,7 @@ class MessagingService:
     def _attempt_relay_retry(
         self, msg_id: str, dest_hash_hex: str, lxmf_dest, source_dest,
         content: str, title: str, fields: dict, router,
+        dest_hash: Optional[bytes] = None,
     ) -> None:
         """Builds and queues a second delivery attempt for the same
         message content, this time with `desired_method=PROPAGATED` —
@@ -316,14 +317,34 @@ class MessagingService:
         second attempt itself resolves — `_record_send_result`'s own
         `via_relay=True` just changes the log line, the storage shape is
         identical either way (so the UI's own delivery-diagnostics
-        dialog needs no special-casing for a relay-retried message)."""
+        dialog needs no special-casing for a relay-retried message).
+
+        [lxmf_dest] may be None — the second, real call site (`_deliver`'s
+        own recall/path-discovery timeout branch, added after a live
+        report of "can receive messages but can't send, even after a
+        fresh announce") never resolved the recipient's `RNS.Identity`
+        in the first place, so it has no `RNS.Destination` to build
+        `lxmf_dest` from at all. `LXMF.LXMessage` (confirmed directly
+        against the installed LXMF source) accepts `destination=None`
+        together with a raw `destination_hash` for exactly this case —
+        PROPAGATED delivery only needs the propagation node to route by
+        hash, not a pre-resolved identity on this end. [dest_hash] (raw
+        bytes) is required whenever [lxmf_dest] is None."""
         import LXMF
         try:
-            relay_msg = LXMF.LXMessage(
-                lxmf_dest, source_dest, content,
-                title=title or "", fields=fields or None,
-                desired_method=LXMF.LXMessage.PROPAGATED,
-            )
+            if lxmf_dest is not None:
+                relay_msg = LXMF.LXMessage(
+                    lxmf_dest, source_dest, content,
+                    title=title or "", fields=fields or None,
+                    desired_method=LXMF.LXMessage.PROPAGATED,
+                )
+            else:
+                relay_msg = LXMF.LXMessage(
+                    None, source_dest, content,
+                    title=title or "", fields=fields or None,
+                    desired_method=LXMF.LXMessage.PROPAGATED,
+                    destination_hash=dest_hash,
+                )
             relay_msg.register_delivery_callback(
                 lambda m: self._record_send_result(msg_id, dest_hash_hex, m, "delivered", via_relay=True)
             )
@@ -1165,6 +1186,59 @@ class MessagingService:
 
         def _deliver() -> None:
             import RNS, LXMF
+
+            # Attach the sender's icon appearance if one is set. Same
+            # user_sub="" gate bug as _on_delivery() above — user_sub
+            # is a valid (empty-string) key for this app's single-user
+            # design, not a falsy "no user" sentinel.
+            #
+            # Built up front, before identity recall even runs below —
+            # none of this depends on the *recipient*'s identity being
+            # resolved, only the sender's own data, and the recall-
+            # timeout branch now needs it too (see that branch's own
+            # comment for why: it can attempt a relay-retry with no
+            # resolved identity at all, so it has to have fields ready
+            # the same way the normal path does).
+            fields = {}
+            if self._identity_store:
+                icon = self._identity_store.get_icon_appearance_for_user(user_sub)
+                if icon:
+                    # This app stores/looks up icon names with
+                    # underscores internally (IconAppearance.kt's own
+                    # map keys, e.g. "music_note") — but real MDI
+                    # names (what MeshChat/Sideband actually resolve)
+                    # are kebab-case with hyphens, e.g. "music-note"
+                    # (confirmed against MeshChat's own frontend:
+                    # `.replace(/([a-z])([A-Z])/g, '$1-$2')`). A real
+                    # interop bug, found via live testing: MeshChat
+                    # received our fg/bg colors correctly but showed
+                    # "?" for the icon itself, because "music_note"
+                    # isn't a name it has. The receive side already
+                    # tolerates both separators (materialIconFor's
+                    # own `.replace('-', '_')`), so only the send
+                    # side needs converting.
+                    glyph = (icon.get("glyph") or "?").replace("_", "-")
+                    fields[0x04] = [
+                        glyph,
+                        _hex_to_icon_bytes(icon.get("fg", "#ffffff")),
+                        _hex_to_icon_bytes(icon.get("bg", "#5ba3c9")),
+                    ]
+
+            # Attachment field shapes verified directly against
+            # Sideband's own source (sbapp/sideband/core.py /
+            # sbapp/main.py) — not guessed — see the
+            # nomadportal-android-competitor-research memory:
+            #   FIELD_FILE_ATTACHMENTS (0x05) = [[filename, bytes], ...]
+            #   FIELD_IMAGE (0x06) = [format_str, bytes]  (single, not a list)
+            if attachment_data is not None:
+                if attachment_kind == "image":
+                    fields[0x06] = [image_format or "png", attachment_data]
+                else:
+                    fields[0x05] = [[
+                        _sanitize_attachment_filename(attachment_filename or "attachment"),
+                        attachment_data,
+                    ]]
+
             try:
                 # Wait until we can recall the recipient's identity.
                 # request_path kicks off path discovery if needed.
@@ -1174,6 +1248,29 @@ class MessagingService:
                     deadline = time.time() + PATH_WAIT
                     while dest_identity is None:
                         if time.time() > deadline:
+                            # Real, on-device-reported gap this branch used
+                            # to have: a peer whose identity/path this
+                            # device has never directly resolved — even one
+                            # that *just* announced, if that announce
+                            # hasn't actually propagated all the way back
+                            # here yet (a real, live "I can receive from
+                            # them but can't send to them" report) — used
+                            # to just fail outright here. _failed() below
+                            # already has a real retry-via-relay mechanic
+                            # for when a resolved OPPORTUNISTIC/DIRECT
+                            # attempt fails, but that callback never fires
+                            # for this branch at all, since it returns
+                            # before ever constructing an LXMessage or
+                            # calling router.handle_outbound() — the relay
+                            # fallback was silently unreachable for
+                            # exactly the "no path resolved at all" case
+                            # it would matter most for. PROPAGATED delivery
+                            # doesn't need a resolved identity on this end
+                            # (see _attempt_relay_retry's own doc comment
+                            # for the real LXMF.LXMessage(destination=None,
+                            # destination_hash=...) mechanism this relies
+                            # on), so it's attempted here too now, not just
+                            # from _failed().
                             log.warning(
                                 "Identity not recalled for %s after %ss — "
                                 "peer may not have announced recently",
@@ -1181,6 +1278,12 @@ class MessagingService:
                             )
                             if self._msg_store:
                                 self._msg_store.update_sent(msg_id, "failed")
+                            if self._should_retry_via_relay(router):
+                                self._attempt_relay_retry(
+                                    msg_id, dest_hash_hex, None, source_dest,
+                                    content, title, fields, router,
+                                    dest_hash=dest_hash,
+                                )
                             return
                         time.sleep(0.25)
                         dest_identity = RNS.Identity.recall(dest_hash)
@@ -1192,49 +1295,6 @@ class MessagingService:
                     "lxmf",
                     "delivery",
                 )
-                # Attach the sender's icon appearance if one is set. Same
-                # user_sub="" gate bug as _on_delivery() above — user_sub
-                # is a valid (empty-string) key for this app's single-user
-                # design, not a falsy "no user" sentinel.
-                fields = {}
-                if self._identity_store:
-                    icon = self._identity_store.get_icon_appearance_for_user(user_sub)
-                    if icon:
-                        # This app stores/looks up icon names with
-                        # underscores internally (IconAppearance.kt's own
-                        # map keys, e.g. "music_note") — but real MDI
-                        # names (what MeshChat/Sideband actually resolve)
-                        # are kebab-case with hyphens, e.g. "music-note"
-                        # (confirmed against MeshChat's own frontend:
-                        # `.replace(/([a-z])([A-Z])/g, '$1-$2')`). A real
-                        # interop bug, found via live testing: MeshChat
-                        # received our fg/bg colors correctly but showed
-                        # "?" for the icon itself, because "music_note"
-                        # isn't a name it has. The receive side already
-                        # tolerates both separators (materialIconFor's
-                        # own `.replace('-', '_')`), so only the send
-                        # side needs converting.
-                        glyph = (icon.get("glyph") or "?").replace("_", "-")
-                        fields[0x04] = [
-                            glyph,
-                            _hex_to_icon_bytes(icon.get("fg", "#ffffff")),
-                            _hex_to_icon_bytes(icon.get("bg", "#5ba3c9")),
-                        ]
-
-                # Attachment field shapes verified directly against
-                # Sideband's own source (sbapp/sideband/core.py /
-                # sbapp/main.py) — not guessed — see the
-                # nomadportal-android-competitor-research memory:
-                #   FIELD_FILE_ATTACHMENTS (0x05) = [[filename, bytes], ...]
-                #   FIELD_IMAGE (0x06) = [format_str, bytes]  (single, not a list)
-                if attachment_data is not None:
-                    if attachment_kind == "image":
-                        fields[0x06] = [image_format or "png", attachment_data]
-                    else:
-                        fields[0x05] = [[
-                            _sanitize_attachment_filename(attachment_filename or "attachment"),
-                            attachment_data,
-                        ]]
 
                 # Prefer OPPORTUNISTIC (single encrypted packet, no link needed).
                 # LXMessage automatically falls back to DIRECT if the content
