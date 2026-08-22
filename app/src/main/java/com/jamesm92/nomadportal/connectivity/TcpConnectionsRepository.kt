@@ -31,6 +31,29 @@ data class TcpConnection(
      * [InterfaceController.hasDownTcpConnection]'s own reasoning for
      * why that's the correct reading rather than a distinct "unknown". */
     val online: Boolean,
+    /** This session's own up/down byte totals — real per-connection
+     * data (see orchestrator.py's get_tcp_connections_json's own doc
+     * comment for why this used to only ever exist as one shared
+     * aggregate across every TCP connection at once, and the real
+     * .name-collision bug that caused). 0 while detached, per explicit
+     * direction ("the lifetime data up and down should be per
+     * connection in tcp"). */
+    val rxBytes: Long,
+    val txBytes: Long,
+    /** Lifetime — across app restarts too, not just this session
+     * (base + [rxBytes]/[txBytes]). Keeps advancing forever once a
+     * connection is ever attached; stops (doesn't reset) while
+     * detached. */
+    val lifetimeRxBytes: Long,
+    val lifetimeTxBytes: Long,
+    /** Real, live instantaneous throughput — bytes/sec, computed
+     * server-side from the delta since the *previous* poll (see
+     * get_tcp_connections_json's own doc comment). 0 on the very first
+     * reading for a connection and whenever it's detached — there's no
+     * real "current speed" for a connection carrying no traffic. Per
+     * explicit direction ("...and should show current speed"). */
+    val rxBytesPerSecond: Double,
+    val txBytesPerSecond: Double,
 )
 
 /**
@@ -102,6 +125,12 @@ class RealTcpConnectionsRepository : TcpConnectionsRepository {
                 port = c.getInt("port"),
                 enabled = c.optBoolean("enabled", true),
                 online = c.optBoolean("online", false),
+                rxBytes = c.optLong("rxb", 0L),
+                txBytes = c.optLong("txb", 0L),
+                lifetimeRxBytes = c.optLong("life_rxb", 0L),
+                lifetimeTxBytes = c.optLong("life_txb", 0L),
+                rxBytesPerSecond = c.optDouble("rx_bps", 0.0),
+                txBytesPerSecond = c.optDouble("tx_bps", 0.0),
             )
         }
     }

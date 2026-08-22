@@ -329,6 +329,7 @@ def start(base_dir: str, enable_transport: bool = False) -> None:
     # has to wait for RNS (see _sync_tcp_interfaces in the deferred
     # steps below).
     _load_tcp_connections()
+    _load_tcp_conn_stats()
 
     # Same "pure local file I/O, no RNS dependency" reasoning as
     # _load_tcp_connections() above — disappearing-messages purging
@@ -993,6 +994,61 @@ def _save_tcp_connections() -> None:
         log.warning("Failed to save TCP connections: %s", exc)
 
 
+# Per-connection lifetime (across restarts) up/down byte totals — real
+# backing for the Network tab's own per-connection stats, per explicit
+# direction ("the lifetime data up and down should be per connection in
+# tcp, and should show current speed"). Same "base + current session"
+# shape as browser.py's own NodeBrowser._iface_base/iface_stats.json,
+# but keyed by conn_id (this connection's own stable, guaranteed-unique
+# id) rather than by RNS interface .name — necessary now that
+# _make_tcp_client gives every connection a conn_id-derived unique
+# name anyway, but conn_id is the more natural key here since it's
+# already this module's own primary key for a TCP connection, and
+# survives even a connection that's currently detached (no RNS
+# interface object to read a .name from at all).
+_tcp_conn_base: dict = {}  # conn_id -> {"rxb": int, "txb": int}
+
+# In-memory only, not persisted — a "current speed" reading only ever
+# needs the *previous* sample to diff against, and only while this
+# process is alive; there's nothing meaningful to reload after a
+# restart (a rate computed across a process-death gap would be
+# nonsense). Populated lazily, one entry per conn_id, the first time
+# get_tcp_connections_json() sees that connection while it's attached.
+_tcp_conn_last_sample: dict = {}  # conn_id -> (rxb, txb, monotonic_time)
+
+
+def _tcp_conn_stats_path() -> str:
+    return os.path.join(_base_dir, "tcp_conn_stats.json")
+
+
+def _load_tcp_conn_stats() -> None:
+    import json
+    global _tcp_conn_base
+    try:
+        with open(_tcp_conn_stats_path(), "r") as f:
+            data = json.load(f)
+        _tcp_conn_base = {
+            conn_id: {"rxb": int(v.get("rxb", 0)), "txb": int(v.get("txb", 0))}
+            for conn_id, v in data.items()
+            if isinstance(v, dict)
+        }
+    except (FileNotFoundError, ValueError, OSError, KeyError) as exc:
+        log.info("No existing TCP per-connection byte stats (%s) — starting empty", exc)
+        _tcp_conn_base = {}
+
+
+def _save_tcp_conn_stats(snapshot: dict) -> None:
+    import json
+    try:
+        os.makedirs(_base_dir, exist_ok=True)
+        tmp = _tcp_conn_stats_path() + ".tmp"
+        with open(tmp, "w") as f:
+            json.dump(snapshot, f)
+        os.replace(tmp, _tcp_conn_stats_path())
+    except OSError as exc:
+        log.warning("Failed to save TCP per-connection byte stats: %s", exc)
+
+
 def _sync_tcp_interfaces() -> None:
     """Attach/detach RNS TCPClientInterface objects so the live set
     matches (master_enabled AND each connection's own enabled flag).
@@ -1010,7 +1066,7 @@ def _sync_tcp_interfaces() -> None:
             currently_up = conn_id in _tcp_ifaces
             if should_be_up and not currently_up:
                 try:
-                    iface = _make_tcp_client(conn["host"], conn["port"])
+                    iface = _make_tcp_client(conn["host"], conn["port"], conn_id)
                     _browser.reticulum._add_interface(iface)
                     _tcp_ifaces[conn_id] = iface
                     log.info("TCP connection '%s' (%s:%d) attached", conn.get("name"), conn["host"], conn["port"])
@@ -1037,7 +1093,8 @@ def _sync_tcp_interfaces() -> None:
 
 def get_tcp_connections_json() -> str:
     """[TcpConnectionsStatus] shape: master_enabled, connections (list of
-    {id, name, host, port, enabled, online}).
+    {id, name, host, port, enabled, online, rxb, txb, life_rxb, life_txb,
+    rx_bps, tx_bps}).
 
     "online" is live status, not persisted config — the real RNS
     `Interface.online` flag for whichever connections are currently
@@ -1048,13 +1105,82 @@ def get_tcp_connections_json() -> str:
     dict copies rather than mutating the stored connection dicts
     themselves, so this never accidentally persists live status into
     tcp_connections.json on the next save.
+
+    rxb/txb (this session only) and life_rxb/life_txb (across restarts
+    too, base + session — see _tcp_conn_base's own doc comment) are 0
+    for a connection that's currently detached; a detached connection's
+    lifetime total simply stops advancing rather than resetting, same
+    as browser.py's own get_status()/_iface_base already does for the
+    aggregate case this per-connection version sits alongside.
+
+    rx_bps/tx_bps are a real, live-computed instantaneous rate — the
+    delta since the *previous* call to this same function, divided by
+    the real elapsed wall-clock time between them (see
+    _tcp_conn_last_sample's own doc comment). Both are 0 on the very
+    first call this process ever sees for a given connection (no prior
+    sample to diff against yet) and whenever a connection is currently
+    detached — there is no real "speed" for a connection carrying no
+    traffic.
     """
     import json
+    import time
+
+    now = time.monotonic()
     connections = []
+    life_snapshot = dict(_tcp_conn_base)  # carries forward any currently-detached connection's last-known total
     for conn_id, conn in _tcp_connections.items():
         iface = _tcp_ifaces.get(conn_id)
         online = bool(iface is not None and getattr(iface, "online", False))
-        connections.append({**conn, "online": online})
+
+        rxb = txb = 0
+        rx_bps = tx_bps = 0.0
+        if iface is not None:
+            rxb = getattr(iface, "rxb", getattr(iface, "rx_bytes", 0)) or 0
+            txb = getattr(iface, "txb", getattr(iface, "tx_bytes", 0)) or 0
+
+            prev = _tcp_conn_last_sample.get(conn_id)
+            if prev is not None:
+                prev_rxb, prev_txb, prev_time = prev
+                elapsed = now - prev_time
+                # A trivially small elapsed (two calls in the same
+                # instant, or a monotonic-clock quirk) would make this
+                # division blow up into a meaningless huge number
+                # rather than just reporting "no new data yet" — 0.5s
+                # floor is well under this app's own ~4s poll cadence,
+                # so it only ever guards the degenerate case, never a
+                # real gap between genuine polls.
+                if elapsed >= 0.5:
+                    rx_bps = max(0.0, (rxb - prev_rxb) / elapsed)
+                    tx_bps = max(0.0, (txb - prev_txb) / elapsed)
+            _tcp_conn_last_sample[conn_id] = (rxb, txb, now)
+
+            base = _tcp_conn_base.get(conn_id, {"rxb": 0, "txb": 0})
+            life_snapshot[conn_id] = {"rxb": base["rxb"] + rxb, "txb": base["txb"] + txb}
+        else:
+            # Detached — no live counters to sample from, and no new
+            # sample to compare a *future* attach against either
+            # (_tcp_conn_last_sample intentionally left alone here, not
+            # zeroed: the next attach's own session counters start back
+            # at 0 regardless, so a stale sample would just get
+            # overwritten on that first post-reattach call above, same
+            # as it would on a fresh process start).
+            _tcp_conn_last_sample.pop(conn_id, None)
+
+        life = life_snapshot.get(conn_id, {"rxb": 0, "txb": 0})
+        connections.append({
+            **conn,
+            "online": online,
+            "rxb": rxb,
+            "txb": txb,
+            "life_rxb": life["rxb"],
+            "life_txb": life["txb"],
+            "rx_bps": rx_bps,
+            "tx_bps": tx_bps,
+        })
+
+    if life_snapshot:
+        _save_tcp_conn_stats(life_snapshot)
+
     return json.dumps({
         "master_enabled": _tcp_master_enabled,
         "connections": connections,
@@ -1388,7 +1514,12 @@ def _tcp_probe_deep(host: str, port: int) -> bool:
     import RNS
 
     try:
-        iface = _make_tcp_client(host, port)
+        # Not a real tracked connection (no conn_id exists yet — this
+        # candidate may never actually become one), so _make_tcp_client's
+        # own uniqueness requirement is satisfied with a throwaway,
+        # human-readable probe tag instead; this interface is detached
+        # and discarded before this function returns either way.
+        iface = _make_tcp_client(host, port, f"probe:{host}:{port}")
         _browser.reticulum._add_interface(iface)
     except Exception as exc:
         log.info("Deep probe: failed to attach %s:%d: %s", host, port, exc)
@@ -1492,11 +1623,25 @@ def set_tcp_connection_enabled(conn_id: str, enabled: bool) -> None:
     _sync_tcp_interfaces()
 
 
-def _make_tcp_client(host: str, port: int):
+def _make_tcp_client(host: str, port: int, conn_id: str):
     from RNS.Interfaces.TCPInterface import TCPClientInterface
     import RNS
+    # [conn_id] in the name, not just "TCP Client" (every connection's
+    # RNS interface object used to get that exact same literal name) —
+    # real bug found while building per-connection lifetime/speed
+    # stats: RNS.Transport.interfaces has no other way to tell two TCP
+    # connections apart by name, so anything keying off .name (this
+    # module's own get_interface_byte_stats_json, and browser.py's own
+    # get_status()/_iface_base persistence) silently collapsed every
+    # simultaneously-attached TCP connection's stats into one shared
+    # bucket, each overwriting the last — never surfaced before because
+    # nothing displayed per-connection numbers to notice the collision
+    # in. host:port alone isn't a safe substitute either (two entries
+    # can deliberately share a host:port — see add_tcp_connection's own
+    # doc comment); conn_id is this connection's own real, guaranteed-
+    # unique key already.
     iface = TCPClientInterface(
-        RNS.Transport, {"name": "TCP Client", "target_host": host, "target_port": port},
+        RNS.Transport, {"name": f"TCP Client {conn_id}", "target_host": host, "target_port": port},
     )
     # Matches config_gen.py's own documented recommendation (python-core)
     # for busy public hubs: disables this interface's per-link announce
