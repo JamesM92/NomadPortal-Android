@@ -107,7 +107,41 @@
         <activity
             android:name=".MainActivity"
             android:exported="true"
-            android:windowSoftInputMode="adjustResize">
+            android:windowSoftInputMode="adjustNothing">
+            <!-- Real live report: "there is still a gap between the
+                 keyboard and the message box when typing messages on
+                 the real phones, but not on the emulator" — even after
+                 the consumeWindowInsets(innerPadding)/imePadding() fix
+                 earlier this session. Root cause was a level up from
+                 that fix: adjustResize (the pre-edge-to-edge mechanism,
+                 where the OS physically resizes the window/decor view
+                 to make room for the keyboard) directly conflicts with
+                 MainActivity's own enableEdgeToEdge() +
+                 Modifier.imePadding() approach (Compose's own IME-
+                 insets-driven padding, no window resize needed) —
+                 confirmed against Android's real current documentation
+                 (developer.android.com/develop/ui/compose/system/insets:
+                 "you should NOT use windowSoftInputMode='adjustResize'"
+                 once edge-to-edge + Compose's own imePadding() are in
+                 use; recommends adjustNothing exactly as set here).
+                 With both active, the window gets resized by the OS
+                 AND Compose piles its own imePadding() padding on top
+                 of that already-shrunk layout — a real double-
+                 adjustment, visible as a gap the size of some portion
+                 of the keyboard. Real, well-documented reason this
+                 tracked as "works on the emulator, fails on real
+                 phones": how literally adjustResize's legacy window-
+                 resize behavior gets applied alongside edge-to-edge is
+                 known to vary across real OEM skins/Android versions —
+                 the emulator's close-to-AOSP-reference behavior happened
+                 not to double-count it, while real hardware did.
+                 adjustNothing (not just omitting the attribute, whose
+                 own default varies by API level) makes the window-
+                 resize behavior explicit and consistent everywhere:
+                 Compose's own imePadding() is now the *only* thing
+                 that ever adjusts layout for the keyboard, matching the
+                 exact "let Compose's inset system have full control"
+                 recommendation the same doc gives. -->
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
