@@ -521,41 +521,64 @@ def set_rnode_enabled(enabled: bool, serial_port: str) -> None:
     _set_interface("rnode", enabled, lambda: _make_rnode(serial_port))
 
 
+_bluetooth_mesh_manager = None  # BleNeighborInterfaceManager | None — real per-neighbor lifecycle owner
+
+
 def set_bluetooth_mesh_bridge(bridge) -> None:
-    """Attaches the phone-to-phone BLE mesh interface, backed by a live
-    `com.jamesm92.rnsble.interop.RnsBleBridge` Kotlin object Chaquopy
-    hands across the boundary — see `BluetoothMeshManager.kt`, which
-    binds/starts `RnsBleForegroundService` and calls this the moment a
-    real bridge exists (there's no way to construct one from the Python
-    side; unlike RNode/Wi-Fi-discovery's interfaces, this one has no
-    config-only factory).
+    """Starts the phone-to-phone BLE mesh's real per-neighbor interface
+    lifecycle, backed by a live `com.jamesm92.rnsble.interop.RnsBleBridge`
+    Kotlin object Chaquopy hands across the boundary — see
+    `BluetoothMeshManager.kt`, which binds/starts `RnsBleForegroundService`
+    and calls this the moment a real bridge exists (there's no way to
+    construct one from the Python side; unlike RNode/Wi-Fi-discovery's
+    interfaces, this one has no config-only factory).
 
-    Reuses `_set_interface`'s exact same attach/detach machinery
-    (`_browser.reticulum._add_interface`/`RNS.Transport.remove_interface`)
-    under the `"bluetooth_mesh"` key — the same key
-    `AnnounceStatus.INTERFACE_BLUETOOTH` already uses on the Kotlin side
-    for this interface's per-interface announce policy, and the same key
-    `_interface_announce_config` already has an entry for — nothing
-    about the existing announce-policy plumbing needed to change to
-    recognize this interface once it's real.
+    Real architecture change: this used to construct exactly one
+    `RnsBleInterface` wrapping the *entire* mesh, via `_set_interface`'s
+    generic single-slot-per-key machinery. That's gone — RNS can never
+    learn a real per-neighbor path behind one opaque interface (see this
+    change's own design notes), so each connected neighbor now gets its
+    own real `RnsBleNeighborInterface`, created/destroyed dynamically as
+    neighbors connect/disconnect. `BleNeighborInterfaceManager` (Python
+    side, `rns_ble_interface.py`) owns that lifecycle entirely — this
+    function just starts it and records it for `clear_bluetooth_mesh_bridge`
+    to stop later.
 
-    `RnsBleInterface`'s own `owner` argument is `RNS.Transport` (not
-    `None`/this module) — verified against `demo_rns_config.py`'s own
-    real usage and against how `process_incoming`'s `self.owner.inbound(
-    data, self)` call is used by every bundled RNS interface.
+    `_active_interfaces["bluetooth_mesh"]` (see `_set_interface`) is
+    deliberately NOT used for this any more — that dict is this app's
+    own master-toggle-state/auto-announce-cadence bookkeeping (see
+    `_active_announce_configs`), a real, separate concern from the
+    actual dynamically-many RNS Interface objects this now manages. A
+    plain sentinel value is still recorded there so the existing
+    announce-cadence code (which only ever reads the dict's *keys*,
+    never the values) keeps working unchanged.
     """
-    from rns_ble_interface import RnsBleInterface
-    import RNS
-    _set_interface("bluetooth_mesh", True, lambda: RnsBleInterface(RNS.Transport, {}, bridge))
+    global _bluetooth_mesh_manager
+    if not is_ready():
+        raise RuntimeError("Cannot enable bluetooth_mesh — RNS is not ready yet")
+    with _lock:
+        if _bluetooth_mesh_manager is not None:
+            return  # already on
+        from rns_ble_interface import BleNeighborInterfaceManager
+        import RNS
+        _bluetooth_mesh_manager = BleNeighborInterfaceManager(RNS.Transport, bridge)
+        _active_interfaces["bluetooth_mesh"] = True
+        log.info("Interface 'bluetooth_mesh' enabled (real per-neighbor routing)")
 
 
 def clear_bluetooth_mesh_bridge() -> None:
-    """Detaches the Bluetooth-mesh interface — called from
+    """Stops the BLE mesh's neighbor-interface manager — detaches every
+    currently-linked neighbor's real RNS interface — called from
     `BluetoothMeshManager.kt` when the toggle turns off or the service
-    unbinds/stops. The `factory` argument to `_set_interface` is never
-    actually invoked on this path (only used when turning an interface
-    *on*), so `lambda: None` here is just satisfying the signature."""
-    _set_interface("bluetooth_mesh", False, lambda: None)
+    unbinds/stops."""
+    global _bluetooth_mesh_manager
+    with _lock:
+        if _bluetooth_mesh_manager is None:
+            return  # already off
+        _bluetooth_mesh_manager.stop()
+        _bluetooth_mesh_manager = None
+        del _active_interfaces["bluetooth_mesh"]
+        log.info("Interface 'bluetooth_mesh' disabled")
 
 
 def set_wifi_discovery_enabled(enabled: bool) -> None:
@@ -2229,16 +2252,26 @@ def _interface_key_for(iface) -> str:
     `_BLUETOOTH`/`_RNODE`/`_WIFI_DISCOVERY` on the Kotlin side) by its
     real class name — confirmed directly against the actual installed
     RNS/RNS_BLE_Wrapper source, not guessed:
-    `TCPClientInterface`/`TCPServerInterface` -> tcp, `RnsBleInterface`
-    -> bluetooth_mesh, `RNodeInterface` -> rnode, `AutoInterface` ->
-    wifi_discovery. Returns None for anything this app doesn't
-    recognize (a future/unexpected interface type) rather than
-    guessing — see `get_announce_interfaces_json()`'s own doc comment
-    for what a missing key means to the caller."""
+    `TCPClientInterface`/`TCPServerInterface` -> tcp,
+    `RnsBleNeighborInterface` -> bluetooth_mesh, `RNodeInterface` ->
+    rnode, `AutoInterface` -> wifi_discovery. Returns None for anything
+    this app doesn't recognize (a future/unexpected interface type)
+    rather than guessing — see `get_announce_interfaces_json()`'s own
+    doc comment for what a missing key means to the caller.
+
+    Real architecture change: there can now be many simultaneous
+    `RnsBleNeighborInterface` instances (one per connected neighbor,
+    see `set_bluetooth_mesh_bridge`'s own doc comment) rather than
+    exactly one `RnsBleInterface`. Every caller of this function
+    already iterates `RNS.Transport.interfaces` and groups by the
+    returned key — real, favorable finding from source review during
+    that rewrite: nothing about that aggregation assumed "at most one
+    interface per key" to begin with, so it already handles this
+    correctly with zero further changes needed."""
     name = type(iface).__name__
     if name in ("TCPClientInterface", "TCPServerInterface"):
         return "tcp"
-    if name == "RnsBleInterface":
+    if name == "RnsBleNeighborInterface":
         return "bluetooth_mesh"
     if name == "RNodeInterface":
         return "rnode"
