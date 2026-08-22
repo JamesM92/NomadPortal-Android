@@ -78,6 +78,22 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
 
+    <!-- Real root cause of a live report ("the dont optimize button
+         doesnt seem to do anything"): Settings.ACTION_REQUEST_IGNORE_
+         BATTERY_OPTIMIZATIONS (fired from BatteryOptimization.kt's own
+         call site in SettingsScreen.kt's Notifications section) is a
+         special intent Android only honors from an app holding this
+         exact permission — without it, startActivity() either throws
+         (not what was reported here) or, on several real OEM skins,
+         silently no-ops: no dialog, no crash, nothing visibly happens,
+         exactly the symptom reported. A "special permission" Google
+         Play reviews the justification for at publish time (this app's
+         real one: letting a user keep Always-on message notifications
+         reliable under Doze — see BatteryOptimization.kt's own doc
+         comment) — not a concern for local/beta testing, which is what
+         surfaced this gap. -->
+    <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
+
     <application
         android:name=".NomadPortalApp"
         android:allowBackup="false"
