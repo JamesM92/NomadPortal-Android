@@ -1,6 +1,8 @@
 package com.jamesm92.nomadportal.ui.calling
 
 import android.Manifest
+import android.media.AudioManager
+import androidx.activity.compose.LocalActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
@@ -23,6 +25,7 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -62,6 +65,40 @@ fun CallOverlay(
     onDismiss: () -> Unit,
 ) {
     if (!state.status.isActive) return
+
+    // Real live report: "the volume between the 2 phones was
+    // different, one was barely audible." Root cause isn't the audio
+    // pipeline itself (CallAudioEngine's own AudioTrack already uses
+    // the correct AudioAttributes.USAGE_VOICE_COMMUNICATION, and
+    // there's no software gain/scaling anywhere in it) — it's that
+    // nothing in this app ever pointed the hardware volume buttons at
+    // the actual call-audio stream. Without this, Android leaves them
+    // controlling whatever stream was last active (commonly media, or
+    // nothing call-related at all) — so a user hearing a quiet call
+    // has no way to fix it in the moment, and if the two phones'
+    // STREAM_VOICE_CALL levels simply started at different points
+    // (an ordinary per-device/OEM default), that difference has no way
+    // to ever get corrected. Activity.setVolumeControlStream (the real
+    // API — accessed via the volumeControlStream property here) is
+    // exactly what real phone-dialer apps use for this; reset back to
+    // the platform default on dispose (call ends/overlay leaves
+    // composition) so this doesn't leak into controlling call volume
+    // for the rest of the app once the call's over.
+    //
+    // LocalActivity, not `LocalContext.current as? Activity` — a real
+    // lint catch (ContextCastToActivity, androidx.activity.compose):
+    // the composition-local Context isn't guaranteed to *be* an
+    // Activity (it can be wrapped/decorated), where LocalActivity
+    // resolves the real hosting Activity correctly regardless — same
+    // fix RnshTerminalScreen.kt already applies for its own
+    // FragmentActivity lookup.
+    val activity = LocalActivity.current
+    DisposableEffect(Unit) {
+        activity?.volumeControlStream = AudioManager.STREAM_VOICE_CALL
+        onDispose {
+            activity?.volumeControlStream = AudioManager.USE_DEFAULT_STREAM_TYPE
+        }
+    }
 
     // Terminal states (ended/busy/rejected/failed) show a brief message
     // then dismiss themselves — same "toast, not a modal you have to

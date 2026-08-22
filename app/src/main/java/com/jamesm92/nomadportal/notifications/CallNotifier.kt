@@ -45,7 +45,22 @@ import kotlinx.coroutines.flow.first
  * side by side.
  */
 object CallNotifier {
-    const val CHANNEL_CALLS = "nomad_calls"
+    // Real live report: "the call notification was silent." A real,
+    // classic Android gotcha, not a code bug in the sound-setting call
+    // below itself: NotificationChannel settings (including sound) are
+    // frozen the *first time* a given channel id is ever created on a
+    // device — createNotificationChannel() on an id that already
+    // exists is a silent no-op for anything that changed, sound
+    // included; only the user can fix it afterward, via system
+    // Settings, not this app. This whole feature (see this object's
+    // own doc comment) went through several real builds on the same
+    // two physical test phones before landing — entirely plausible an
+    // earlier iteration created "nomad_calls" with no sound configured
+    // yet, and every later build's real setSound() call has been
+    // silently ignored on those devices ever since. A fresh channel id
+    // guarantees this build's real settings actually apply, on any
+    // device, regardless of what an earlier build did.
+    const val CHANNEL_CALLS = "nomad_calls_v2"
     private const val NOTIFICATION_ID = 1950
 
     // In-memory only, not a persisted NotificationStateStore entry like
