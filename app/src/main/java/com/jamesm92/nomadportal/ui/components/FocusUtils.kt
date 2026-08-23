@@ -19,14 +19,26 @@ import androidx.compose.ui.platform.LocalSoftwareKeyboardController
  * dispatches pointer events to the innermost matching handler first, so
  * a row's own `clickable` or a text field gaining focus both still work
  * exactly as before) — it's purely a fallback for "tapped empty space."
+ *
+ * [onDismiss] is an extra hook for a screen that tracks its own
+ * "which thing is being edited" state *separately* from Compose's own
+ * ambient focus system — [RichTextPageEditor]'s `focusedBlockId` is the
+ * real case this was added for: clearing ambient focus alone doesn't
+ * reset that state (nothing in this modifier can reach into a caller's
+ * own `remember`ed state), so without this hook a block stayed
+ * permanently swapped into its editable `BasicTextField` even after a
+ * tap on blank space, since there was no path back to the read-only
+ * rendered view at all except deleting the block. Runs after the real
+ * focus-clear/keyboard-hide, never instead of it.
  */
-fun Modifier.dismissKeyboardOnTap(): Modifier = composed {
+fun Modifier.dismissKeyboardOnTap(onDismiss: () -> Unit = {}): Modifier = composed {
     val focusManager = LocalFocusManager.current
     val keyboardController = LocalSoftwareKeyboardController.current
     pointerInput(Unit) {
         detectTapGestures(onTap = {
             focusManager.clearFocus(force = true)
             keyboardController?.hide()
+            onDismiss()
         })
     }
 }

@@ -74,6 +74,7 @@ import com.jamesm92.nomadportal.data.hosting.toMicronLine
 import com.jamesm92.nomadportal.data.hosting.toggleCharStyle
 import com.jamesm92.nomadportal.ui.components.CompactTextField
 import com.jamesm92.nomadportal.ui.components.MicronColorPicker
+import com.jamesm92.nomadportal.ui.components.dismissKeyboardOnTap
 import com.jamesm92.nomadportal.ui.theme.NomadAccent
 import com.jamesm92.nomadportal.ui.theme.NomadBg3
 import com.jamesm92.nomadportal.ui.theme.NomadMono
@@ -241,7 +242,20 @@ fun RichTextPageEditor(
         }
     }
 
-    Column(modifier = modifier) {
+    Column(
+        modifier = modifier.dismissKeyboardOnTap {
+            // See FocusUtils.kt's own doc comment on the [onDismiss]
+            // parameter -- clearing ambient Compose focus alone doesn't
+            // touch this composable's own focusedBlockId, which is what
+            // actually decides whether a block renders as editable. Real
+            // bug this closes: before this, a block had no way back to
+            // its read-only micron2compose-rendered view (or to dismiss
+            // the keyboard) from a tap on blank space -- only deleting
+            // the block cleared focusedBlockId at all.
+            focusedBlockId = null
+            focusedSelection = TextRange.Zero
+        },
+    ) {
         ToolbarTabRow(
             activePanel = activePanel,
             onSelectPanel = { activePanel = if (activePanel == it) null else it },
