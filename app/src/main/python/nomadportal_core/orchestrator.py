@@ -37,20 +37,20 @@ writeup, this is the condensed version:
 - `TCPClientInterface` and `RNodeInterface` have real, correct
   `detach()` implementations (socket/radio cleanly closed) — safe to
   add/remove repeatedly.
-- `AutoInterface` (the Wi-Fi discovery toggle) has a **broken
-  `detach()`** in this RNS version: `def detach(self): self.online =
-  False` — it never closes its bound UDP multicast socket, because that
-  socket is a local variable inside `final_init()`, never stored on
-  `self`, so there is no reference to close it from outside either.
-  Confirmed by direct repro: add → remove → add again → `OSError:
-  [WinError 10048] Only one usage of each socket address...`, reproduced
-  even with a 3-second wait, so it's a genuine leak, not a release-timing
-  race. Toggling Wi-Fi discovery off then back on within the same app
-  process **will fail** — `set_wifi_discovery_enabled` raises a clear
-  `RuntimeError` on that second enable rather than silently pretending
-  to succeed. Fixing this for real needs a more invasive monkeypatch of
-  `AutoInterface.final_init` to capture and store the UDP server
-  reference — not done here; flagged as a known follow-up.
+- `AutoInterface` (the Wi-Fi discovery toggle) used to have a real,
+  confirmed leak here: its `detach()` is just `self.online = False` —
+  it never closed its bound UDP multicast socket(s). Toggling Wi-Fi
+  discovery off then back on within the same app process used to fail
+  with `OSError: [WinError 10048] Only one usage of each socket
+  address...` (or the Android/Linux equivalent), a genuine leak, not a
+  release-timing race. **Fixed** — re-verified directly against the
+  current vendored `AutoInterface.py`: the earlier note here about the
+  UDP server being "a local variable never stored on self" was wrong
+  for this RNS version; `final_init()` already stores each one in
+  `self.interface_servers[ifname]`, a real accessible dict. No
+  monkeypatch needed — `_close_auto_interface_udp_servers` (see its own
+  doc comment, called from `_set_interface`'s disable path) just calls
+  `.shutdown()`/`.server_close()` on each one directly.
 """
 
 import logging
@@ -643,14 +643,11 @@ def clear_bluetooth_mesh_bridge() -> None:
 
 
 def set_wifi_discovery_enabled(enabled: bool) -> None:
-    """See this module's docstring: AutoInterface's detach() is broken
-    in this RNS version and never releases its UDP socket. Enabling
-    this a SECOND time within the same app process will raise
-    RuntimeError (from the underlying OSError) — that is a known,
-    documented limitation, not swallowed silently. Disabling still calls
-    detach()/remove_interface() (best-effort: stops it from being used
-    for routing even though the OS socket leaks until the process
-    exits)."""
+    """See this module's docstring: AutoInterface's own detach() never
+    released its bound UDP socket(s) — now closed explicitly by
+    `_set_interface` via `_close_auto_interface_udp_servers`, so
+    re-enabling this within the same app process (off, then back on) no
+    longer raises the OSError-wrapped-as-RuntimeError this used to."""
     _set_interface("wifi_discovery", enabled, _make_auto_interface)
 
 
@@ -1009,6 +1006,38 @@ def write_site_page(relative_path: str, content: str) -> str:
         return json.dumps({"success": False, "message": str(exc)})
 
 
+def _close_auto_interface_udp_servers(iface) -> None:
+    """Real fix for the bug this module's own docstring used to describe as needing
+    "a more invasive monkeypatch" — that turned out to be stale advice, not a
+    permanent constraint. Re-verified directly against the current vendored
+    `RNS/Interfaces/AutoInterface.py`: `final_init()` already stores every per-network-
+    interface `socketserver.UDPServer` it creates in `self.interface_servers[ifname]` (a
+    real, accessible instance dict — earlier notes calling this "a local variable never
+    stored on self" were simply wrong about this RNS version). What's actually broken is
+    narrower: `AutoInterface.detach()` is just `self.online = False` — it never touches
+    `interface_servers` at all, so every UDP socket stays bound for the rest of the
+    process even after "detaching," which is exactly what made re-enabling Wi-Fi
+    discovery within the same app run fail with `OSError: address already in use`.
+
+    No monkeypatch needed: `interface_servers` is a real public-enough attribute to use
+    directly from here. `.shutdown()` stops each background `serve_forever()` thread
+    (already `daemon=True` in `final_init()`, so it was never a leaked-*thread* problem,
+    only a leaked-*socket* one); `.server_close()` then actually releases the bound
+    socket. Best-effort/no-op for anything that isn't a real AutoInterface (no
+    `interface_servers` attribute) — safe to call unconditionally from `_set_interface`'s
+    generic disable path rather than special-casing the "wifi_discovery" key by name.
+    """
+    servers = getattr(iface, "interface_servers", None)
+    if not servers:
+        return
+    for ifname, udp_server in list(servers.items()):
+        try:
+            udp_server.shutdown()
+            udp_server.server_close()
+        except Exception:
+            log.exception("Failed to close AutoInterface UDP server for '%s'", ifname)
+
+
 def _set_interface(key: str, enabled: bool, factory) -> None:
     if not is_ready():
         raise RuntimeError(f"Cannot toggle '{key}' — RNS is not ready yet")
@@ -1031,6 +1060,10 @@ def _set_interface(key: str, enabled: bool, factory) -> None:
             if existing is None:
                 return  # already off
             existing.detach()
+            # See _close_auto_interface_udp_servers's own doc comment — real fix for
+            # the previously-documented "can't re-enable Wi-Fi discovery in the same
+            # app run" bug. No-op for any interface type that isn't AutoInterface.
+            _close_auto_interface_udp_servers(existing)
             RNS.Transport.remove_interface(existing)
             del _active_interfaces[key]
             log.info("Interface '%s' disabled", key)
