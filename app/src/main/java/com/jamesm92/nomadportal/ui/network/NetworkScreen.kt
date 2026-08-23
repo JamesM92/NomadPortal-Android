@@ -594,9 +594,15 @@ private fun AnnouncesSection(
     modifier: Modifier = Modifier,
 ) {
     Column(modifier = modifier) {
-        val conversations by messagingRepository.conversations().collectAsState(initial = emptyList())
-        val nodes by browserRepository.discoveredNodes().collectAsState(initial = emptyList())
-        val relays by messagingRepository.relayNodes().collectAsState(initial = emptyList())
+        // See AnnouncesSectionBody's own doc comment for why these are remember()-pinned
+        // rather than called directly inline — this header count collector is exactly as
+        // exposed to the same recomposition-starvation bug as the list body is.
+        val conversations by remember(messagingRepository) { messagingRepository.conversations() }
+            .collectAsState(initial = emptyList())
+        val nodes by remember(browserRepository) { browserRepository.discoveredNodes() }
+            .collectAsState(initial = emptyList())
+        val relays by remember(messagingRepository) { messagingRepository.relayNodes() }
+            .collectAsState(initial = emptyList())
         ExpandableSectionHeader(
             title = "Announces",
             count = conversations.size + nodes.size + relays.size,
@@ -659,14 +665,35 @@ private fun AnnouncesSectionBody(
     onOpenNode: (nodeHash: String) -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    val conversations by messagingRepository.conversations().collectAsState(initial = emptyList())
-    val nodes by browserRepository.discoveredNodes().collectAsState(initial = emptyList())
+    // Real bug found via a live device investigation: messagingRepository.conversations()
+    // (like every other repository method here) is `= pollingFlow(...)`, constructing a
+    // *brand-new* Flow object on every call -- fine as a plain data-layer API, but calling
+    // it directly inline as `xxx().collectAsState()` means collectAsState's own internal
+    // keying (by the Flow instance) sees a "different" Flow on every recomposition, so it
+    // cancels and restarts the underlying poll coroutine from scratch each time. Invisible
+    // on a screen that rarely recomposes (ConversationListScreen, which does exactly the
+    // same `repository.conversations().collectAsState()` and appears to work fine) --
+    // catastrophic on this screen, which also collects bluetoothMeshStatus() (updates
+    // often under real BLE traffic), forcing frequent recomposition that was confirmed
+    // live to restart this collector roughly every 150ms, before it could ever complete a
+    // single fetch -- permanent starvation, not a slow poll. `remember { ... }` pins each
+    // Flow to one stable object instance across recompositions (only reconstructed if the
+    // repository reference itself changes, which never happens within one screen's
+    // lifetime), so collectAsState's own coroutine survives recomposition the way it's
+    // meant to.
+    val conversations by remember(messagingRepository) { messagingRepository.conversations() }
+        .collectAsState(initial = emptyList())
+    val nodes by remember(browserRepository) { browserRepository.discoveredNodes() }
+        .collectAsState(initial = emptyList())
+
     // Live "which interface currently has the best path" lookup — see
     // InterfaceController.announceInterfaces' own doc comment for what
     // this does/doesn't prove. Keyed by hash; a hash with no entry has
     // no currently-known path at all.
-    val announceInterfaces by interfaceController.announceInterfaces().collectAsState(initial = emptyMap())
-    val relays by messagingRepository.relayNodes().collectAsState(initial = emptyList())
+    val announceInterfaces by remember(interfaceController) { interfaceController.announceInterfaces() }
+        .collectAsState(initial = emptyMap())
+    val relays by remember(messagingRepository) { messagingRepository.relayNodes() }
+        .collectAsState(initial = emptyList())
     val scope = rememberCoroutineScope()
     var searchQuery by remember { mutableStateOf("") }
     var sortOption by remember { mutableStateOf(SortOption.RECENT) }
