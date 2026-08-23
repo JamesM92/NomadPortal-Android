@@ -174,7 +174,8 @@ fun BrowserScreen(
     // PageCacheStore's own doc comment) — activeIdentity stays null
     // until the active identity's actually known, same "nothing to key
     // the cache off of yet" reasoning as pageCacheEnabled below.
-    val identities by identityRepository.identities().collectAsState(initial = emptyList())
+    val identities by remember(identityRepository) { identityRepository.identities() }
+        .collectAsState(initial = emptyList())
     val activeIdentity = identities.find { it.isActive }
     // Real caching only actually happens once both the user setting is
     // on AND an active identity is known to key it by — either missing
@@ -192,7 +193,7 @@ fun BrowserScreen(
     // back to a truncated hash if this node hasn't been discovered via an
     // announce yet (e.g. navigated to directly by hash, or the announce
     // hasn't arrived since app start).
-    val nodes by repository.discoveredNodes().collectAsState(initial = emptyList())
+    val nodes by remember(repository) { repository.discoveredNodes() }.collectAsState(initial = emptyList())
 
     var history by remember { mutableStateOf(listOf(startAddress)) }
     var historyIndex by remember { mutableStateOf(0) }

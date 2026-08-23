@@ -134,8 +134,15 @@ fun NetworkScreen(
     val bluetoothMeshEnabled by interfaceController.bluetoothMeshEnabled.collectAsState()
     val rNodeEnabled by interfaceController.rNodeEnabled.collectAsState()
     val wifiDiscoveryEnabled by interfaceController.wifiDiscoveryEnabled.collectAsState()
-    val tcpConnections by tcpConnectionsRepository.connections().collectAsState(initial = emptyList())
-    val bluetoothMeshStatus by interfaceController.bluetoothMeshStatus()
+    // remember()-pinned throughout this screen — see AnnouncesSectionBody's own doc
+    // comment below for the real bug this avoids (a fresh Flow object handed to
+    // collectAsState on every recomposition gets treated as "different," restarting the
+    // underlying poll from scratch). This screen is the one that actually exposed that
+    // bug live, so every collector here gets the same defensive treatment, not just the
+    // ones already confirmed broken.
+    val tcpConnections by remember(tcpConnectionsRepository) { tcpConnectionsRepository.connections() }
+        .collectAsState(initial = emptyList())
+    val bluetoothMeshStatus by remember(interfaceController) { interfaceController.bluetoothMeshStatus() }
         .collectAsState(
             initial = BluetoothMeshStatus(
                 neighborCount = 0,
@@ -144,7 +151,8 @@ fun NetworkScreen(
                 neighbors = emptyList(),
             ),
         )
-    val interfaceByteStats by interfaceController.interfaceByteStats().collectAsState(initial = emptyMap())
+    val interfaceByteStats by remember(interfaceController) { interfaceController.interfaceByteStats() }
+        .collectAsState(initial = emptyMap())
 
     // Both default collapsed except Announces — per a real on-device
     // report ("a bunch of the hard written network stats at the top

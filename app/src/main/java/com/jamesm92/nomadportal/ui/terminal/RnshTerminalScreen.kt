@@ -261,10 +261,10 @@ fun RnshTerminalScreen(
     historyRepository: RnshHistoryRepository,
     onBack: () -> Unit,
 ) {
-    val status by repository.status().collectAsState(
+    val status by remember(repository) { repository.status() }.collectAsState(
         initial = RnshStatus(RnshConnectionState.IDLE, null, null),
     )
-    val history by historyRepository.history().collectAsState(initial = emptyList())
+    val history by remember(historyRepository) { historyRepository.history() }.collectAsState(initial = emptyList())
     val scope = rememberCoroutineScope()
     // BiometricPrompt needs a real FragmentActivity host — MainActivity was
     // widened to one specifically for this (see its own doc comment). This

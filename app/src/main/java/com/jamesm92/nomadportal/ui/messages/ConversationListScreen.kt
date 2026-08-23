@@ -140,7 +140,7 @@ fun ConversationListScreen(
     callRepository: CallRepository,
     onOpenConversation: (contactHash: String) -> Unit,
 ) {
-    val conversations by repository.conversations().collectAsState(initial = emptyList())
+    val conversations by remember(repository) { repository.conversations() }.collectAsState(initial = emptyList())
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
     var searchQuery by remember { mutableStateOf("") }
@@ -584,7 +584,8 @@ fun ConversationListScreen(
                     }
                 }
             } else {
-                val callHistory by callRepository.callHistory().collectAsState(initial = emptyList())
+                val callHistory by remember(callRepository) { callRepository.callHistory() }
+                    .collectAsState(initial = emptyList())
                 CallsTab(
                     history = callHistory,
                     onCallByAddress = { showCallByAddress = true },
@@ -689,12 +690,12 @@ fun ConversationListScreen(
  */
 @Composable
 private fun PropagationSyncDialog(repository: MessagingRepository, onDismiss: () -> Unit) {
-    val status by repository.propagationSyncStatus().collectAsState(initial = null)
+    val status by remember(repository) { repository.propagationSyncStatus() }.collectAsState(initial = null)
     // Only retryViaRelay is actually used from this — see this
     // property's own doc comment. Pulling the whole AnnounceStatus flow
     // just for one boolean is the same trade-off Settings' own Privacy
     // section already accepts for the same reason.
-    val announceStatus by repository.announceStatus().collectAsState(initial = null)
+    val announceStatus by remember(repository) { repository.announceStatus() }.collectAsState(initial = null)
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
     var syncing by remember { mutableStateOf(false) }

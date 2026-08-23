@@ -206,12 +206,18 @@ fun SettingsScreen(
     // Matches SettingsRepository.themeMode's own real default (DARK, not
     // SYSTEM — see that property's own doc comment).
     val themeMode by settingsRepository.themeMode.collectAsState(initial = ThemeMode.DARK)
-    val announceStatus by messagingRepository.announceStatus().collectAsState(initial = null)
-    val conversations by messagingRepository.conversations().collectAsState(initial = emptyList())
-    val hostedNodeStatus by interfaceController.hostedNodeStatus().collectAsState(initial = null)
-    val tcpConnections by tcpConnectionsRepository.connections().collectAsState(initial = emptyList())
-    val identities by identityRepository.identities().collectAsState(initial = emptyList())
-    val rnshHistory by rnshHistoryRepository.history().collectAsState(initial = emptyList())
+    val announceStatus by remember(messagingRepository) { messagingRepository.announceStatus() }
+        .collectAsState(initial = null)
+    val conversations by remember(messagingRepository) { messagingRepository.conversations() }
+        .collectAsState(initial = emptyList())
+    val hostedNodeStatus by remember(interfaceController) { interfaceController.hostedNodeStatus() }
+        .collectAsState(initial = null)
+    val tcpConnections by remember(tcpConnectionsRepository) { tcpConnectionsRepository.connections() }
+        .collectAsState(initial = emptyList())
+    val identities by remember(identityRepository) { identityRepository.identities() }
+        .collectAsState(initial = emptyList())
+    val rnshHistory by remember(rnshHistoryRepository) { rnshHistoryRepository.history() }
+        .collectAsState(initial = emptyList())
 
     val tcpEnabled by interfaceController.tcpEnabled.collectAsState()
     val bluetoothMeshEnabled by interfaceController.bluetoothMeshEnabled.collectAsState()

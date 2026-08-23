@@ -109,8 +109,14 @@ fun ConversationScreen(
     contact: Contact,
     onBack: () -> Unit,
 ) {
-    val messages by repository.messages(contact.lxmfHash).collectAsState(initial = emptyList())
-    val announceStatus by repository.announceStatus().collectAsState(initial = null)
+    // remember()-pinned — this screen's own draft text field recomposes on every
+    // keystroke, which without this would restart the messages() poll from scratch on
+    // every character typed (the same class of bug found+fixed live on NetworkScreen.kt
+    // this session — see its own doc comment). Keyed on contact.lxmfHash too, so
+    // navigating to a different conversation still gets a fresh Flow for the new contact.
+    val messages by remember(repository, contact.lxmfHash) { repository.messages(contact.lxmfHash) }
+        .collectAsState(initial = emptyList())
+    val announceStatus by remember(repository) { repository.announceStatus() }.collectAsState(initial = null)
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
     var draft by remember { mutableStateOf("") }

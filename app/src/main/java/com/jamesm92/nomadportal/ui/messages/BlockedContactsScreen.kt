@@ -21,6 +21,7 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -48,7 +49,7 @@ import kotlinx.coroutines.launch
 @Composable
 fun BlockedContactsScreen(repository: MessagingRepository, onBack: () -> Unit) {
     val scope = rememberCoroutineScope()
-    val conversations by repository.conversations().collectAsState(initial = emptyList())
+    val conversations by remember(repository) { repository.conversations() }.collectAsState(initial = emptyList())
     val blocked = conversations.filter { it.contact.isBlocked }
 
     Scaffold(

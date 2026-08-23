@@ -183,7 +183,8 @@ private fun IdentityStep(messagingRepository: MessagingRepository) {
     // automatically, before any UI, see identity_store.py's own doc
     // comment); this step's whole job is explaining what already
     // silently happened, not creating anything new.
-    val announceStatus by messagingRepository.announceStatus().collectAsState(initial = null)
+    val announceStatus by remember(messagingRepository) { messagingRepository.announceStatus() }
+        .collectAsState(initial = null)
     StepContainer {
         Text("Your identity", style = MaterialTheme.typography.headlineSmall)
         Spacer(Modifier.height(24.dp))

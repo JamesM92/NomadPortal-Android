@@ -86,7 +86,7 @@ fun NodeListScreen(
     repository: BrowserRepository,
     onOpenNode: (nodeHash: String) -> Unit,
 ) {
-    val nodes by repository.discoveredNodes().collectAsState(initial = emptyList())
+    val nodes by remember(repository) { repository.discoveredNodes() }.collectAsState(initial = emptyList())
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
     var searchQuery by remember { mutableStateOf("") }

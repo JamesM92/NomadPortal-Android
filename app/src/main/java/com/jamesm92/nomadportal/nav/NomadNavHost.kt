@@ -17,6 +17,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.produceState
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Modifier
 import androidx.navigation.NavGraph.Companion.findStartDestination
@@ -142,9 +143,20 @@ fun NomadNavHost(
     // here rather than duplicated per-screen (HomeScreen/NodeListScreen
     // each used to compute their own copy of totalUnread independently
     // before the redesign).
-    val conversations by messagingRepository.conversations().collectAsState(initial = emptyList())
+    //
+    // remember()-pinned — see NetworkScreen.kt's own doc comment (the
+    // real bug this fixes: calling a pollingFlow-backed repository method
+    // directly inline in collectAsState() hands it a brand-new Flow object
+    // every recomposition, which cancels and restarts the underlying poll
+    // from scratch each time. This composable is *always* mounted for the
+    // whole app session and recomposes on every navigation change (plus
+    // callState above), making it a real, live-exposed instance of the
+    // same bug, not just theoretical.
+    val conversations by remember(messagingRepository) { messagingRepository.conversations() }
+        .collectAsState(initial = emptyList())
     val totalUnread = conversations.sumOf { it.unreadCount }
-    val hasDownTcpConnection by interfaceController.hasDownTcpConnection().collectAsState(initial = false)
+    val hasDownTcpConnection by remember(interfaceController) { interfaceController.hasDownTcpConnection() }
+        .collectAsState(initial = false)
 
     val currentRoute = navController.currentBackStackEntryAsState().value?.destination?.route
 
