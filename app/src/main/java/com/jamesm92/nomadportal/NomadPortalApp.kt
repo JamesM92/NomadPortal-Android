@@ -102,14 +102,32 @@ class NomadPortalApp : Application() {
         // nodes.json/favorites.json/etc.) before returning.
         appScope.launch(Dispatchers.IO) {
             val orchestrator = Python.getInstance().getModule("nomadportal_core.orchestrator")
-            // enable_transport is read once here, at process start — RNS's
-            // own singleton constraint (this module's own comment above)
-            // means it can't change live once RNS.Reticulum() is
-            // constructed, so the toggle in Settings triggers a real app
-            // restart (AppRestart.restart) rather than trying to apply
-            // live. See orchestrator.py's start()'s own doc comment.
-            val transportNodeEnabled = settingsRepository.transportNodeEnabled.first()
-            orchestrator.callAttr("start", noBackupFilesDir.absolutePath, transportNodeEnabled)
+            // enable_transport/full_bridge are read once here, at process
+            // start — RNS's own singleton constraint (this module's own
+            // comment above) means neither can change live once
+            // RNS.Reticulum() is constructed, so a change to either of the
+            // two settings feeding them triggers a real app restart
+            // (AppRestart.restart) rather than trying to apply live. See
+            // orchestrator.py's start()'s own doc comment.
+            //
+            // Real architecture decision, per explicit direction: relaying
+            // within Bluetooth mesh is no longer gated behind a separate
+            // manual "Transport node" toggle — having Bluetooth mesh on at
+            // all *is* the consent to relay other Bluetooth-mesh peers'
+            // traffic. `transportNodeEnabled` (Settings' "Full network
+            // bridge", the old "Transport node") now means something
+            // narrower and separate: whether this device should also
+            // *bridge* that traffic onto its other interfaces (currently
+            // TCP), not whether Bluetooth-mesh relay happens at all.
+            val bluetoothMeshEnabled = settingsRepository.bluetoothMeshEnabled.first()
+            val fullBridgeEnabled = settingsRepository.transportNodeEnabled.first()
+            val enableTransport = bluetoothMeshEnabled || fullBridgeEnabled
+            orchestrator.callAttr(
+                "start",
+                noBackupFilesDir.absolutePath,
+                enableTransport,
+                fullBridgeEnabled,
+            )
 
             // start() only constructs NodeBrowser/RNS — it never adds any
             // Interface itself. Without this, a persisted "TCP: on" (the

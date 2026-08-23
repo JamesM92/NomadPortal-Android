@@ -142,12 +142,17 @@ class SettingsRepository(context: Context) {
         } ?: ThemeMode.DARK
     }
 
-    // Real resource/bandwidth commitment (relaying strangers' mesh
-    // traffic, not just this device's own) — opt-in, same convention as
-    // every other toggle here that broadens what this device exposes to
-    // the network. Takes effect on next app restart only — see
-    // orchestrator.py's start()'s own doc comment for why RNS's
-    // enable_transport can't be a live toggle.
+    // Backing key unchanged (DataStore migration avoidance), but the
+    // *meaning* narrowed — per explicit direction, relaying within
+    // Bluetooth mesh is no longer gated behind this at all (bluetoothMeshEnabled
+    // being on is itself that consent now). This is Settings' "Full
+    // network bridge": whether this device should also *bridge* that
+    // Bluetooth-mesh traffic onto its other interfaces (currently TCP),
+    // a real, separate resource/trust commitment — opt-in, same
+    // convention as every other toggle here that broadens what this
+    // device exposes to the network. Takes effect on next app restart
+    // only — see orchestrator.py's start()'s own doc comment for why
+    // neither this nor RNS's enable_transport can be a live toggle.
     val transportNodeEnabled: Flow<Boolean> = boolFlow(KEY_TRANSPORT_NODE, default = false)
 
     // Opt-in — a persistent notification is a real, visible change to

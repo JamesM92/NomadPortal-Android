@@ -140,6 +140,20 @@ _started = False
 _base_dir: str = ""
 _site_server = None  # nomadnet_web.site_server.SiteServer instance, only while hosting is on
 
+# Whether this device should bridge traffic *between* its different
+# interface types (e.g. Bluetooth mesh <-> TCP) rather than just relay
+# within one interface type — the real backing for Settings' "Full
+# network bridge" toggle (formerly "Transport node"; see start()'s own
+# doc comment for the full reasoning). Read once at start() time, same
+# init-time-only constraint as `enable_transport` itself — RNS interface
+# `mode` is set once at `_add_interface()` time and isn't a live
+# per-interface toggle any more than the instance-wide transport flag
+# is. Only consulted by TCP interface construction right now
+# (`_make_tcp_client`/`_sync_tcp_interfaces`) — RNode/Wi-Fi-discovery
+# stay at RNS's own MODE_FULL default, deliberately out of scope for
+# this change (see this module's own start() doc comment).
+_full_bridge_enabled: bool = False
+
 # Multi-identity support — the user_sub of whichever identity is
 # currently active (see IdentityStore.get_active_user_sub()'s own doc
 # comment for why this is persisted there, not here). Every function
@@ -222,7 +236,7 @@ def _write_transport_config(rns_dir: str, enable_transport: bool) -> None:
         )
 
 
-def start(base_dir: str, enable_transport: bool = False) -> None:
+def start(base_dir: str, enable_transport: bool = False, full_bridge: bool = False) -> None:
     """One-time startup. Idempotent — a second call is a no-op and logs
     instead of raising, since Android may call this more than once
     across Activity/Application lifecycle events.
@@ -237,27 +251,59 @@ def start(base_dir: str, enable_transport: bool = False) -> None:
     config_dir/reticulum convention.
 
     `enable_transport` — RNS's own transport-node mode ("relay other
-    people's mesh traffic, not just your own"), the real backing for
-    Settings' "Advanced" transport-node toggle. This is an init-time-
-    only RNS decision — like everything else about `RNS.Reticulum()`,
-    it can't be flipped live once constructed (this module's own
-    singleton-constraint doc comment above), so the config file needs
-    the right value written *before* NodeBrowser (and therefore
-    RNS.Reticulum()) is ever constructed below. Uses `config_gen.py`'s
-    own real `_set_transport`/`_DEFAULT_CONFIG` — that module predates
-    this Android app's own extraction (ported from the original
-    multi-user Flask app) and was never actually invoked here until
-    this, its own first real caller.
+    people's mesh traffic, not just your own"). Real architecture
+    decision, per explicit direction: Bluetooth mesh relaying is no
+    longer gated behind a separate manual global toggle — having
+    Bluetooth mesh on at all *is* the consent to relay other Bluetooth-
+    mesh peers' traffic (within the mesh; see `full_bridge` below for
+    the separate "also bridge it onto my other interfaces" opt-in). The
+    Kotlin caller is therefore expected to compute this as
+    `bluetoothMeshEnabled OR transportNodeEnabled` (renamed "Full
+    network bridge" in Settings — see `full_bridge`), not read a single
+    dedicated setting the way it used to. This is still an init-time-
+    only RNS decision either way — like everything else about
+    `RNS.Reticulum()`, it can't be flipped live once constructed (this
+    module's own singleton-constraint doc comment above), so the config
+    file needs the right value written *before* NodeBrowser (and
+    therefore RNS.Reticulum()) is ever constructed below, and toggling
+    either of the two settings that feed this computation still requires
+    an app restart to take effect (Settings already does this for the
+    Bluetooth-mesh toggle too, for exactly this reason). Uses
+    `config_gen.py`'s own real `_set_transport`/`_DEFAULT_CONFIG` — that
+    module predates this Android app's own extraction (ported from the
+    original multi-user Flask app) and was never actually invoked here
+    until this, its own first real caller.
+
+    `full_bridge` — a *separate* concern from `enable_transport` above:
+    whether interfaces other than Bluetooth mesh (currently just TCP —
+    see `_make_tcp_client`) get RNS's `MODE_FULL` (unrestricted
+    cross-interface bridging — real path/announce traffic learned via
+    Bluetooth mesh gets rebroadcast onto TCP and vice versa) or
+    `MODE_BOUNDARY` (this device still uses those interfaces fully for
+    its *own* traffic, but never bridges Bluetooth-mesh peers' traffic
+    onto them). Verified directly against `RNS/Transport.py`'s real
+    announce-propagation gating (~line 1234/1250): a MODE_BOUNDARY
+    interface never rebroadcasts what it heard from a MODE_ROAMING one
+    (Bluetooth mesh neighbor interfaces are always MODE_ROAMING — see
+    `rns_ble_interface.py`), so this is real containment, not just a
+    label. Defaults to `False` (contained) — a device with only
+    Bluetooth mesh turned on relays *within* the mesh by default and
+    nothing more; a device that should deliberately act as a real
+    cross-protocol bridge (e.g. a stationary phone bridging the local
+    Bluetooth mesh onto a home TCP hub) opts in explicitly via the same
+    Settings toggle that used to be plain "Transport node".
     """
     global _browser, _identity_store, _message_store, _contact_store
     global _messaging, _lxmf_tracker, _call_tracker, _call_manager, _prop_sync, _started, _base_dir
-    global _active_user_sub
+    global _active_user_sub, _full_bridge_enabled
 
     with _lock:
         if _started:
             log.info("orchestrator.start() called again — already started, ignoring")
             return
         _started = True
+
+    _full_bridge_enabled = full_bridge
 
     _setup_logging()
     _base_dir = base_dir
@@ -1118,7 +1164,21 @@ def _sync_tcp_interfaces() -> None:
             if should_be_up and not currently_up:
                 try:
                     iface = _make_tcp_client(conn["host"], conn["port"], conn_id)
-                    _browser.reticulum._add_interface(iface)
+                    # mode: MODE_FULL only if the user explicitly opted
+                    # into being a real cross-protocol bridge (Settings'
+                    # "Full network bridge" toggle — see start()'s own
+                    # doc comment for _full_bridge_enabled); otherwise
+                    # MODE_BOUNDARY, so this TCP connection still fully
+                    # serves this device's own traffic but never
+                    # rebroadcasts what a Bluetooth-mesh (MODE_ROAMING)
+                    # neighbor sent it — real RNS-level containment, not
+                    # just a UI label.
+                    tcp_mode = (
+                        RNS.Interfaces.Interface.Interface.MODE_FULL
+                        if _full_bridge_enabled
+                        else RNS.Interfaces.Interface.Interface.MODE_BOUNDARY
+                    )
+                    _browser.reticulum._add_interface(iface, mode=tcp_mode)
                     _tcp_ifaces[conn_id] = iface
                     log.info("TCP connection '%s' (%s:%d) attached", conn.get("name"), conn["host"], conn["port"])
                 except Exception as exc:

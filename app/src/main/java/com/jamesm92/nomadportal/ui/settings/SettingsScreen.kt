@@ -439,12 +439,42 @@ fun SettingsScreen(
                                     if (turningOn && !bluetoothGranted) {
                                         requestBluetoothPermissions()
                                     } else {
-                                        scope.launch { interfaceController.setBluetoothMeshEnabled(turningOn) }
+                                        scope.launch {
+                                            interfaceController.setBluetoothMeshEnabled(turningOn)
+                                            // Real architecture decision, per explicit
+                                            // direction: turning Bluetooth mesh on is
+                                            // itself the consent to relay other Bluetooth-
+                                            // mesh peers' traffic, not just your own — no
+                                            // separate global toggle required (see "Full
+                                            // network bridge" below for the narrower,
+                                            // separate cross-protocol-bridging opt-in).
+                                            // That relay behavior is backed by RNS's own
+                                            // instance-wide transport flag though, which —
+                                            // like everything else about RNS.Reticulum() —
+                                            // is fixed at construction time and can't be
+                                            // flipped live (see orchestrator.py's start()
+                                            // doc comment), so flipping this toggle needs
+                                            // the same real restart the old dedicated
+                                            // toggle already required.
+                                            AppRestart.restart(context)
+                                        }
                                     }
                                 },
                             )
                         },
-                    ) {}
+                    ) {
+                        Text(
+                            text = "Relays other people's Bluetooth-mesh traffic through this " +
+                                "device too, not just your own — implied by turning Bluetooth " +
+                                "mesh on at all, so multi-hop messages/sites can actually route " +
+                                "through you. Never bridges onto your other connections (like " +
+                                "TCP) unless \"Full network bridge\" in Advanced is also on. " +
+                                "Takes effect after the app restarts.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = NomadTextDim,
+                            modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
+                        )
+                    }
                 }
 
                 item {
@@ -1226,17 +1256,32 @@ fun SettingsScreen(
                         // those (no telemetry; no shared-RNS-daemon
                         // concept), so transport mode is the one real piece
                         // that applies here, grouped the same way.
-                        val transportNodeEnabled by settingsRepository.transportNodeEnabled
+                        //
+                        // Renamed from "Transport node" (per explicit
+                        // direction): relaying *within* Bluetooth mesh is
+                        // no longer gated behind this toggle at all — the
+                        // Bluetooth mesh section's own switch now implies
+                        // that consent directly (see its own doc comment).
+                        // What's left here is the narrower, separate
+                        // concern of *bridging* that traffic onto this
+                        // device's other interfaces (currently just TCP) —
+                        // real RNS-level containment via interface `mode`,
+                        // not just a label; see orchestrator.py's
+                        // start()/_sync_tcp_interfaces doc comments.
+                        val fullBridgeEnabled by settingsRepository.transportNodeEnabled
                             .collectAsState(initial = false)
                         Text(
-                            text = "Transport node",
+                            text = "Full network bridge",
                             style = MaterialTheme.typography.bodyLarge,
                             modifier = Modifier.padding(start = 16.dp, end = 16.dp, top = 4.dp),
                         )
                         Text(
-                            text = "Act as a relay for other people's mesh traffic, not just " +
-                                "your own — helps the mesh as a whole, at the cost of some " +
-                                "extra battery/bandwidth. Takes effect after the app restarts.",
+                            text = "Bridge Bluetooth mesh traffic onto your other connections " +
+                                "(like TCP), not just relay it within the mesh — that's already " +
+                                "on by default whenever Bluetooth mesh is. Only useful if this " +
+                                "device sits at a real junction between separate parts of the " +
+                                "network, at the cost of extra battery/bandwidth. Takes effect " +
+                                "after the app restarts.",
                             style = MaterialTheme.typography.bodySmall,
                             color = NomadTextDim,
                             modifier = Modifier.padding(start = 16.dp, end = 16.dp, top = 2.dp, bottom = 4.dp),
@@ -1246,12 +1291,12 @@ fun SettingsScreen(
                             verticalAlignment = Alignment.CenterVertically,
                         ) {
                             Text(
-                                text = if (transportNodeEnabled) "On" else "Off",
+                                text = if (fullBridgeEnabled) "On" else "Off",
                                 style = MaterialTheme.typography.bodyMedium,
                                 modifier = Modifier.weight(1f),
                             )
                             Switch(
-                                checked = transportNodeEnabled,
+                                checked = fullBridgeEnabled,
                                 onCheckedChange = { enabled ->
                                     scope.launch {
                                         settingsRepository.setTransportNodeEnabled(enabled)
