@@ -1839,6 +1839,28 @@ def set_node_favorite(hash_hex: str, value: bool) -> bool:
 # itself to keep that file a clean, UI-agnostic port.
 # ---------------------------------------------------------------------------
 
+# Real bug found via a live device investigation (adb-connected phone, not a
+# log guess): _recall_announced_name() is called once per "no name" peer,
+# every single _conversation_entries() poll tick -- with hundreds of
+# chronically-nameless peers among ~1900 known LXMF peers on a real, heavily-
+# tested device, that's hundreds of RNS.Identity.recall_app_data() calls
+# repeating the exact same (almost always unchanged) lookup roughly every 4
+# seconds, forever. Measured directly on-device: get_conversations_json()
+# went from ~100ms to over 100 SECONDS per call over the course of one
+# session, worsening as both the peer count and RNS's own known-destinations
+# table kept growing -- confirmed via live timing instrumentation that this
+# wasn't network/Bluetooth-related at all (the same slowdown persisted with
+# the mesh idle and all other diagnostic tooling stopped). A per-hash cache
+# with a real TTL (not permanent -- a hash's RNS-cached app_data can
+# genuinely become available later, e.g. once a fresh announce or a new path
+# lets Transport learn it) turns "redo this expensive lookup every poll,
+# forever" into "redo it at most once per TTL," which is the real fix this
+# needed -- not a threading/dispatcher change, this was always an
+# algorithmic cost hiding behind what looked like a cheap per-entry call.
+_recalled_name_cache: dict = {}  # hash_hex -> (name: str, cached_at: float)
+_RECALLED_NAME_CACHE_TTL_S = 300  # 5 minutes
+
+
 def _recall_announced_name(hash_hex: str) -> str:
     """Fallback name source for _conversation_entries(), tried between
     the live LXMF peer tracker and a stored contact name — see
@@ -1851,14 +1873,23 @@ def _recall_announced_name(hash_hex: str) -> str:
     transport layer has processed for this hash at all, handler or not
     — confirmed directly against RNS 1.3.9 source, a real fix, not a
     guess. Never raises — a failed lookup here should just mean "no
-    fallback name available," not break the whole conversations list."""
+    fallback name available," not break the whole conversations list.
+
+    Cached per hash for _RECALLED_NAME_CACHE_TTL_S — see this function's
+    own module-level comment for the real performance bug this closes."""
+    now = time.time()
+    cached = _recalled_name_cache.get(hash_hex)
+    if cached is not None and (now - cached[1]) < _RECALLED_NAME_CACHE_TTL_S:
+        return cached[0]
     try:
         import RNS
         from nomadnet_web.lxmf_tracker import LXMFPeerTracker
         app_data = RNS.Identity.recall_app_data(bytes.fromhex(hash_hex))
-        return LXMFPeerTracker.decode_display_name(app_data)
+        name = LXMFPeerTracker.decode_display_name(app_data)
     except Exception:
-        return ""
+        name = ""
+    _recalled_name_cache[hash_hex] = (name, now)
+    return name
 
 
 def _conversation_entries() -> list:

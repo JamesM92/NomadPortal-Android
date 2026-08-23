@@ -43,6 +43,19 @@ import kotlinx.coroutines.flow.flowOn
  * more often under real GC pressure — this fired constantly, exactly the same class of
  * bug already found once this session in BrowserScreen.kt's refreshLive(). Cancellation
  * must always rethrow; only a genuine fetch failure gets logged and retried.
+ *
+ * Widened `catch (e: Exception)` to `catch (t: Throwable)` (still rethrowing
+ * CancellationException first) after a live device investigation: a `conversations()`
+ * poll processing ~1900 real LXMF peers on a memory-constrained phone showed zero
+ * emissions, zero "Poll tick failed" warnings anywhere in the log, and no crash --
+ * consistent with an uncaught `OutOfMemoryError` silently killing that one poll
+ * coroutine. `OutOfMemoryError` is a `Throwable`/`Error`, not an `Exception` -- a real
+ * JVM class-hierarchy gap the original catch couldn't close no matter how correct its
+ * own logic was. The same resilience reasoning applies here as to an ordinary fetch
+ * failure: skip this tick, log it, retry after the normal interval -- by the next tick,
+ * memory pressure may have eased and GC may have already reclaimed the failed attempt's
+ * garbage, exactly the kind of transient condition a poll loop should ride out rather
+ * than die to permanently.
  */
 fun <T> pollingFlow(intervalMs: Long, fetch: suspend () -> T): Flow<T> = flow {
     while (true) {
@@ -50,8 +63,8 @@ fun <T> pollingFlow(intervalMs: Long, fetch: suspend () -> T): Flow<T> = flow {
             emit(fetch())
         } catch (e: CancellationException) {
             throw e
-        } catch (e: Exception) {
-            Log.w("PollingFlow", "Poll tick failed, retrying in ${intervalMs}ms", e)
+        } catch (t: Throwable) {
+            Log.w("PollingFlow", "Poll tick failed, retrying in ${intervalMs}ms", t)
         }
         delay(intervalMs)
     }

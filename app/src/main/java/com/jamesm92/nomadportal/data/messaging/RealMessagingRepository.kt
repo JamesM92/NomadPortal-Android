@@ -288,6 +288,13 @@ class RealMessagingRepository(private val settings: SettingsRepository) : Messag
         return parseContact(JSONObject(json))
     }
 
+    // Real bug found via a live device investigation (2026-08-22, direct adb access to a
+    // physical phone -- not a log guess): get_conversations_json() was measured taking
+    // over 100 *seconds* per call on a device with ~1900 known LXMF peers, and getting
+    // worse over the session. Not a threading/UI bug -- see
+    // orchestrator.py's _recall_announced_name() doc comment for the real algorithmic
+    // fix (a per-hash TTL cache instead of redoing an expensive RNS lookup for every
+    // chronically-nameless peer on every single poll tick, forever).
     private fun fetchConversations(): List<ConversationSummary> {
         val array = JSONArray(orchestrator.callAttr("get_conversations_json").toString())
         return (0 until array.length()).map { i ->
