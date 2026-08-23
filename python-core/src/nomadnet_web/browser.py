@@ -208,10 +208,21 @@ class NodeBrowser:
         self._favorites: dict = {}
         self._hosted_hash: str = ""  # set externally after SiteServer starts
         self._hosted_name: str = ""  # authoritative name; overrides cached value
-        # Lifetime byte totals per interface name, accumulated across restarts.
-        # Value = total bytes from all completed sessions (not including current session).
-        # Saved to disk as base + current session so a restart continues correctly.
+        # Lifetime byte totals per interface name, accumulated across restarts
+        # PLUS every interface name that has disconnected sometime *during*
+        # the current session (see get_status()'s own doc comment). Value =
+        # total bytes from everything before the interface's *current*
+        # continuous live stretch -- for a still-connected interface this
+        # stays exactly what was loaded from disk at startup (0 for a name
+        # never seen before); it only gets updated, once, at the moment
+        # that name actually drops out of RNS.Transport.interfaces.
         self._iface_base: dict = {}   # {name: {"rxb": int, "txb": int}}
+        # Latest known life totals for interfaces that are *currently* live,
+        # recomputed fresh every get_status() call -- see that method's own
+        # doc comment for why this can't just be folded into _iface_base
+        # on every poll (it would double-count the still-growing live
+        # session total each time). Only ever touched by get_status().
+        self._iface_last_live: dict = {}   # {name: {"rxb": int, "txb": int}}
         self._blocklist: set  = set()
         self._blocklist_file = os.path.join(
             os.path.dirname(self._nodes_file), "blocklist.json"
@@ -987,18 +998,49 @@ class NodeBrowser:
             return dict(r) if r else None
 
     def get_status(self) -> dict:
+        """Live status snapshot -- node/interface counts and per-interface
+        session + lifetime byte totals.
+
+        Real bug, found via a live capture: this used to build a throwaway
+        snapshot of *only* the interfaces currently in
+        RNS.Transport.interfaces and persist exactly that dict, wholesale-
+        overwriting iface_stats.json every call. That's harmless for one
+        long-lived TCP/AutoInterface object that stays registered all
+        session, but RnsBleNeighborInterface is created/destroyed per
+        neighbor per connect/disconnect (a real, frequent event on
+        Bluetooth mesh -- see MeshTransport's own churn handling), so every
+        time a neighbor unlinked, the next poll would drop its name from
+        the snapshot and overwrite the file without it, permanently
+        erasing that neighbor's accumulated lifetime bytes.
+
+        Fix, and a real mistake caught by this file's own test suite before
+        it shipped: folding a currently-live interface's life total into
+        `_iface_base` on *every* poll looks like the obvious fix, but it
+        isn't -- `sess_rxb`/`sess_txb` are the live object's own *cumulative
+        session* counters (not a delta since the last poll), so `_iface_base`
+        would already contain last poll's contribution, and adding this
+        poll's still-cumulative sess_rxb on top of that double-counts it,
+        compounding worse every poll. `_iface_base` must stay frozen for a
+        continuously-live interface (exactly what was loaded from disk at
+        startup, same as before this fix) and only ever gets a name's entry
+        written once, at the real moment that name actually drops out of
+        RNS.Transport.interfaces -- `_iface_last_live` is what tracks each
+        currently-live name's latest total between polls so that moment can
+        be detected and committed.
+        """
         RNS = self._rns
         interfaces = []
-        iface_snapshot: dict = {}
+        current_names: set = set()
         try:
             for iface in RNS.Transport.interfaces:
                 name     = getattr(iface, "name", str(iface))
+                current_names.add(name)
                 sess_rxb = getattr(iface, "rxb", getattr(iface, "rx_bytes", 0)) or 0
                 sess_txb = getattr(iface, "txb", getattr(iface, "tx_bytes", 0)) or 0
                 base     = self._iface_base.get(name, {"rxb": 0, "txb": 0})
                 life_rxb = base["rxb"] + sess_rxb
                 life_txb = base["txb"] + sess_txb
-                iface_snapshot[name] = {"rxb": life_rxb, "txb": life_txb}
+                self._iface_last_live[name] = {"rxb": life_rxb, "txb": life_txb}
                 interfaces.append({
                     "name":      name,
                     "online":    getattr(iface, "online", None),
@@ -1007,11 +1049,20 @@ class NodeBrowser:
                     "life_rxb":  life_rxb,
                     "life_txb":  life_txb,
                 })
+
+            # Commit anything that was live last poll but has vanished
+            # since -- its object is gone, but its last-known life total is
+            # safe to fold into the permanent base now, before it's lost.
+            vanished = set(self._iface_last_live) - current_names
+            for name in vanished:
+                self._iface_base[name] = self._iface_last_live.pop(name)
         except Exception:
             pass
 
-        if iface_snapshot:
-            self._save_iface_stats(iface_snapshot)
+        if self._iface_base or self._iface_last_live:
+            snapshot = dict(self._iface_base)
+            snapshot.update(self._iface_last_live)
+            self._save_iface_stats(snapshot)
 
         with self._lock:
             return {

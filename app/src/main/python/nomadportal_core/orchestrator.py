@@ -2456,9 +2456,22 @@ def get_interface_byte_stats_json() -> str:
     "rnode": {...}, "wifi_discovery": {...}}` — a key is present only if
     at least one currently- or ever-attached interface of that type has
     contributed bytes; a missing key means "no history yet", not an
-    error (Kotlin side treats it as 0/0)."""
+    error (Kotlin side treats it as 0/0).
+
+    Real bug found+fixed via a live capture (bluetooth_mesh reporting
+    "0 B received" on a device with several actively-connected, actively-
+    receiving neighbors): the main loop below only sums *currently live*
+    `RNS.Transport.interfaces`, which is correct for TCP/AutoInterface
+    (one long-lived object for the whole session) but wrong for Bluetooth
+    mesh, where each `RnsBleNeighborInterface` only exists in that list
+    while its neighbor is actually linked. A second pass over
+    `_browser._iface_base` (see this function's own body) folds in every
+    disconnected-but-previously-recorded `RnsBleNeighborInterface[...]`
+    entry too, so a neighbor's contribution survives its own disconnect
+    instead of vanishing from the grouped total the moment it churns."""
     import json
     totals: dict = {}
+    accounted_names: set = set()
     if _browser is not None and getattr(_browser, "_rns", None) is not None:
         RNS = _browser._rns
         try:
@@ -2467,12 +2480,40 @@ def get_interface_byte_stats_json() -> str:
                 if key is None:
                     continue
                 name = getattr(iface, "name", str(iface))
+                accounted_names.add(name)
                 sess_rxb = getattr(iface, "rxb", getattr(iface, "rx_bytes", 0)) or 0
                 sess_txb = getattr(iface, "txb", getattr(iface, "tx_bytes", 0)) or 0
                 base = _browser._iface_base.get(name, {"rxb": 0, "txb": 0})
                 bucket = totals.setdefault(key, {"rxb": 0, "txb": 0})
                 bucket["rxb"] += base.get("rxb", 0) + sess_rxb
                 bucket["txb"] += base.get("txb", 0) + sess_txb
+
+            # Real gap this closes: a Bluetooth-mesh neighbor's own
+            # RnsBleNeighborInterface only exists in RNS.Transport.interfaces
+            # while that neighbor is actually linked -- it's created on
+            # NeighborLinked and detached+removed on NeighborUnlinked (see
+            # rns_ble_interface.py's BleNeighborInterfaceManager). The loop
+            # above, by design, only sums *currently live* interfaces, so a
+            # disconnected neighbor's own history -- now correctly preserved
+            # forever in _iface_base by get_status()'s own fix (see that
+            # function's doc comment in browser.py) -- would otherwise never
+            # be added back into this grouped total, permanently
+            # undercounting "bluetooth_mesh" the moment any neighbor churns,
+            # even though nothing was actually lost on disk anymore. Every
+            # RnsBleNeighborInterface names itself
+            # "RnsBleNeighborInterface[<neighbor_id>]" (see that class's own
+            # __init__), a reliable, self-describing prefix that doesn't
+            # need a live object to recognize -- unlike TCP/AutoInterface,
+            # which don't reuse this same short-lived-instance pattern and
+            # so aren't affected by this particular gap.
+            for name, base in _browser._iface_base.items():
+                if name in accounted_names:
+                    continue
+                if not name.startswith("RnsBleNeighborInterface["):
+                    continue
+                bucket = totals.setdefault("bluetooth_mesh", {"rxb": 0, "txb": 0})
+                bucket["rxb"] += base.get("rxb", 0)
+                bucket["txb"] += base.get("txb", 0)
         except Exception as exc:
             log.warning("get_interface_byte_stats_json failed: %s", exc)
     return json.dumps(totals)
