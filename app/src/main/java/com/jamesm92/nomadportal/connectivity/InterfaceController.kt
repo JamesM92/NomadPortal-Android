@@ -65,6 +65,16 @@ data class BluetoothMeshStatus(
      * existed to back it). Empty list, not null, when nothing's
      * currently in range. */
     val neighbors: List<BluetoothNeighbor>,
+    /** Real gap found via a live 30+ minute Android Bluetooth-stack bug (every new
+     * connectGatt() attempt failing instantly, regardless of peer — see
+     * `com.jamesm92.rnsble.mesh.StuckRadioDetector`'s own doc comment) that a mesh-role
+     * restart alone couldn't clear. `System.currentTimeMillis()` of the most recent
+     * `PacketEvent.RadioNeedsManualReset` this device has seen, or null if none yet (or
+     * if it's since self-recovered — see `BluetoothMeshManager`'s own doc comment for
+     * when this gets cleared). This device genuinely cannot toggle the system Bluetooth
+     * radio itself on Android 13+ (`BLUETOOTH_PRIVILEGED` is system-app-only) — a
+     * non-null value here is a real "ask the user" signal, not just diagnostic noise. */
+    val radioNeedsManualResetAtMillis: Long? = null,
 )
 
 /** One currently-in-range Bluetooth-mesh neighbor. [id] is the raw

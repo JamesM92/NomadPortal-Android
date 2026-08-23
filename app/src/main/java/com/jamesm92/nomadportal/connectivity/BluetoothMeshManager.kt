@@ -107,6 +107,13 @@ class BluetoothMeshManager(
 
     private data class NeighborInfo(val lastSeenAtMillis: Long, val rssi: Int)
 
+    // See BluetoothMeshStatus.radioNeedsManualResetAtMillis's own doc comment. Cleared
+    // the moment real activity resumes (a fresh NeighborSeen) -- the same real signal
+    // MeshTransport's own StuckRadioDetector uses on the RNS_BLE_Wrapper side to know the
+    // radio has genuinely recovered, mirrored here since this class has no reach across
+    // the service/Chaquopy boundary into that class's own internal state.
+    private var radioNeedsManualResetAtMillis: Long? = null
+
     private val serviceConnection = object : ServiceConnection {
         override fun onServiceConnected(name: ComponentName?, binder: IBinder?) {
             val bridge = (binder as? RnsBleForegroundService.LocalBinder)?.getBridge()
@@ -133,12 +140,22 @@ class BluetoothMeshManager(
             eventsJob = scope.launch {
                 launch {
                     bridge.events.collect { event ->
-                        if (event is PacketEvent.NeighborSeen) {
-                            val now = System.currentTimeMillis()
-                            neighborInfo[event.neighborId] = NeighborInfo(now, event.rssi)
-                            lastActivityAtMillis = now
-                            recordLifetimeNeighborIfNew(event.neighborId)
-                            publishStatus()
+                        when (event) {
+                            is PacketEvent.NeighborSeen -> {
+                                val now = System.currentTimeMillis()
+                                neighborInfo[event.neighborId] = NeighborInfo(now, event.rssi)
+                                lastActivityAtMillis = now
+                                recordLifetimeNeighborIfNew(event.neighborId)
+                                // A real sighting is direct proof the radio has recovered
+                                // (or was never actually stuck) -- clear any pending notice.
+                                radioNeedsManualResetAtMillis = null
+                                publishStatus()
+                            }
+                            is PacketEvent.RadioNeedsManualReset -> {
+                                radioNeedsManualResetAtMillis = System.currentTimeMillis()
+                                publishStatus()
+                            }
+                            else -> Unit
                         }
                     }
                 }
@@ -163,6 +180,7 @@ class BluetoothMeshManager(
             eventsJob = null
             neighborInfo.clear()
             lastActivityAtMillis = null
+            radioNeedsManualResetAtMillis = null
             publishStatus()
         }
     }
@@ -186,6 +204,7 @@ class BluetoothMeshManager(
             neighbors = neighborInfo.map { (id, info) ->
                 BluetoothNeighbor(id = id, rssi = info.rssi, lastSeenAtMillis = info.lastSeenAtMillis)
             },
+            radioNeedsManualResetAtMillis = radioNeedsManualResetAtMillis,
         )
     }
 
@@ -227,6 +246,7 @@ class BluetoothMeshManager(
         eventsJob = null
         neighborInfo.clear()
         lastActivityAtMillis = null
+        radioNeedsManualResetAtMillis = null
         // lifetimeNeighborIds deliberately NOT cleared here — stopping
         // Bluetooth mesh (or the service disconnecting) isn't "this
         // device has never met these neighbors," the whole point of

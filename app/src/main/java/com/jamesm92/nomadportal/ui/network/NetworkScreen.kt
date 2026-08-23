@@ -1,5 +1,8 @@
 package com.jamesm92.nomadportal.ui.network
 
+import android.content.ActivityNotFoundException
+import android.content.Intent
+import android.provider.Settings
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -33,6 +36,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
@@ -173,6 +177,19 @@ fun NetworkScreen(
     var interfacesOpen by remember { mutableStateOf(false) }
     var announcesOpen by remember { mutableStateOf(true) }
 
+    // Real gap found via a live 30+ minute Android Bluetooth-stack bug (see
+    // BluetoothMeshStatus.radioNeedsManualResetAtMillis's own doc comment) that this
+    // app's own automatic mesh-role restart couldn't clear — this device genuinely
+    // cannot toggle the system Bluetooth radio itself on Android 13+, so surfacing it
+    // here is the real, achievable "ask the user" step. Tracked by timestamp, not a
+    // plain boolean, so dismissing one occurrence doesn't silently suppress a later,
+    // genuinely new one — see the dialog's own onDismiss.
+    var dismissedRadioResetAtMillis by remember { mutableStateOf<Long?>(null) }
+    val radioNeedsManualResetAtMillis = bluetoothMeshStatus.radioNeedsManualResetAtMillis
+    if (radioNeedsManualResetAtMillis != null && radioNeedsManualResetAtMillis != dismissedRadioResetAtMillis) {
+        RadioNeedsManualResetDialog(onDismiss = { dismissedRadioResetAtMillis = radioNeedsManualResetAtMillis })
+    }
+
     Scaffold(
         topBar = { AdaptiveTopAppBar(title = { Text("Network") }) },
     ) { innerPadding ->
@@ -303,6 +320,50 @@ fun NetworkScreen(
             )
         }
     }
+}
+
+/**
+ * Real gap found via a live 30+ minute Android Bluetooth-stack bug: every new BLE
+ * connection attempt can start failing instantly (status 133/`GATT_ERROR` observed
+ * live) regardless of which peer, while an already-established connection keeps
+ * working fine — see `com.jamesm92.rnsble.mesh.StuckRadioDetector`'s own doc comment
+ * for the full story. This app's own automatic mesh-role restart is the one recovery
+ * step within its reach; if the radio is *still* stuck after that, this dialog is the
+ * real, honest next step — a genuine user-driven Bluetooth toggle, since regular apps
+ * (this one included) can't touch the system radio directly on Android 13+
+ * (`BluetoothAdapter.disable()`/`enable()` require `BLUETOOTH_PRIVILEGED`, a
+ * system-app-only permission).
+ */
+@Composable
+private fun RadioNeedsManualResetDialog(onDismiss: () -> Unit) {
+    val context = LocalContext.current
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Bluetooth mesh needs a reset") },
+        text = {
+            Text(
+                "Bluetooth mesh had trouble connecting to new devices and " +
+                    "restarted itself, but the problem is still there — this looks " +
+                    "like Android's own Bluetooth radio getting stuck, not " +
+                    "something this app can fix on its own. Turning Bluetooth off " +
+                    "and back on (in your phone's Bluetooth settings) usually " +
+                    "clears it right away.",
+            )
+        },
+        confirmButton = {
+            TextButton(onClick = {
+                try {
+                    context.startActivity(Intent(Settings.ACTION_BLUETOOTH_SETTINGS))
+                } catch (e: ActivityNotFoundException) {
+                    // Best-effort — a device with no Bluetooth settings screen
+                    // shouldn't crash this dialog; the user can still dismiss and
+                    // toggle it themselves through whatever path their device offers.
+                }
+                onDismiss()
+            }) { Text("Open Bluetooth settings") }
+        },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Dismiss") } },
+    )
 }
 
 @Composable
