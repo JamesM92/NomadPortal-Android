@@ -2,8 +2,11 @@ package com.jamesm92.nomadportal.data.calling
 
 import com.chaquo.python.Python
 import com.jamesm92.nomadportal.data.pollingFlow
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.SharingStarted
+import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.withContext
 import org.json.JSONArray
 import org.json.JSONObject
@@ -14,12 +17,39 @@ import org.json.JSONObject
  * `dismiss_call_json`/`get_call_status_json`) — same JSON-string bridge
  * convention as every other repository in this app.
  */
-class RealCallRepository : CallRepository {
+class RealCallRepository(private val scope: CoroutineScope) : CallRepository {
     private val orchestrator by lazy {
         Python.getInstance().getModule("nomadportal_core.orchestrator")
     }
 
-    override fun callState(): Flow<CallState> = pollingFlow(POLL_INTERVAL_MS) { fetchState() }
+    // Real bug found via a device report of persistent app-wide UI lag ("same
+    // everywhere", not tied to any specific data-heavy screen) that survived two
+    // real fixes to the BLE frame-processing pipeline: callState() is collected
+    // independently in at least two always-active places -- NomadNavHost (for the
+    // in-call UI) and CallAudioEngine's own init block (to start/stop audio).
+    // pollingFlow() is a cold Flow, so each independent collector used to start
+    // its own separate 500ms polling loop -- the fastest interval anywhere in this
+    // app (every other repository polls at 1000-4000ms) -- meaning at least two
+    // full get_call_status_json() Chaquopy round-trips (JSON serialize on the
+    // Python side, string-cross-boundary, JSONObject parse + object allocation on
+    // the Kotlin side) were happening *every single call*, twice, forever, for the
+    // entire app session, regardless of which screen was visible. Under real GIL
+    // contention from heavy background BLE/announce processing (confirmed this
+    // same session), doubling the single most frequent Python round-trip in the
+    // app is a real, concrete, always-on tax -- a plausible contributor to lag
+    // that shows up on every screen rather than just data-heavy ones.
+    //
+    // stateIn() with WhileSubscribed makes every caller of callState() share one
+    // real underlying poll loop instead of each starting an independent one --
+    // the fix is applied here, once, rather than at each of the (currently two,
+    // possibly more in the future) call sites, so a new caller can never
+    // accidentally reintroduce a duplicate poll.
+    private val sharedCallState: Flow<CallState> by lazy {
+        pollingFlow(POLL_INTERVAL_MS) { fetchState() }
+            .stateIn(scope, SharingStarted.WhileSubscribed(5_000L), CallState.IDLE)
+    }
+
+    override fun callState(): Flow<CallState> = sharedCallState
 
     private fun fetchState(): CallState {
         val obj = JSONObject(orchestrator.callAttr("get_call_status_json").toString())

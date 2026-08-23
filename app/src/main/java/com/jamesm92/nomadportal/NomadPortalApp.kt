@@ -222,7 +222,7 @@ class NomadPortalApp : Application() {
         // repositories above: every bridge function degrades to an
         // idle/no-op result rather than erroring while _call_manager is
         // still None.
-        callRepository = RealCallRepository()
+        callRepository = RealCallRepository(appScope)
         // Starts/stops itself automatically off callRepository's own
         // state — see CallAudioEngine's own doc comment. No further
         // wiring needed; constructing it is enough.
