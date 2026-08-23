@@ -26,6 +26,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
@@ -64,7 +65,9 @@ import com.jamesm92.nomadportal.ui.theme.NomadAccent2
 import com.jamesm92.nomadportal.ui.theme.NomadIdenticonRingRelay
 import com.jamesm92.nomadportal.ui.theme.NomadTextDim
 import com.jamesm92.nomadportal.ui.theme.NomadWarn
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 /**
  * Interface/connection status, plus — per explicit direction, a Columba
@@ -715,36 +718,51 @@ private fun AnnouncesSectionBody(
     // since a propagation node isn't a "thing you'd chat with or browse
     // to" the way a Peer/Site is, and Audio is a capability filter on
     // Peers rather than a genuinely new item type.
-    val combined: List<AnnounceItem> = remember(conversations, nodes, relays, typeFilter) {
-        when (typeFilter) {
-            AnnounceTypeFilter.RELAYS -> relays.map { AnnounceItem.Relay(it) }
-            AnnounceTypeFilter.AUDIO -> conversations
-                .filter { it.contact.isCallCapable }
-                .map { AnnounceItem.Peer(it) }
-            AnnounceTypeFilter.PEERS -> conversations.map { AnnounceItem.Peer(it) }
-            AnnounceTypeFilter.SITES -> nodes.map { AnnounceItem.Site(it) }
-            AnnounceTypeFilter.ALL -> conversations.map { AnnounceItem.Peer(it) } + nodes.map { AnnounceItem.Site(it) }
+    //
+    // Real on-device report ("scrolling the network list occasionally lags"): with a
+    // real announce count in the thousands, this map+filter+sort chain — previously
+    // plain `val`s recomputed synchronously on the main thread on every recomposition —
+    // is real, non-trivial work that could land on the exact same frame as an active
+    // scroll gesture, competing with it for main-thread time. produceState moves the
+    // actual computation to Dispatchers.Default, so it can never contend with scroll
+    // rendering; only the final, already-sorted list touches the main thread.
+    // rememberStableOrder (a real Composable, can't run inside produceState's own
+    // suspend block) is still applied to the result afterward, same as before.
+    val computed by produceState(
+        initialValue = emptyList(),
+        conversations, nodes, relays, typeFilter, searchQuery, networkFilter, announceInterfaces, sortOption,
+    ) {
+        value = withContext(Dispatchers.Default) {
+            val combined: List<AnnounceItem> = when (typeFilter) {
+                AnnounceTypeFilter.RELAYS -> relays.map { AnnounceItem.Relay(it) }
+                AnnounceTypeFilter.AUDIO -> conversations
+                    .filter { it.contact.isCallCapable }
+                    .map { AnnounceItem.Peer(it) }
+                AnnounceTypeFilter.PEERS -> conversations.map { AnnounceItem.Peer(it) }
+                AnnounceTypeFilter.SITES -> nodes.map { AnnounceItem.Site(it) }
+                AnnounceTypeFilter.ALL -> conversations.map { AnnounceItem.Peer(it) } + nodes.map { AnnounceItem.Site(it) }
+            }
+            val searched = if (searchQuery.isBlank()) {
+                combined
+            } else {
+                combined.filter {
+                    it.displayName.contains(searchQuery, ignoreCase = true) || it.hash.contains(searchQuery, ignoreCase = true)
+                }
+            }
+            val filtered = if (networkFilter == NetworkFilter.ALL) {
+                searched
+            } else {
+                searched.filter { announceInterfaces[it.hash] == networkFilter.key }
+            }
+            when (sortOption) {
+                SortOption.RECENT -> filtered.sortedByDescending { it.lastAnnounceMillis }
+                SortOption.ALPHABETICAL -> filtered.sortedBy { it.displayName.lowercase() }
+                SortOption.HOPS -> filtered.sortedBy { if (it.hopCount < 0) Int.MAX_VALUE else it.hopCount }
+                SortOption.ANNOUNCES -> filtered.sortedByDescending { it.announceCount }
+            }
         }
     }
-    val searched = if (searchQuery.isBlank()) {
-        combined
-    } else {
-        combined.filter {
-            it.displayName.contains(searchQuery, ignoreCase = true) || it.hash.contains(searchQuery, ignoreCase = true)
-        }
-    }
-    val filtered = if (networkFilter == NetworkFilter.ALL) {
-        searched
-    } else {
-        searched.filter { announceInterfaces[it.hash] == networkFilter.key }
-    }
-    val sorted = when (sortOption) {
-        SortOption.RECENT -> filtered.sortedByDescending { it.lastAnnounceMillis }
-        SortOption.ALPHABETICAL -> filtered.sortedBy { it.displayName.lowercase() }
-        SortOption.HOPS -> filtered.sortedBy { if (it.hopCount < 0) Int.MAX_VALUE else it.hopCount }
-        SortOption.ANNOUNCES -> filtered.sortedByDescending { it.announceCount }
-    }
-    val displayed = rememberStableOrder(sorted, key = { it.stableKey() })
+    val displayed = rememberStableOrder(computed, key = { it.stableKey() })
 
     fun toggleFavorite(item: AnnounceItem) {
         scope.launch {
