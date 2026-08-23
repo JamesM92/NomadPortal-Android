@@ -27,6 +27,23 @@ val nomadPortalGitSha = gitShortSha(rootDir)
 val rnsBleWrapperDir = File(rootDir, System.getenv("RNS_BLE_WRAPPER_DIR") ?: "../RNS_BLE_Wrapper")
 val rnsBleWrapperGitSha = gitShortSha(rnsBleWrapperDir)
 
+// Real gap found via a real live mixup: a debug install can silently fail to actually
+// replace the running binary (Android's package installer can treat "same versionCode
+// already installed" as an update-not-needed no-op when installed via a file manager/
+// browser tap rather than `adb install -r`, since every debug build here shares
+// versionCode 2) -- the *only* way anyone caught that was the in-app debug log's own
+// GIT_SHA header not matching what was expected. That header is precise but not
+// glanceable; this is the same fact surfaced where a tester would actually look first.
+// A plain incrementing counter (not a git SHA) on purpose -- mirrors the
+// apk-delivery-location memory's own build-number scheme exactly, bump this file by 1
+// every time a numbered build actually gets uploaded, whether or not the code changed
+// since the last one, same discipline as that memory file's own counter.
+val buildNumber = try {
+    File(rootDir, "build_number.txt").readText().trim().ifBlank { "unknown" }
+} catch (e: Exception) {
+    "unknown"
+}
+
 android {
     namespace = "com.jamesm92.nomadportal"
     // compileSdk 37: Chaquopy 17.0's own demo pins compileSdk 36, but that
@@ -64,6 +81,7 @@ android {
 
         buildConfigField("String", "GIT_SHA", "\"$nomadPortalGitSha\"")
         buildConfigField("String", "RNSBLE_GIT_SHA", "\"$rnsBleWrapperGitSha\"")
+        buildConfigField("String", "BUILD_NUMBER", "\"$buildNumber\"")
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
 

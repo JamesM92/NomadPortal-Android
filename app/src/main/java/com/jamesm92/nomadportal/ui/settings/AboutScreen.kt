@@ -33,6 +33,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
+import com.jamesm92.nomadportal.BuildConfig
 import com.jamesm92.nomadportal.ui.components.AdaptiveTopAppBar
 import com.jamesm92.nomadportal.ui.components.CompactIconButton
 import com.jamesm92.nomadportal.ui.components.TentPortalMark
@@ -123,6 +124,18 @@ fun AboutScreen(onBack: () -> Unit) {
             Text(
                 text = "Version ${packageInfo.versionName} · Beta",
                 style = MaterialTheme.typography.bodyMedium,
+                color = NomadTextDim,
+            )
+            // Real gap found via a live install mixup: Android's package installer can
+            // silently skip replacing an already-installed debug build when its
+            // versionCode hasn't changed (every debug build here shares versionCode 2),
+            // so "which build am I actually running" wasn't otherwise answerable without
+            // exporting the full debug log and checking its GIT_SHA header. Same plain
+            // incrementing counter as that header and the apk-delivery-location memory's
+            // own build-number scheme -- just surfaced where a tester looks first.
+            Text(
+                text = "Build ${BuildConfig.BUILD_NUMBER}",
+                style = MaterialTheme.typography.bodySmall,
                 color = NomadTextDim,
             )
             Text(

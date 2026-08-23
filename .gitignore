@@ -18,6 +18,12 @@ local.properties
 
 ## Claude Code local session/tool-permission state (machine-specific)
 .claude/
+
+## Real exported debug logs collected from test devices during live
+## diagnostics — contains real peer identity hashes/LXMF addresses/RSSI
+## data from actual nearby strangers' devices, never something a commit
+## should carry.
+debug_logs/
 .navigation/
 captures/
 .externalNativeBuild/

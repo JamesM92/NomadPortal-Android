@@ -54,11 +54,16 @@ object DebugLogExporter {
      * log with no header gives no way to tell which of several near-identical test
      * builds it actually came from. `BuildConfig.GIT_SHA`/`RNSBLE_GIT_SHA` are populated
      * at Gradle configuration time from each repo's own real `git rev-parse --short
-     * HEAD` (see app/build.gradle.kts). */
+     * HEAD` (see app/build.gradle.kts). `BUILD_NUMBER` is the same plain incrementing
+     * counter AboutScreen shows -- added after a real live mixup where a stale debug
+     * install (Android's installer silently no-op'ing an "update" whose versionCode
+     * hadn't changed) was only caught by this header's own SHAs not matching what was
+     * expected; the plain counter is the more glanceable version of that same fact. */
     private fun logHeader(): String {
         val timestamp = java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss", java.util.Locale.US)
             .format(java.util.Date())
-        return "NomadPortal-Android ${BuildConfig.VERSION_NAME} (versionCode ${BuildConfig.VERSION_CODE}) " +
+        return "NomadPortal-Android ${BuildConfig.VERSION_NAME} (versionCode ${BuildConfig.VERSION_CODE}, " +
+            "build ${BuildConfig.BUILD_NUMBER}) " +
             "-- nomadportal-android@${BuildConfig.GIT_SHA} rnsble@${BuildConfig.RNSBLE_GIT_SHA} " +
             "-- captured $timestamp\n" +
             "----------------------------------------------------------------\n"
