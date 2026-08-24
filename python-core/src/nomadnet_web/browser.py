@@ -228,6 +228,22 @@ class NodeBrowser:
         # comment for the pathology this closes.
         self._nodes_dirty = False
         self._nodes_dirty_lock = threading.Lock()
+
+        # Cheap poll-invalidation counter -- deliberately separate from
+        # _nodes_dirty above (that one's about disk persistence, this one's
+        # about "has anything get_nodes() would return actually changed").
+        # RealBrowserRepository.kt's discoveredNodes() poll checks this via
+        # get_nodes_version() (a trivial int, no lock contention with the
+        # real work) before paying for get_nodes_json()'s full
+        # copy-every-record-and-json.dumps() — a real, measured source of
+        # continuous GC pressure once a device has a few hundred discovered
+        # nodes, since that used to run unconditionally every poll tick
+        # regardless of whether anything changed. Bumped from every real
+        # mutation site below, plus set_favorite()'s user_sub branch
+        # (which intentionally does NOT call _mark_nodes_dirty — favorites
+        # persist through a separate path — so it needs its own bump here).
+        self._nodes_version = 0
+        self._nodes_version_lock = threading.Lock()
         self._nodes_stop_event = threading.Event()
         threading.Thread(
             target=self._nodes_persist_loop,
@@ -1979,6 +1995,11 @@ class NodeBrowser:
                 node["favorited"] = value
         if user_sub:
             self._persist_favorites(fav_snapshot)
+            # Doesn't touch self.nodes, so _mark_nodes_dirty() above never
+            # runs for this branch — but get_nodes()'s "favorited" field
+            # still depends on this, so the poll-invalidation counter
+            # needs its own explicit bump here too.
+            self._bump_nodes_version()
         else:
             self._mark_nodes_dirty()
         return True
@@ -2205,6 +2226,21 @@ class NodeBrowser:
         """
         with self._nodes_dirty_lock:
             self._nodes_dirty = True
+        self._bump_nodes_version()
+
+    def _bump_nodes_version(self) -> None:
+        """See _nodes_version's own comment (near __init__) for why this
+        exists. Cheap and lock-scoped tightly — safe to call from any
+        thread, as often as needed."""
+        with self._nodes_version_lock:
+            self._nodes_version += 1
+
+    def get_nodes_version(self) -> int:
+        """RealBrowserRepository.kt's poll checks this before paying for
+        get_nodes()/get_nodes_json()'s full rebuild — see _nodes_version's
+        own comment."""
+        with self._nodes_version_lock:
+            return self._nodes_version
 
     def _nodes_persist_loop(self) -> None:
         """Background thread: every ``NODES_PERSIST_INTERVAL_S`` seconds,
