@@ -1524,16 +1524,35 @@ def _make_auto_interface():
 # ---------------------------------------------------------------------------
 
 def get_nodes_version() -> int:
-    """Cheap poll-invalidation counter — see NodeBrowser._nodes_version's
-    own doc comment in browser.py. RealBrowserRepository.kt's
-    discoveredNodes() poll calls this first and only pays for
-    get_nodes_json()'s full copy-every-record-and-json.dumps() when it's
-    actually changed since the last tick — a real fix for continuous GC
-    pressure/jank observed live once a device has a few hundred
-    discovered nodes and this used to run unconditionally every 4s."""
+    """Cheap standalone read of NodeBrowser._nodes_version — see that
+    field's own doc comment in browser.py. RealBrowserRepository.kt's
+    actual poll uses get_nodes_delta_json() below (which calls this
+    itself as its own baseline check); this is kept as a small, cheap,
+    independently-callable primitive, not currently on Kotlin's hot
+    path."""
     if _browser is None:
         return 0
     return _browser.get_nodes_version()
+
+
+def get_nodes_delta_json(since_version: int) -> str:
+    """Incremental sibling of get_nodes_json() below — see
+    NodeBrowser.get_nodes_delta's own doc comment for the full design
+    and the real, live-measured problem it exists to fix (a busy
+    network — ~1 real announce/sec observed on one device — meant a
+    plain "skip if version unchanged" check almost never got to skip,
+    so the full O(n) rebuild kept firing on nearly every poll tick once
+    the node count grew past a couple thousand).
+
+    Returns a JSON object: {"version": int, "full": bool, "nodes": [...]}.
+    RealBrowserRepository.kt calls this with the version it last saw;
+    when "full" is true, "nodes" is a complete replacement (first poll,
+    or an unrecognized baseline); otherwise it's just what changed since
+    then, for the caller to merge into what it already has."""
+    import json
+    if _browser is None:
+        return json.dumps({"version": 0, "full": True, "nodes": []})
+    return json.dumps(_browser.get_nodes_delta(since_version, user_sub=_active_user_sub))
 
 
 def get_nodes_json() -> str:
