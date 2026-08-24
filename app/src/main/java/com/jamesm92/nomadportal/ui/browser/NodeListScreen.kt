@@ -5,6 +5,7 @@ import androidx.compose.animation.animateContentSize
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
@@ -22,6 +23,7 @@ import androidx.compose.material.icons.filled.ExpandLess
 import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.filled.FavoriteBorder
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
@@ -52,6 +54,7 @@ import com.jamesm92.nomadportal.panicwipe.PanicWipe
 import com.jamesm92.nomadportal.ui.components.AddByAddressDialog
 import com.jamesm92.nomadportal.ui.components.AdaptiveTopAppBar
 import com.jamesm92.nomadportal.ui.components.Identicon
+import com.jamesm92.nomadportal.ui.components.LoadMoreTrigger
 import com.jamesm92.nomadportal.ui.components.PanicWipeLogo
 import com.jamesm92.nomadportal.ui.components.SearchField
 import com.jamesm92.nomadportal.ui.components.SortDropdown
@@ -59,6 +62,7 @@ import com.jamesm92.nomadportal.ui.components.SortOption
 import com.jamesm92.nomadportal.ui.components.dismissKeyboardOnTap
 import com.jamesm92.nomadportal.ui.components.hexToByteArray
 import com.jamesm92.nomadportal.ui.components.rememberStableOrder
+import com.jamesm92.nomadportal.ui.components.rememberWindowedList
 import com.jamesm92.nomadportal.ui.theme.NomadAccent2
 import com.jamesm92.nomadportal.ui.theme.NomadError
 import com.jamesm92.nomadportal.ui.theme.NomadPortalPurple
@@ -170,13 +174,22 @@ fun NodeListScreen(
 
     // Filters name and hash (a user may search by either) — applied
     // before the Favorites/Announces-heard split so a search still
-    // respects that split, not a flat re-merged result.
-    val filteredNodes = if (searchQuery.isBlank()) {
-        effectiveNodes
-    } else {
-        effectiveNodes.filter {
-            it.displayName.contains(searchQuery, ignoreCase = true) ||
-                it.hash.contains(searchQuery, ignoreCase = true)
+    // respects that split, not a flat re-merged result. remember()'d —
+    // see NetworkScreen.kt's identical fix (and its own doc comment,
+    // and the nomadportal-android-sites-gc-storm-fix memory) for the
+    // real, live-measured bug this closes: an unmemoized sort/filter
+    // recomputed on every recomposition (including every poll tick, not
+    // just an actual search/sort change) over a list that can run into
+    // the hundreds costs real, directly measured multi-second
+    // main-thread stalls.
+    val filteredNodes = remember(effectiveNodes, searchQuery) {
+        if (searchQuery.isBlank()) {
+            effectiveNodes
+        } else {
+            effectiveNodes.filter {
+                it.displayName.contains(searchQuery, ignoreCase = true) ||
+                    it.hash.contains(searchQuery, ignoreCase = true)
+            }
         }
     }
     // browser.py's get_nodes() sorts favorited nodes to the front (a
@@ -186,11 +199,13 @@ fun NodeListScreen(
     // within Announces heard (favorite status is already shown via its
     // own section + the heart icon, not by bubbling it to the top of
     // this one too), and both sections share one consistent order.
-    val sortedNodes = when (sortOption) {
-        SortOption.RECENT -> filteredNodes.sortedByDescending { it.lastAnnounceMillis }
-        SortOption.ALPHABETICAL -> filteredNodes.sortedBy { it.displayName.lowercase() }
-        SortOption.HOPS -> filteredNodes.sortedBy { if (it.hopCount < 0) Int.MAX_VALUE else it.hopCount }
-        SortOption.ANNOUNCES -> filteredNodes.sortedByDescending { it.announceCount }
+    val sortedNodes = remember(filteredNodes, sortOption) {
+        when (sortOption) {
+            SortOption.RECENT -> filteredNodes.sortedByDescending { it.lastAnnounceMillis }
+            SortOption.ALPHABETICAL -> filteredNodes.sortedBy { it.displayName.lowercase() }
+            SortOption.HOPS -> filteredNodes.sortedBy { if (it.hopCount < 0) Int.MAX_VALUE else it.hopCount }
+            SortOption.ANNOUNCES -> filteredNodes.sortedByDescending { it.announceCount }
+        }
     }
 
     // Favoriting adds a copy to Favorites, it doesn't move the node out
@@ -200,9 +215,18 @@ fun NodeListScreen(
     // rememberStableOrder freezes each row's screen position against
     // reorders from a live-updating sort key (RECENT/ANNOUNCES) between
     // polls — see that function's own doc comment for the real mis-tap
-    // repro this fixes.
+    // repro this fixes. Sizes here (not the windowed lists below) are
+    // what the section headers count against — "Announces heard (609)"
+    // should still say 609 even though only a page of it is ever
+    // actually rendered at once.
     val favorites = rememberStableOrder(sortedNodes.filter { it.isFavorite }, key = { it.hash })
     val announcesHeard = rememberStableOrder(sortedNodes, key = { it.hash })
+    // Only the current page is ever actually composed into the
+    // LazyColumn — see rememberWindowedList's own doc comment for the
+    // real stall this closes (confirmed on NetworkScreen's identically-
+    // shaped Announces browser, same underlying node data).
+    val windowedFavorites = rememberWindowedList(favorites, searchQuery, sortOption)
+    val windowedAnnouncesHeard = rememberWindowedList(announcesHeard, searchQuery, sortOption)
 
     val isLandscape = LocalConfiguration.current.orientation == Configuration.ORIENTATION_LANDSCAPE
 
@@ -312,13 +336,24 @@ fun NodeListScreen(
                             collapsible = false,
                         )
                         LazyColumn(modifier = Modifier.weight(1f)) {
-                            items(favorites, key = { it.hash }) { node ->
+                            items(windowedFavorites.visible, key = { it.hash }) { node ->
                                 NodeRow(
                                     node = node,
                                     onClick = { onOpenNode(node.hash) },
                                     onToggleFavorite = { toggleFavorite(node) },
                                 )
                                 HorizontalDivider()
+                            }
+                            if (windowedFavorites.hasMore) {
+                                item(key = "load_more") {
+                                    LoadMoreTrigger(windowedFavorites)
+                                    Box(
+                                        modifier = Modifier.fillMaxWidth().padding(16.dp),
+                                        contentAlignment = Alignment.Center,
+                                    ) {
+                                        CircularProgressIndicator(modifier = Modifier.size(20.dp))
+                                    }
+                                }
                             }
                         }
                     }
@@ -332,13 +367,24 @@ fun NodeListScreen(
                             collapsible = false,
                         )
                         LazyColumn(modifier = Modifier.weight(1f)) {
-                            items(announcesHeard, key = { it.hash }) { node ->
+                            items(windowedAnnouncesHeard.visible, key = { it.hash }) { node ->
                                 NodeRow(
                                     node = node,
                                     onClick = { onOpenNode(node.hash) },
                                     onToggleFavorite = { toggleFavorite(node) },
                                 )
                                 HorizontalDivider()
+                            }
+                            if (windowedAnnouncesHeard.hasMore) {
+                                item(key = "load_more") {
+                                    LoadMoreTrigger(windowedAnnouncesHeard)
+                                    Box(
+                                        modifier = Modifier.fillMaxWidth().padding(16.dp),
+                                        contentAlignment = Alignment.Center,
+                                    ) {
+                                        CircularProgressIndicator(modifier = Modifier.size(20.dp))
+                                    }
+                                }
                             }
                         }
                     }
