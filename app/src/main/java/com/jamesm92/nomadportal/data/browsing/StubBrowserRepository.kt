@@ -84,4 +84,22 @@ class StubBrowserRepository : BrowserRepository {
     override suspend fun setFavorite(nodeHash: String, favorite: Boolean) {
         nodes.value = nodes.value.map { if (it.hash == nodeHash) it.copy(isFavorite = favorite) else it }
     }
+
+    override suspend fun seedDefaultFavorite(nodeHash: String, name: String) {
+        val existing = nodes.value.find { it.hash == nodeHash }
+        nodes.value = if (existing != null) {
+            nodes.value.map { if (it.hash == nodeHash) it.copy(isFavorite = true) else it }
+        } else {
+            // No real announce concept in this stub -- mimic seed_default_favorite's
+            // "create a minimal record if none exists yet" behavior directly.
+            nodes.value + NodeInfo(
+                hash = nodeHash,
+                displayName = name,
+                hopCount = -1,
+                lastFetchOk = null,
+                isFavorite = true,
+                lastAnnounceMillis = 0L,
+            )
+        }
+    }
 }
