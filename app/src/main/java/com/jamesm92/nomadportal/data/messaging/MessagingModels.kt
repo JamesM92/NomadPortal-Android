@@ -252,24 +252,20 @@ data class PropagationSyncStatus(
 )
 
 /**
- * One interface's (bluetooth_mesh/rnode/tcp) own announce policy —
- * two independent knobs, per explicit design direction:
- * - [announceMaxSeconds] ("messages announce time max"): how stale this
- *   device's last announce is allowed to get before a *send* needs a
- *   fresh one first.
- * - [autoAnnounceEnabled]/[autoAnnounceIntervalSeconds] ("auto announce
- *   time"): whether/how often this device proactively re-announces on
- *   its own initiative, independent of whether a message happens to be
- *   going out. **0 means disabled for that interface — no separate
- *   enabled flag**, per explicit design direction. See [AnnounceStatus]'s
- *   own doc comment for what disabling it actually means for sending.
+ * One interface's (bluetooth_mesh/rnode/tcp) own announce policy.
+ * [announceMaxSeconds] ("messages announce time max"): how stale this
+ * device's last announce is allowed to get before a *send* needs a
+ * fresh one first — this genuinely varies per interface (different
+ * radios tolerate different staleness), so it stays here.
+ *
+ * The auto-announce *interval* ("how often this device proactively
+ * re-announces on its own") used to be a second per-interface knob here
+ * too — per explicit direction, that's now a single value shared across
+ * every interface instead: see [AnnounceStatus.autoAnnounceIntervalSeconds].
  */
 data class InterfaceAnnounceConfig(
     val announceMaxSeconds: Int,
-    val autoAnnounceIntervalSeconds: Int,
-) {
-    val autoAnnounceEnabled: Boolean get() = autoAnnounceIntervalSeconds > 0
-}
+)
 
 /**
  * Auto-announce configuration/status for this device's own LXMF
@@ -290,9 +286,8 @@ data class InterfaceAnnounceConfig(
  *
  * [sendBlocked]/[sendBlockedReason] is a read-only preview of whether
  * the next [MessagingRepository.sendMessage] call would currently be
- * refused: true when every currently-active interface has
- * [InterfaceAnnounceConfig.autoAnnounceEnabled] off *and* the last
- * announce is older than the strictest active
+ * refused: true when [autoAnnounceIntervalSeconds] is 0 (disabled)
+ * *and* the last announce is older than the strictest active
  * [InterfaceAnnounceConfig.announceMaxSeconds] — this device can't
  * autonomously fix that (auto-announce being off means exactly "don't
  * announce without being asked to"), so sending stops and says why
@@ -301,11 +296,17 @@ data class InterfaceAnnounceConfig(
 data class AnnounceStatus(
     val interfaces: Map<String, InterfaceAnnounceConfig>,
     /** The single aggregate toggle on Settings' Main tab, on top of
-     * each interface's own [InterfaceAnnounceConfig.autoAnnounceIntervalSeconds] —
-     * off zeroes every interface's interval (remembering each one's
-     * prior value so turning it back on restores it, not a reset to
-     * defaults). */
+     * [autoAnnounceIntervalSeconds] — off zeroes it (remembering its
+     * prior value so turning it back on restores it, not a reset to a
+     * default). */
     val autoAnnounceMasterEnabled: Boolean,
+    /** How often this device proactively re-announces on its own,
+     * shared across every currently-active interface — no separate
+     * per-interface value anymore (each interface keeps only its own
+     * [InterfaceAnnounceConfig.announceMaxSeconds]). 0 means disabled,
+     * no separate enabled flag, same convention as everywhere else in
+     * this model. */
+    val autoAnnounceIntervalSeconds: Int,
     /** Null if this identity has never announced yet. */
     val lastAnnounceAtMillis: Long?,
     /** Null before the delivery router exists (e.g. RNS still starting up). */
