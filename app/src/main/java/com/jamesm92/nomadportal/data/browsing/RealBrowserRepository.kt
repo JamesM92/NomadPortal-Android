@@ -35,9 +35,30 @@ class RealBrowserRepository : BrowserRepository {
         Python.getInstance().getModule("nomadportal_core.orchestrator")
     }
 
+    // Real, live-measured fix: get_nodes_json() used to be called
+    // unconditionally on every tick, doing a full copy of every
+    // discovered node plus a json.dumps() of the whole thing — cheap
+    // with a handful of nodes, but a real, confirmed source of
+    // continuous GC pressure and multi-second frame stalls once a
+    // device has a few hundred (real on-device logcat evidence: 30+
+    // "mark compact GC freed ...MB" events and Choreographer reporting
+    // hundreds of skipped frames, all tightly correlated with opening
+    // Sites). get_nodes_version() is a trivial int with no copying —
+    // checking it first means the expensive rebuild only happens on a
+    // tick where something in browser.py's NodeBrowser actually changed
+    // (a new/updated node, or a favorite toggle — see that method's own
+    // doc comment for the full invalidation contract), not every 4s
+    // regardless. Skipping emission on an unchanged tick is intentional,
+    // not an oversight: collectAsState() just keeps showing the last
+    // value, which is correct — nothing about this data actually changed.
     override fun discoveredNodes(): Flow<List<NodeInfo>> = flow {
+        var lastVersion = -1
         while (true) {
-            emit(fetchNodes())
+            val version = orchestrator.callAttr("get_nodes_version").toInt()
+            if (version != lastVersion) {
+                emit(fetchNodes())
+                lastVersion = version
+            }
             delay(POLL_INTERVAL_MS)
         }
     }.flowOn(Dispatchers.IO)

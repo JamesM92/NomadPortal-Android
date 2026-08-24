@@ -28,6 +28,11 @@ class _StubBrowser:
     _mark_nodes_dirty     = NodeBrowser._mark_nodes_dirty
     _flush_nodes_if_dirty = NodeBrowser._flush_nodes_if_dirty
     _persist              = NodeBrowser._persist
+    # _mark_nodes_dirty also bumps the poll-invalidation counter (see
+    # that method's own doc comment) — rebind those too so the stub has
+    # everything the real method now touches.
+    _bump_nodes_version   = NodeBrowser._bump_nodes_version
+    get_nodes_version      = NodeBrowser.get_nodes_version
 
     def __init__(self, storage_dir):
         self._nodes_file = os.path.join(storage_dir, "nodes.json")
@@ -35,6 +40,8 @@ class _StubBrowser:
         self.nodes: dict = {}
         self._nodes_dirty = False
         self._nodes_dirty_lock = threading.Lock()
+        self._nodes_version = 0
+        self._nodes_version_lock = threading.Lock()
         # Track call counts so we can assert on batching.
         self.persist_calls = 0
         # Wrap _persist to count calls, delegating to the real impl.
@@ -67,6 +74,20 @@ class TestMarkDirtyContract:
         assert browser._nodes_dirty is False
         browser._mark_nodes_dirty()
         assert browser._nodes_dirty is True
+
+    def test_mark_dirty_bumps_nodes_version(self, browser):
+        """get_nodes_version() is the cheap poll-invalidation counter
+        RealBrowserRepository.kt's discoveredNodes() checks before paying
+        for a full get_nodes_json() rebuild — every real mutation site
+        (which all funnel through _mark_nodes_dirty, or bump directly —
+        see set_favorite's user_sub branch) must advance it, or a real
+        client-visible change would silently never reach a polling
+        client."""
+        before = browser.get_nodes_version()
+        browser._mark_nodes_dirty()
+        assert browser.get_nodes_version() == before + 1
+        browser._mark_nodes_dirty()
+        assert browser.get_nodes_version() == before + 2
 
     def test_multiple_marks_stay_dirty(self, browser):
         # Idempotent — many marks, still one dirty flag.

@@ -1523,6 +1523,19 @@ def _make_auto_interface():
 # these on an interval.
 # ---------------------------------------------------------------------------
 
+def get_nodes_version() -> int:
+    """Cheap poll-invalidation counter — see NodeBrowser._nodes_version's
+    own doc comment in browser.py. RealBrowserRepository.kt's
+    discoveredNodes() poll calls this first and only pays for
+    get_nodes_json()'s full copy-every-record-and-json.dumps() when it's
+    actually changed since the last tick — a real fix for continuous GC
+    pressure/jank observed live once a device has a few hundred
+    discovered nodes and this used to run unconditionally every 4s."""
+    if _browser is None:
+        return 0
+    return _browser.get_nodes_version()
+
+
 def get_nodes_json() -> str:
     """[NodeInfo] shape: hash, name, hops (nullable), last_load_ok
     (nullable), ever_load_ok (bool — true once a fetch has ever
