@@ -133,10 +133,13 @@ fun NetworkScreen(
     val bluetoothMeshEnabled by interfaceController.bluetoothMeshEnabled.collectAsState()
     val rNodeEnabled by interfaceController.rNodeEnabled.collectAsState()
     val wifiDiscoveryEnabled by interfaceController.wifiDiscoveryEnabled.collectAsState()
-    val tcpConnections by tcpConnectionsRepository.connections().collectAsState(initial = emptyList())
-    val bluetoothMeshStatus by interfaceController.bluetoothMeshStatus()
+    val tcpConnectionsFlow = remember(tcpConnectionsRepository) { tcpConnectionsRepository.connections() }
+    val tcpConnections by tcpConnectionsFlow.collectAsState(initial = emptyList())
+    val bluetoothMeshStatusFlow = remember(interfaceController) { interfaceController.bluetoothMeshStatus() }
+    val bluetoothMeshStatus by bluetoothMeshStatusFlow
         .collectAsState(initial = BluetoothMeshStatus(neighborCount = 0, lastActivityAtMillis = null))
-    val interfaceByteStats by interfaceController.interfaceByteStats().collectAsState(initial = emptyMap())
+    val interfaceByteStatsFlow = remember(interfaceController) { interfaceController.interfaceByteStats() }
+    val interfaceByteStats by interfaceByteStatsFlow.collectAsState(initial = emptyMap())
 
     // Both default collapsed except Announces — per a real on-device
     // report ("a bunch of the hard written network stats at the top
@@ -502,9 +505,16 @@ private fun AnnouncesSection(
     modifier: Modifier = Modifier,
 ) {
     Column(modifier = modifier) {
-        val conversations by messagingRepository.conversations().collectAsState(initial = emptyList())
-        val nodes by browserRepository.discoveredNodes().collectAsState(initial = emptyList())
-        val relays by messagingRepository.relayNodes().collectAsState(initial = emptyList())
+        // remember()'d -- see NodeListScreen.kt's own doc comment for why
+        // an inline repository.someFlow().collectAsState() call restarts
+        // the whole poll on every recomposition (a real, confirmed bug,
+        // not just theoretical).
+        val conversationsFlow = remember(messagingRepository) { messagingRepository.conversations() }
+        val conversations by conversationsFlow.collectAsState(initial = emptyList())
+        val nodesFlow = remember(browserRepository) { browserRepository.discoveredNodes() }
+        val nodes by nodesFlow.collectAsState(initial = emptyList())
+        val relaysFlow = remember(messagingRepository) { messagingRepository.relayNodes() }
+        val relays by relaysFlow.collectAsState(initial = emptyList())
         ExpandableSectionHeader(
             title = "Announces",
             count = conversations.size + nodes.size + relays.size,
@@ -567,14 +577,22 @@ private fun AnnouncesSectionBody(
     onOpenNode: (nodeHash: String) -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    val conversations by messagingRepository.conversations().collectAsState(initial = emptyList())
-    val nodes by browserRepository.discoveredNodes().collectAsState(initial = emptyList())
+    // remember()'d -- see NodeListScreen.kt's own doc comment for why an
+    // inline repository.someFlow().collectAsState() call restarts the
+    // whole poll on every recomposition (a real, confirmed bug, not just
+    // theoretical).
+    val conversationsFlow = remember(messagingRepository) { messagingRepository.conversations() }
+    val conversations by conversationsFlow.collectAsState(initial = emptyList())
+    val nodesFlow = remember(browserRepository) { browserRepository.discoveredNodes() }
+    val nodes by nodesFlow.collectAsState(initial = emptyList())
     // Live "which interface currently has the best path" lookup — see
     // InterfaceController.announceInterfaces' own doc comment for what
     // this does/doesn't prove. Keyed by hash; a hash with no entry has
     // no currently-known path at all.
-    val announceInterfaces by interfaceController.announceInterfaces().collectAsState(initial = emptyMap())
-    val relays by messagingRepository.relayNodes().collectAsState(initial = emptyList())
+    val announceInterfacesFlow = remember(interfaceController) { interfaceController.announceInterfaces() }
+    val announceInterfaces by announceInterfacesFlow.collectAsState(initial = emptyMap())
+    val relaysFlow = remember(messagingRepository) { messagingRepository.relayNodes() }
+    val relays by relaysFlow.collectAsState(initial = emptyList())
     val scope = rememberCoroutineScope()
     var searchQuery by remember { mutableStateOf("") }
     var sortOption by remember { mutableStateOf(SortOption.RECENT) }
