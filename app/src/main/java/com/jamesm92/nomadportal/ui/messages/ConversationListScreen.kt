@@ -20,6 +20,8 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.pager.HorizontalPager
+import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.CallMade
@@ -60,7 +62,6 @@ import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -150,7 +151,13 @@ fun ConversationListScreen(
     var showAddByAddress by remember { mutableStateOf(false) }
     var showCallByAddress by remember { mutableStateOf(false) }
     var callCapableOnly by remember { mutableStateOf(false) }
-    var selectedTab by remember { mutableIntStateOf(0) }
+    // A HorizontalPager, not a plain Int -- see NodeListScreen's identical
+    // fix/doc comment for why (a real on-device report: swiping side to
+    // side had no momentum -- no swipe was even wired up at all, tap on
+    // SecondaryTabRow was the only way to switch). selectedTab stays
+    // derived from pagerState.currentPage so the two can never drift.
+    val pagerState = rememberPagerState(pageCount = { 3 })
+    val selectedTab = pagerState.currentPage
     var sortOption by remember { mutableStateOf(SortOption.RECENT) }
 
     // Optimistic favorite toggling — repository.conversations() is a
@@ -359,7 +366,7 @@ fun ConversationListScreen(
                 ) {
                     Tab(
                         selected = selectedTab == 0,
-                        onClick = { selectedTab = 0 },
+                        onClick = { scope.launch { pagerState.animateScrollToPage(0) } },
                         text = {
                             Text(
                                 "Chats",
@@ -376,7 +383,7 @@ fun ConversationListScreen(
                     )
                     Tab(
                         selected = selectedTab == 1,
-                        onClick = { selectedTab = 1 },
+                        onClick = { scope.launch { pagerState.animateScrollToPage(1) } },
                         text = {
                             Text(
                                 "Calls",
@@ -396,7 +403,7 @@ fun ConversationListScreen(
                     // and tag must always match here.
                     Tab(
                         selected = selectedTab == 2,
-                        onClick = { selectedTab = 2 },
+                        onClick = { scope.launch { pagerState.animateScrollToPage(2) } },
                         text = {
                             Text(
                                 "Users",
@@ -458,128 +465,144 @@ fun ConversationListScreen(
                 }
             }
 
-            if (selectedTab == 0) {
-                // Headers always outside any LazyColumn — always visible,
-                // always tappable. Exactly one section is ever expanded
-                // (see favoritesOpen's own doc comment above), so the
-                // expanded one always gets the full remaining space —
-                // no more count-based heuristic for how tall its list
-                // should be.
-                SectionHeader(
-                    title = "Favorites",
-                    count = favorites.size,
-                    unreadCount = favoritesUnread,
-                    expanded = favoritesOpen,
-                    onToggle = { favoritesOpen = !favoritesOpen },
-                )
-                if (favoritesOpen) {
-                    LazyColumn(modifier = Modifier.weight(1f)) {
-                        items(favorites, key = { it.contact.lxmfHash }) { summary ->
-                            ConversationRow(
-                                summary = summary,
-                                onClick = { onOpenConversation(summary.contact.lxmfHash) },
-                                onToggleFavorite = { toggleFavorite(summary) },
-                                onCall = { scope.launch { callRepository.placeCall(summary.contact.lxmfHash) } },
-                                onMarkUnread = { markUnread(summary) },
-                                onToggleBlock = { toggleBlock(summary) },
-                                onDelete = { pendingDelete = summary.contact },
-                            )
-                            HorizontalDivider()
-                        }
-                    }
-                }
-
-                HorizontalDivider()
-
-                SectionHeader(
-                    title = "General messages",
-                    count = generalMessages.size,
-                    unreadCount = generalUnread,
-                    expanded = !favoritesOpen,
-                    onToggle = { favoritesOpen = !favoritesOpen },
-                )
-                if (!favoritesOpen) {
-                    LazyColumn(modifier = Modifier.weight(1f)) {
-                        items(generalMessages, key = { it.contact.lxmfHash }) { summary ->
-                            ConversationRow(
-                                summary = summary,
-                                onClick = { onOpenConversation(summary.contact.lxmfHash) },
-                                onToggleFavorite = { toggleFavorite(summary) },
-                                onCall = { scope.launch { callRepository.placeCall(summary.contact.lxmfHash) } },
-                                onMarkUnread = { markUnread(summary) },
-                                onToggleBlock = { toggleBlock(summary) },
-                                onDelete = { pendingDelete = summary.contact },
-                            )
-                            HorizontalDivider()
-                        }
-                    }
-                }
-            } else if (selectedTab == 2) {
-                // Single-section tab — nothing else competing for space,
-                // so the count header stays non-collapsible (unlike
-                // Chats' two headers above). callCapableOnly is a plain
-                // filter over the same list Users already renders — per
-                // explicit direction, no separate call-capable-contacts
-                // list duplicating this one; that's what the Calls tab
-                // used to do and was removed.
-                val displayedUsers = if (callCapableOnly) allUsers.filter { it.contact.isCallCapable } else allUsers
-                Row(
-                    modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                ) {
-                    Text(
-                        text = "Users (${displayedUsers.size})",
-                        style = MaterialTheme.typography.titleMedium,
-                        color = MaterialTheme.colorScheme.secondary,
-                    )
-                    Row(
-                        modifier = Modifier
-                            .clickable { callCapableOnly = !callCapableOnly }
-                            .padding(vertical = 4.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(4.dp),
-                    ) {
-                        // onCheckedChange = null (not a redundant second
-                        // { callCapableOnly = it }) — the enclosing Row
-                        // already owns the tap via its own .clickable, a
-                        // real on-device check showed both firing on the
-                        // same tap raced and could net-cancel back to no
-                        // visible change. null disables the Checkbox's
-                        // own independent click handling while still
-                        // rendering the correct checked state, the
-                        // standard Compose pattern for a checkbox inside
-                        // a larger clickable row.
-                        Checkbox(checked = callCapableOnly, onCheckedChange = null)
-                        Icon(Icons.Filled.Call, contentDescription = null, tint = NomadAccent2, modifier = Modifier.size(16.dp))
-                        Text(
-                            text = "Call-capable only",
-                            style = MaterialTheme.typography.labelSmall,
-                            color = NomadTextDim,
+            // HorizontalPager, not a plain if/else if/else keyed on
+            // selectedTab — see pagerState's own doc comment above for
+            // why (real swipe-with-momentum between tabs, not tap-only).
+            // Page order matches the Tab declaration order above exactly
+            // (Chats=0, Calls=1, Users=2) — same discipline this file's
+            // own top doc comment already requires for SecondaryTabRow's
+            // tags, now doubly true since HorizontalPager's page index
+            // has the identical positional-not-semantic contract.
+            HorizontalPager(state = pagerState, modifier = Modifier.weight(1f)) { page ->
+                when (page) {
+                    0 -> Column(modifier = Modifier.fillMaxSize()) {
+                        // Headers always outside any LazyColumn — always
+                        // visible, always tappable. Exactly one section is
+                        // ever expanded (see favoritesOpen's own doc
+                        // comment above), so the expanded one always gets
+                        // the full remaining space — no more count-based
+                        // heuristic for how tall its list should be.
+                        SectionHeader(
+                            title = "Favorites",
+                            count = favorites.size,
+                            unreadCount = favoritesUnread,
+                            expanded = favoritesOpen,
+                            onToggle = { favoritesOpen = !favoritesOpen },
                         )
-                    }
-                }
-                LazyColumn(modifier = Modifier.weight(1f)) {
-                    items(displayedUsers, key = { it.contact.lxmfHash }) { summary ->
-                        ConversationRow(
-                            summary = summary,
-                            onClick = { onOpenConversation(summary.contact.lxmfHash) },
-                            onToggleFavorite = { toggleFavorite(summary) },
-                            onCall = { scope.launch { callRepository.placeCall(summary.contact.lxmfHash) } },
-                            onMarkUnread = { markUnread(summary) },
-                            onToggleBlock = { toggleBlock(summary) },
-                        )
+                        if (favoritesOpen) {
+                            LazyColumn(modifier = Modifier.weight(1f)) {
+                                items(favorites, key = { it.contact.lxmfHash }) { summary ->
+                                    ConversationRow(
+                                        summary = summary,
+                                        onClick = { onOpenConversation(summary.contact.lxmfHash) },
+                                        onToggleFavorite = { toggleFavorite(summary) },
+                                        onCall = { scope.launch { callRepository.placeCall(summary.contact.lxmfHash) } },
+                                        onMarkUnread = { markUnread(summary) },
+                                        onToggleBlock = { toggleBlock(summary) },
+                                        onDelete = { pendingDelete = summary.contact },
+                                    )
+                                    HorizontalDivider()
+                                }
+                            }
+                        }
+
                         HorizontalDivider()
+
+                        SectionHeader(
+                            title = "General messages",
+                            count = generalMessages.size,
+                            unreadCount = generalUnread,
+                            expanded = !favoritesOpen,
+                            onToggle = { favoritesOpen = !favoritesOpen },
+                        )
+                        if (!favoritesOpen) {
+                            LazyColumn(modifier = Modifier.weight(1f)) {
+                                items(generalMessages, key = { it.contact.lxmfHash }) { summary ->
+                                    ConversationRow(
+                                        summary = summary,
+                                        onClick = { onOpenConversation(summary.contact.lxmfHash) },
+                                        onToggleFavorite = { toggleFavorite(summary) },
+                                        onCall = { scope.launch { callRepository.placeCall(summary.contact.lxmfHash) } },
+                                        onMarkUnread = { markUnread(summary) },
+                                        onToggleBlock = { toggleBlock(summary) },
+                                        onDelete = { pendingDelete = summary.contact },
+                                    )
+                                    HorizontalDivider()
+                                }
+                            }
+                        }
+                    }
+                    1 -> Column(modifier = Modifier.fillMaxSize()) {
+                        val callHistoryFlow = remember(callRepository) { callRepository.callHistory() }
+                        val callHistory by callHistoryFlow.collectAsState(initial = emptyList())
+                        CallsTab(
+                            history = callHistory,
+                            onCallByAddress = { showCallByAddress = true },
+                            onAnnounce = { scope.launch { callRepository.announceCallAddress() } },
+                        )
+                    }
+                    else -> Column(modifier = Modifier.fillMaxSize()) {
+                        // Single-section tab — nothing else competing for
+                        // space, so the count header stays non-collapsible
+                        // (unlike Chats' two headers above). callCapableOnly
+                        // is a plain filter over the same list Users already
+                        // renders — per explicit direction, no separate
+                        // call-capable-contacts list duplicating this one;
+                        // that's what the Calls tab used to do and was
+                        // removed.
+                        val displayedUsers = if (callCapableOnly) allUsers.filter { it.contact.isCallCapable } else allUsers
+                        Row(
+                            modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                        ) {
+                            Text(
+                                text = "Users (${displayedUsers.size})",
+                                style = MaterialTheme.typography.titleMedium,
+                                color = MaterialTheme.colorScheme.secondary,
+                            )
+                            Row(
+                                modifier = Modifier
+                                    .clickable { callCapableOnly = !callCapableOnly }
+                                    .padding(vertical = 4.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(4.dp),
+                            ) {
+                                // onCheckedChange = null (not a redundant
+                                // second { callCapableOnly = it }) — the
+                                // enclosing Row already owns the tap via its
+                                // own .clickable, a real on-device check
+                                // showed both firing on the same tap raced
+                                // and could net-cancel back to no visible
+                                // change. null disables the Checkbox's own
+                                // independent click handling while still
+                                // rendering the correct checked state, the
+                                // standard Compose pattern for a checkbox
+                                // inside a larger clickable row.
+                                Checkbox(checked = callCapableOnly, onCheckedChange = null)
+                                Icon(Icons.Filled.Call, contentDescription = null, tint = NomadAccent2, modifier = Modifier.size(16.dp))
+                                Text(
+                                    text = "Call-capable only",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = NomadTextDim,
+                                )
+                            }
+                        }
+                        LazyColumn(modifier = Modifier.weight(1f)) {
+                            items(displayedUsers, key = { it.contact.lxmfHash }) { summary ->
+                                ConversationRow(
+                                    summary = summary,
+                                    onClick = { onOpenConversation(summary.contact.lxmfHash) },
+                                    onToggleFavorite = { toggleFavorite(summary) },
+                                    onCall = { scope.launch { callRepository.placeCall(summary.contact.lxmfHash) } },
+                                    onMarkUnread = { markUnread(summary) },
+                                    onToggleBlock = { toggleBlock(summary) },
+                                )
+                                HorizontalDivider()
+                            }
+                        }
                     }
                 }
-            } else {
-                val callHistoryFlow = remember(callRepository) { callRepository.callHistory() }
-                val callHistory by callHistoryFlow.collectAsState(initial = emptyList())
-                CallsTab(
-                    history = callHistory,
-                    onCallByAddress = { showCallByAddress = true },
-                    onAnnounce = { scope.launch { callRepository.announceCallAddress() } },
-                )
             }
         }
     }
