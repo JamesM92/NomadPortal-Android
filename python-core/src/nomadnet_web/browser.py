@@ -1862,42 +1862,57 @@ class NodeBrowser:
         self._hosted_hash = ""
         self._hosted_name = ""
 
+    @staticmethod
+    def _new_node_record(hash_hex: str, name: str, announce_count: int = 0) -> dict:
+        """The one place this record's shape is written down — used by
+        every path that can bring a node into existence (a real announce
+        via _register_node, a fetch attempt against an unannounced node
+        via _record_fetch, and _ensure_node_record's on-the-fly creation
+        for favoriting). Was three independently-hand-written dict
+        literals before; kept in sync by construction now instead of by
+        remembering to update all three."""
+        now = time.time()
+        return {
+            "hash":           hash_hex,
+            "name":           name,
+            "first_seen":     now,
+            "last_seen":      now,
+            "announce_count": announce_count,
+            "view_count":     0,
+            "rx_bytes":       0,
+            "last_load_ms":   None,
+            "avg_load_ms":    None,
+            "last_ping_ms":   None,
+            "last_load_ok":   None,
+            "ever_load_ok":   False,
+            "favorited":      False,
+        }
+
+    def _ensure_node_record(self, hash_hex: str, name: str = "") -> dict:
+        """Creates a minimal node record (announce_count=0, since none has
+        actually happened yet) if none exists yet for hash_hex — never
+        overwrites real announce data a node might already have. Returns
+        the (possibly just-created) record. Caller must hold self._lock."""
+        existing = self.nodes.get(hash_hex)
+        if existing is not None:
+            return existing
+        record = self._new_node_record(hash_hex, name or (hash_hex[:16] + "…"))
+        self.nodes[hash_hex] = record
+        self._mark_nodes_dirty()
+        return record
+
     def seed_default_favorite(self, hash_hex: str, name: str, user_sub: str = "") -> None:
         """For DefaultFavoriteSites.kt's one-time onboarding-complete
-        seeding only. set_favorite() alone can't do this — it declines an
-        index-page favorite (path="/") for a node this device has never
-        actually heard announce, which every default site is, by
-        definition, on a fresh install. Creates a minimal node record
-        (same shape as _register_node's real-announce path, but
-        announce_count=0 since none has actually happened yet) only if one
-        doesn't already exist — never overwrites real announce data a
-        node might already have — then favorites it through the normal
-        set_favorite() path, so this behaves identically to the user
-        tapping the star themselves. Callers must call this at most once
-        per identity (Kotlin enforces that by only calling it from the
-        onboarding-complete hook, not on every launch); calling it
-        repeatedly would re-favorite a site the user deliberately
-        un-favorited, defeating "user can always defavorite them"."""
-        hash_hex = hash_hex.lower()
-        now = time.time()
-        with self._lock:
-            if hash_hex not in self.nodes:
-                self.nodes[hash_hex] = {
-                    "hash":           hash_hex,
-                    "name":           name,
-                    "first_seen":     now,
-                    "last_seen":      now,
-                    "announce_count": 0,
-                    "view_count":     0,
-                    "rx_bytes":       0,
-                    "last_load_ms":   None,
-                    "avg_load_ms":    None,
-                    "last_ping_ms":   None,
-                    "last_load_ok":   None,
-                    "ever_load_ok":   False,
-                    "favorited":      False,
-                }
-                self._mark_nodes_dirty()
+        seeding only — otherwise a thin wrapper around set_favorite(),
+        which (like this) auto-creates an unknown node's record before
+        favoriting it. Kept as its own entry point (rather than callers
+        just calling set_favorite directly) so the one-shot-only
+        constraint stays documented at its own real call site. Callers
+        must call this at most once per identity (Kotlin enforces that by
+        only calling it from the onboarding-complete hook, not on every
+        launch); calling it repeatedly would re-favorite a site the user
+        deliberately un-favorited, defeating "user can always defavorite
+        them"."""
         self.set_favorite(hash_hex, True, user_sub=user_sub, path="/", name=name)
 
     def set_favorite(
@@ -1912,6 +1927,14 @@ class NodeBrowser:
 
         For the index-page case (path="/"), if no name is given we fall
         back to the node's announced name, mirroring legacy behaviour.
+
+        Favoriting (value=True) a node this device has never actually
+        heard announce — e.g. one reached via manually-typed/QR-scanned
+        address, or DefaultFavoriteSites' seeding — is allowed: a minimal
+        node record is created on the fly via _ensure_node_record(), same
+        as the user finding it through a real announce first would have.
+        Un-favoriting (value=False) a node with no record at all still
+        declines (nothing to remove).
         """
         hash_hex = hash_hex.lower()
         path = path or "/"
@@ -1923,12 +1946,10 @@ class NodeBrowser:
         ):
             return False
         with self._lock:
-            # Index-page favorites still require the node to exist (existing
-            # behaviour for the node-list star). Page favorites are accepted
-            # even if the node hasn't announced yet — useful for bookmarking
-            # a manually-typed address.
             if path == "/" and self.nodes.get(hash_hex) is None:
-                return False
+                if not value:
+                    return False
+                self._ensure_node_record(hash_hex, name)
 
             if user_sub:
                 favs = self._favorites.setdefault(user_sub, [])
@@ -2087,21 +2108,7 @@ class NodeBrowser:
                 existing["last_seen"]      = now
                 existing["announce_count"] = existing.get("announce_count", 0) + 1
             else:
-                self.nodes[hash_hex] = {
-                    "hash":           hash_hex,
-                    "name":           name,
-                    "first_seen":     now,
-                    "last_seen":      now,
-                    "announce_count": 1,
-                    "view_count":     0,
-                    "rx_bytes":       0,
-                    "last_load_ms":   None,
-                    "avg_load_ms":    None,
-                    "last_ping_ms":   None,
-                    "last_load_ok":   None,
-                    "ever_load_ok":   False,
-                    "favorited":      False,
-                }
+                self.nodes[hash_hex] = self._new_node_record(hash_hex, name, announce_count=1)
 
         log.info(
             "Node %s: %s (announces=%d)",
@@ -2115,21 +2122,7 @@ class NodeBrowser:
         with self._lock:
             node = self.nodes.get(hash_hex)
             if node is None:
-                node = {
-                    "hash":           hash_hex,
-                    "name":           hash_hex[:16] + "…",
-                    "first_seen":     time.time(),
-                    "last_seen":      time.time(),
-                    "announce_count": 0,
-                    "view_count":     0,
-                    "rx_bytes":       0,
-                    "last_load_ms":   None,
-                    "avg_load_ms":    None,
-                    "last_ping_ms":   None,
-                    "last_load_ok":   None,
-                    "ever_load_ok":   False,
-                    "favorited":      False,
-                }
+                node = self._new_node_record(hash_hex, hash_hex[:16] + "…")
                 self.nodes[hash_hex] = node
 
             if update_status:
