@@ -26,6 +26,7 @@ import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.FileUpload
 import androidx.compose.material.icons.filled.MoreVert
+import androidx.compose.material.icons.filled.QrCode
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
@@ -93,6 +94,13 @@ fun IdentitiesScreen(repository: IdentityRepository, onBack: () -> Unit) {
     var renameTarget by remember { mutableStateOf<Identity?>(null) }
     var iconTarget by remember { mutableStateOf<Identity?>(null) }
     var addressTarget by remember { mutableStateOf<Identity?>(null) }
+    // Direct entry point for "show my own QR code" — real on-device
+    // report: the only way in used to be tapping the name/address text
+    // (addressTarget above), a plain-text tap target with no visual
+    // affordance, then a second tap on a QR button buried inside that
+    // dialog. This gives the row itself a visible QR icon that jumps
+    // straight to AddressQrDialog, one tap, no hidden tap targets.
+    var qrTarget by remember { mutableStateOf<Identity?>(null) }
     var busy by remember { mutableStateOf(false) }
     var errorMessage by remember { mutableStateOf<String?>(null) }
     // Separate from errorMessage — a successful "Save to device" still
@@ -223,6 +231,9 @@ fun IdentitiesScreen(repository: IdentityRepository, onBack: () -> Unit) {
                             identity = identity,
                             onClick = { if (!identity.isActive) switchTarget = identity },
                             onShowAddresses = { addressTarget = identity },
+                            onShowQr = if (identity.lxmfAddress != null && identity.publicKeyHex != null) {
+                                { qrTarget = identity }
+                            } else null,
                             onEditIcon = { iconTarget = identity },
                             onRename = { renameTarget = identity },
                             onSaveToDevice = {
@@ -436,6 +447,21 @@ fun IdentitiesScreen(repository: IdentityRepository, onBack: () -> Unit) {
         }
     }
 
+    // Direct QR entry point from the row's own icon — see qrTarget's
+    // doc comment above for why this exists alongside addressTarget.
+    qrTarget?.let { target ->
+        val address = target.lxmfAddress
+        val publicKeyHex = target.publicKeyHex
+        if (address != null && publicKeyHex != null) {
+            AddressQrDialog(
+                address = address,
+                publicKeyHex = publicKeyHex,
+                identityHash = target.id,
+                onDismiss = { qrTarget = null },
+            )
+        }
+    }
+
     errorMessage?.let { message ->
         AlertDialog(
             onDismissRequest = { errorMessage = null },
@@ -464,6 +490,7 @@ private fun IdentityRow(
     identity: Identity,
     onClick: () -> Unit,
     onShowAddresses: () -> Unit,
+    onShowQr: (() -> Unit)?,
     onEditIcon: () -> Unit,
     onRename: () -> Unit,
     onSaveToDevice: () -> Unit,
@@ -526,6 +553,16 @@ private fun IdentityRow(
         }
         if (!identity.isActive) {
             TextButton(onClick = onClick) { Text("Switch") }
+        }
+        if (onShowQr != null) {
+            // The visible, one-tap "show my QR code" affordance — real
+            // on-device report: without this, the only way in was
+            // tapping the plain-text name/address column above (no
+            // visual hint it was tappable at all), then finding a QR
+            // button inside the dialog it opened. This icon is the fix.
+            IconButton(onClick = onShowQr) {
+                Icon(Icons.Filled.QrCode, contentDescription = "Show QR code for ${identity.name}")
+            }
         }
         Box {
             IconButton(onClick = { menuOpen = true }) {
