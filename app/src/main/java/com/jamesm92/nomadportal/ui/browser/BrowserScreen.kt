@@ -85,6 +85,7 @@ import com.jamesm92.nomadportal.data.SettingsRepository
 import com.jamesm92.nomadportal.data.browsing.BrowserRepository
 import com.jamesm92.nomadportal.data.browsing.PageAddress
 import com.jamesm92.nomadportal.data.browsing.PageCacheStore
+import com.jamesm92.nomadportal.data.browsing.parseLinkFieldSpec
 import com.jamesm92.nomadportal.data.identity.IdentityRepository
 import com.jamesm92.nomadportal.panicwipe.PanicWipe
 import com.jamesm92.nomadportal.ui.components.AdaptiveTopAppBar
@@ -244,7 +245,14 @@ fun BrowserScreen(
                 pendingWarning = PendingLinkWarning.ExternalWeb(target.url)
 
             target.url.startsWith("hash://") -> {
-                val address = PageAddress.fromUrl(target.url)
+                // fieldSpec (a link's third backtick-component, e.g. a
+                // geomap zoom link's `h=8`) has to be folded into the
+                // PageAddress itself, not dropped — see PageAddress.params'
+                // own doc comment for the real bug this was.
+                val address = PageAddress.fromUrl(target.url)?.let { base ->
+                    val fieldParams = target.fieldSpec?.let(::parseLinkFieldSpec) ?: emptyMap()
+                    if (fieldParams.isEmpty()) base else base.copy(params = base.params + fieldParams)
+                }
                 if (address != null) navigateTo(address)
             }
 
