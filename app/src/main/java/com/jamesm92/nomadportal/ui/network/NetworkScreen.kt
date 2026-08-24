@@ -2,6 +2,7 @@ package com.jamesm92.nomadportal.ui.network
 
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
@@ -15,6 +16,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ExpandLess
 import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
@@ -51,6 +53,7 @@ import com.jamesm92.nomadportal.data.messaging.RelayNode
 import com.jamesm92.nomadportal.ui.browser.NodeRow
 import com.jamesm92.nomadportal.ui.components.AdaptiveTopAppBar
 import com.jamesm92.nomadportal.ui.components.Identicon
+import com.jamesm92.nomadportal.ui.components.LoadMoreTrigger
 import com.jamesm92.nomadportal.ui.components.SearchField
 import com.jamesm92.nomadportal.ui.components.SortDropdown
 import com.jamesm92.nomadportal.ui.components.SortOption
@@ -58,6 +61,7 @@ import com.jamesm92.nomadportal.ui.components.StatusDot
 import com.jamesm92.nomadportal.ui.components.dismissKeyboardOnTap
 import com.jamesm92.nomadportal.ui.components.hexToByteArray
 import com.jamesm92.nomadportal.ui.components.rememberStableOrder
+import com.jamesm92.nomadportal.ui.components.rememberWindowedList
 import com.jamesm92.nomadportal.ui.messages.ConversationRow
 import com.jamesm92.nomadportal.ui.theme.NomadAccent2
 import com.jamesm92.nomadportal.ui.theme.NomadIdenticonRingRelay
@@ -617,25 +621,56 @@ private fun AnnouncesSectionBody(
             AnnounceTypeFilter.ALL -> conversations.map { AnnounceItem.Peer(it) } + nodes.map { AnnounceItem.Site(it) }
         }
     }
-    val searched = if (searchQuery.isBlank()) {
-        combined
-    } else {
-        combined.filter {
-            it.displayName.contains(searchQuery, ignoreCase = true) || it.hash.contains(searchQuery, ignoreCase = true)
+    // Real, live-measured fix: searched/filtered/sorted used to be plain
+    // vals, recomputed in full on *every* recomposition — including
+    // every ~4s poll tick from any of the several flows this composable
+    // collects, not just an actual search/filter/sort change. Over a
+    // combined list that can run into the thousands, that unmemoized
+    // O(n log n) sort (plus the per-item work needed to actually render
+    // that many rows) is exactly what a live on-device test caught: the
+    // main thread pegged at 100% CPU with multi-second single-frame
+    // stalls, gone entirely once this section was collapsed (nothing to
+    // compute) and reproducing again once re-expanded — see the
+    // nomadportal-android-sites-gc-storm-fix memory. remember() alone
+    // would only fix "recomputed too often"; per explicit direction,
+    // windowing below also bounds "computed over more than anyone's
+    // actually looking at" — most people only care about the most
+    // recent 50-100 of whatever they're currently searching/filtering
+    // for, not the full match set rendered at once.
+    val searched = remember(combined, searchQuery) {
+        if (searchQuery.isBlank()) {
+            combined
+        } else {
+            combined.filter {
+                it.displayName.contains(searchQuery, ignoreCase = true) || it.hash.contains(searchQuery, ignoreCase = true)
+            }
         }
     }
-    val filtered = if (networkFilter == NetworkFilter.ALL) {
-        searched
-    } else {
-        searched.filter { announceInterfaces[it.hash] == networkFilter.key }
+    val filtered = remember(searched, networkFilter, announceInterfaces) {
+        if (networkFilter == NetworkFilter.ALL) {
+            searched
+        } else {
+            searched.filter { announceInterfaces[it.hash] == networkFilter.key }
+        }
     }
-    val sorted = when (sortOption) {
-        SortOption.RECENT -> filtered.sortedByDescending { it.lastAnnounceMillis }
-        SortOption.ALPHABETICAL -> filtered.sortedBy { it.displayName.lowercase() }
-        SortOption.HOPS -> filtered.sortedBy { if (it.hopCount < 0) Int.MAX_VALUE else it.hopCount }
-        SortOption.ANNOUNCES -> filtered.sortedByDescending { it.announceCount }
+    val sorted = remember(filtered, sortOption) {
+        when (sortOption) {
+            SortOption.RECENT -> filtered.sortedByDescending { it.lastAnnounceMillis }
+            SortOption.ALPHABETICAL -> filtered.sortedBy { it.displayName.lowercase() }
+            SortOption.HOPS -> filtered.sortedBy { if (it.hopCount < 0) Int.MAX_VALUE else it.hopCount }
+            SortOption.ANNOUNCES -> filtered.sortedByDescending { it.announceCount }
+        }
     }
-    val displayed = rememberStableOrder(sorted, key = { it.stableKey() })
+    // Only the current page is ever actually rendered — see
+    // rememberWindowedList's own doc comment. resetKey bundles every
+    // criterion that changes *which* items are eligible at all, so
+    // switching search/filter/sort/type snaps back to page 1 instead of
+    // staying scrolled deep into a window that no longer means anything
+    // for the new criteria.
+    val windowedAnnounces = rememberWindowedList(
+        sorted, searchQuery, networkFilter, sortOption, typeFilter,
+    )
+    val displayed = rememberStableOrder(windowedAnnounces.visible, key = { it.stableKey() })
 
     fun toggleFavorite(item: AnnounceItem) {
         scope.launch {
@@ -755,6 +790,17 @@ private fun AnnouncesSectionBody(
                 )
             }
             HorizontalDivider()
+        }
+        if (windowedAnnounces.hasMore) {
+            item(key = "load_more") {
+                LoadMoreTrigger(windowedAnnounces)
+                Box(
+                    modifier = Modifier.fillMaxWidth().padding(16.dp),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    CircularProgressIndicator(modifier = Modifier.size(20.dp))
+                }
+            }
         }
     }
 
