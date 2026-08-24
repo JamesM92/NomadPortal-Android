@@ -14,6 +14,8 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.pager.HorizontalPager
+import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.ExpandLess
@@ -33,7 +35,6 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -118,7 +119,17 @@ fun NodeListScreen(
     var searchQuery by remember { mutableStateOf("") }
     var showAddByAddress by remember { mutableStateOf(false) }
     var sortOption by remember { mutableStateOf(SortOption.RECENT) }
-    var selectedTab by remember { mutableIntStateOf(0) }
+    // A HorizontalPager, not a plain Int -- SecondaryTabRow's own tap-only
+    // switching worked, but gave no swipe gesture at all (a real on-device
+    // report: "swiping side to side needs the same momentum feel as
+    // vertical swiping on pages does" -- there was no momentum, or any
+    // swipe, because nothing was wired up for it). HorizontalPager shares
+    // Compose Foundation's own fling mechanics with LazyColumn, so this is
+    // genuinely the same momentum, not a hand-rolled approximation of it.
+    // selectedTab stays derived from pagerState.currentPage rather than a
+    // second independent variable, so the two can never drift out of sync.
+    val pagerState = rememberPagerState(pageCount = { 2 })
+    val selectedTab = pagerState.currentPage
 
     // Optimistic favorite toggling — same fix/rationale as
     // ConversationListScreen's identical `favoriteOverrides`: discoveredNodes()
@@ -228,7 +239,7 @@ fun NodeListScreen(
                 ) {
                     Tab(
                         selected = selectedTab == 0,
-                        onClick = { selectedTab = 0 },
+                        onClick = { scope.launch { pagerState.animateScrollToPage(0) } },
                         text = {
                             Text(
                                 "Favorites",
@@ -245,7 +256,7 @@ fun NodeListScreen(
                     )
                     Tab(
                         selected = selectedTab == 1,
-                        onClick = { selectedTab = 1 },
+                        onClick = { scope.launch { pagerState.animateScrollToPage(1) } },
                         text = {
                             Text(
                                 "Announces",
@@ -290,40 +301,46 @@ fun NodeListScreen(
             // the count header stays non-collapsible (matches
             // ConversationListScreen's Users tab, the same "one list, one
             // tab" shape).
-            if (selectedTab == 0) {
-                SectionHeader(
-                    title = "Favorites",
-                    count = favorites.size,
-                    expanded = true,
-                    onToggle = {},
-                    collapsible = false,
-                )
-                LazyColumn(modifier = Modifier.weight(1f)) {
-                    items(favorites, key = { it.hash }) { node ->
-                        NodeRow(
-                            node = node,
-                            onClick = { onOpenNode(node.hash) },
-                            onToggleFavorite = { toggleFavorite(node) },
+            HorizontalPager(state = pagerState, modifier = Modifier.weight(1f)) { page ->
+                if (page == 0) {
+                    Column(modifier = Modifier.fillMaxSize()) {
+                        SectionHeader(
+                            title = "Favorites",
+                            count = favorites.size,
+                            expanded = true,
+                            onToggle = {},
+                            collapsible = false,
                         )
-                        HorizontalDivider()
+                        LazyColumn(modifier = Modifier.weight(1f)) {
+                            items(favorites, key = { it.hash }) { node ->
+                                NodeRow(
+                                    node = node,
+                                    onClick = { onOpenNode(node.hash) },
+                                    onToggleFavorite = { toggleFavorite(node) },
+                                )
+                                HorizontalDivider()
+                            }
+                        }
                     }
-                }
-            } else {
-                SectionHeader(
-                    title = "Announces heard",
-                    count = announcesHeard.size,
-                    expanded = true,
-                    onToggle = {},
-                    collapsible = false,
-                )
-                LazyColumn(modifier = Modifier.weight(1f)) {
-                    items(announcesHeard, key = { it.hash }) { node ->
-                        NodeRow(
-                            node = node,
-                            onClick = { onOpenNode(node.hash) },
-                            onToggleFavorite = { toggleFavorite(node) },
+                } else {
+                    Column(modifier = Modifier.fillMaxSize()) {
+                        SectionHeader(
+                            title = "Announces heard",
+                            count = announcesHeard.size,
+                            expanded = true,
+                            onToggle = {},
+                            collapsible = false,
                         )
-                        HorizontalDivider()
+                        LazyColumn(modifier = Modifier.weight(1f)) {
+                            items(announcesHeard, key = { it.hash }) { node ->
+                                NodeRow(
+                                    node = node,
+                                    onClick = { onOpenNode(node.hash) },
+                                    onToggleFavorite = { toggleFavorite(node) },
+                                )
+                                HorizontalDivider()
+                            }
+                        }
                     }
                 }
             }
