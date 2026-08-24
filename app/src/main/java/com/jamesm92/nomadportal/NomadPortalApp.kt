@@ -250,7 +250,7 @@ class NomadPortalApp : Application() {
         // result rather than erroring while _browser/_messaging are
         // still None.
         messagingRepository = RealMessagingRepository(settingsRepository)
-        browserRepository = RealBrowserRepository()
+        browserRepository = RealBrowserRepository(appScope)
         pageCacheStore = PageCacheStore(this)
         // Phase 1a/1b of a real voice-call feature (signalling +
         // audio — see python-core's call_manager.py). Same
