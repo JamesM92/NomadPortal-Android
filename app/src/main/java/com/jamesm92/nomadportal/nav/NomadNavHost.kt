@@ -2,8 +2,12 @@ package com.jamesm92.nomadportal.nav
 
 import android.net.Uri
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.exclude
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.safeDrawing
+import androidx.compose.foundation.layout.statusBars
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Explore
 import androidx.compose.material.icons.filled.Hub
@@ -193,6 +197,20 @@ fun NomadNavHost(
 
     Box(modifier = Modifier.fillMaxSize()) {
     Scaffold(
+        // This Scaffold owns no topBar of its own -- every screen below
+        // it (NodeListScreen, ConversationListScreen, etc.) has its own
+        // inner Scaffold with an AdaptiveTopAppBar, which already reserves
+        // the real status-bar inset itself (TopAppBar's own default
+        // windowInsets = WindowInsets.statusBars). Scaffold's default
+        // contentWindowInsets is WindowInsets.safeDrawing, which reserves
+        // that same status-bar height a *second* time here regardless --
+        // real, measured on-device bug: content started ~110px below the
+        // real 80px status bar (a Moto G Play, 280dpi), not flush against
+        // it, matching a doubled inset almost exactly. Excluding just the
+        // status-bars component here (keeping the rest of safeDrawing --
+        // nav bar, cutouts -- for the bottomBar below) fixes it without
+        // touching every individual screen's own correct inset handling.
+        contentWindowInsets = WindowInsets.safeDrawing.exclude(WindowInsets.statusBars),
         bottomBar = {
             if (currentRoute in TOP_LEVEL_ROUTES) {
                 NomadBottomNavigationBar(
