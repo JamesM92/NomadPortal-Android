@@ -27,8 +27,10 @@ import com.jamesm92.nomadportal.data.rnsh.RnshHistoryRepository
 import com.jamesm92.nomadportal.data.rnsh.RnshRepository
 import com.jamesm92.nomadportal.notifications.MessageNotificationController
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.async
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 
@@ -41,6 +43,40 @@ import kotlinx.coroutines.launch
  */
 class NomadPortalApp : Application() {
     private val appScope = CoroutineScope(SupervisorJob())
+
+    /**
+     * Runs [block] on this app's own long-lived scope instead of the
+     * caller's — for real background work that must survive its
+     * triggering UI screen being torn down or its own coroutine being
+     * cancelled/relaunched.
+     *
+     * Real, directly observed bug this exists to fix (not a theoretical
+     * concern): a live on-device repro of BrowserScreen's page-fetch flow
+     * showed `PY CALL RETURNED ... len=79848` (the RNS fetch had already
+     * completed successfully) immediately followed by `REFRESHLIVE
+     * CANCELLED` — because the fetch ran inside a `withContext` nested in
+     * the screen's own `LaunchedEffect`, cancelling that coroutine (an
+     * ordinary `LaunchedEffect` key-change relaunch, or the Activity being
+     * destroyed while the process survives — e.g. closing the app while a
+     * site is loading) discards an already-successful result before it
+     * ever reaches `pageCacheStore.write()`. `withContext` only *returns*
+     * a value to a still-active caller; a cancelled one throws instead,
+     * silently dropping real work that already finished.
+     *
+     * Still a [Deferred] the caller `await()`s, not fire-and-forget — a
+     * caller that's still around gets the result normally. Only a
+     * caller-side cancellation stops mattering: [appScope] isn't a parent
+     * of the caller's own coroutine, so cancelling the caller never
+     * cancels [block] itself.
+     *
+     * Deliberately doesn't attempt to keep the whole *process* alive
+     * across a real app close (swiping the task away from Recents kills
+     * the process outright unless Settings' always-on Notifications mode
+     * already has a foreground service running) — that's a real, known,
+     * separate limitation, not something this method claims to solve.
+     */
+    fun <T> resilientAsync(block: suspend () -> T): Deferred<T> =
+        appScope.async(Dispatchers.IO) { block() }
 
     lateinit var settingsRepository: SettingsRepository
         private set
