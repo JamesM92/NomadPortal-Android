@@ -437,11 +437,6 @@ fun SettingsScreen(
                                         messagingRepository.setAnnounceMax(AnnounceStatus.INTERFACE_TCP, it)
                                     }
                                 },
-                                onAutoAnnounceIntervalChange = {
-                                    scope.launch {
-                                        messagingRepository.setAutoAnnounceInterval(AnnounceStatus.INTERFACE_TCP, it)
-                                    }
-                                },
                             )
                         }
                     }
@@ -474,13 +469,6 @@ fun SettingsScreen(
                                         messagingRepository.setAnnounceMax(AnnounceStatus.INTERFACE_BLUETOOTH, it)
                                     }
                                 },
-                                onAutoAnnounceIntervalChange = {
-                                    scope.launch {
-                                        messagingRepository.setAutoAnnounceInterval(
-                                            AnnounceStatus.INTERFACE_BLUETOOTH, it,
-                                        )
-                                    }
-                                },
                             )
                         }
                     }
@@ -507,11 +495,6 @@ fun SettingsScreen(
                                         messagingRepository.setAnnounceMax(AnnounceStatus.INTERFACE_RNODE, it)
                                     }
                                 },
-                                onAutoAnnounceIntervalChange = {
-                                    scope.launch {
-                                        messagingRepository.setAutoAnnounceInterval(AnnounceStatus.INTERFACE_RNODE, it)
-                                    }
-                                },
                             )
                         }
                     }
@@ -536,13 +519,6 @@ fun SettingsScreen(
                                 onAnnounceMaxChange = {
                                     scope.launch {
                                         messagingRepository.setAnnounceMax(AnnounceStatus.INTERFACE_WIFI_DISCOVERY, it)
-                                    }
-                                },
-                                onAutoAnnounceIntervalChange = {
-                                    scope.launch {
-                                        messagingRepository.setAutoAnnounceInterval(
-                                            AnnounceStatus.INTERFACE_WIFI_DISCOVERY, it,
-                                        )
                                     }
                                 },
                             )
@@ -634,9 +610,7 @@ fun SettingsScreen(
                             // Manual trigger, independent of the auto-announce
                             // toggle above — moved here from Home's own
                             // IdentitySection (same "Announce now" action, just
-                            // relocated). Announce interval configuration for
-                            // each interface still lives in that interface's
-                            // own section (TCP/Bluetooth/RNode/LAN), unaffected.
+                            // relocated).
                             TextButton(
                                 onClick = { scope.launch { messagingRepository.announceNow() } },
                                 modifier = Modifier.padding(start = 8.dp),
@@ -649,6 +623,12 @@ fun SettingsScreen(
                                     modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
                                 )
                             }
+                            AnnounceIntervalRow(
+                                seconds = status.autoAnnounceIntervalSeconds,
+                                onChange = {
+                                    scope.launch { messagingRepository.setAutoAnnounceInterval(it) }
+                                },
+                            )
                         }
                     }
                 }
@@ -1936,18 +1916,18 @@ private fun TcpConnectionAddRow(onAdd: (name: String, host: String, port: Int) -
 }
 
 /**
- * Per-interface announce policy: two number-of-minutes fields (message
- * max / auto-announce interval) — see [InterfaceAnnounceConfig]'s own
- * doc comment for what each controls. **0 in the auto field disables
- * auto-announce for that interface — there's no separate enabled
- * switch**, matching [InterfaceAnnounceConfig.autoAnnounceEnabled]'s own
- * derivation.
+ * Per-interface announce policy: how stale the last announce can get
+ * before a *send* needs a fresh one first — see [InterfaceAnnounceConfig]'s
+ * own doc comment. The auto-announce *interval* used to be a second
+ * field here too, one independent value per interface; per explicit
+ * direction that's now a single value shared across every interface,
+ * shown once under Settings' own "Auto Announce" section instead (see
+ * [AnnounceIntervalRow]), not duplicated per interface here anymore.
  */
 @Composable
 private fun InterfaceAnnounceTab(
     config: InterfaceAnnounceConfig,
     onAnnounceMaxChange: (seconds: Int) -> Unit,
-    onAutoAnnounceIntervalChange: (seconds: Int) -> Unit,
 ) {
     // Smaller than Main's own text — per explicit feedback that the
     // settings *sub-tabs* specifically (not Main) run oversized; this
@@ -1972,19 +1952,30 @@ private fun InterfaceAnnounceTab(
             onCommit = onAnnounceMaxChange,
             modifier = Modifier.width(64.dp).padding(top = 4.dp),
         )
+    }
+}
 
-        Spacer(modifier = Modifier.height(14.dp))
-
-        Text("Auto-announce (minutes)", style = labelStyle)
+/**
+ * The one auto-announce-interval control, shown once under "Auto
+ * Announce" — replaces what used to be four independent copies, one per
+ * interface section (TCP/Bluetooth/RNode/LAN), per explicit direction.
+ * Same [MinutesField] shape those used to use. **0 disables auto-announce
+ * entirely — there's no separate enabled switch**, matching
+ * [AnnounceStatus.autoAnnounceIntervalSeconds]'s own convention.
+ */
+@Composable
+private fun AnnounceIntervalRow(seconds: Int, onChange: (seconds: Int) -> Unit) {
+    Column(modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp)) {
+        Text("Auto-announce (minutes)", style = MaterialTheme.typography.labelMedium)
         Text(
-            "How often this device proactively re-announces on its own. 0 disables auto-announce for this connection.",
-            style = hintStyle,
+            "How often this device proactively re-announces on its own. 0 disables auto-announce.",
+            style = MaterialTheme.typography.labelSmall,
             color = NomadTextDim,
         )
         MinutesField(
-            seconds = config.autoAnnounceIntervalSeconds,
+            seconds = seconds,
             allowZero = true,
-            onCommit = onAutoAnnounceIntervalChange,
+            onCommit = onChange,
             modifier = Modifier.width(64.dp).padding(top = 4.dp),
         )
     }
