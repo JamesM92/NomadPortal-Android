@@ -1538,13 +1538,30 @@ def get_nodes_json() -> str:
     return json.dumps(_browser.get_nodes(user_sub=_active_user_sub))
 
 
-def fetch_page_text(destination_hash_hex: str, path: str, identify: bool = False) -> str:
+def fetch_page_text(
+    destination_hash_hex: str,
+    path: str,
+    identify: bool = False,
+    field_data_json: Optional[str] = None,
+) -> str:
     """Raises RuntimeError with browser.py's own error string on failure
     (path not found, link closed, timeout, etc.) — matches
     BrowserRepository.fetchPage's documented "throws on failure"
     contract. Blocking on real network I/O, can legitimately take
     minutes (browser.py's PAGE_HARD_CAP=600s) — callers must run this on
     Dispatchers.IO with no artificial coroutine timeout.
+
+    field_data_json: a JSON object of request params (e.g. {"h": "8"}) —
+    PageAddress.kt's own params, sourced from a Micron link's third
+    backtick-component (LinkTarget.fieldSpec, e.g. `` `h=8 `` — see the
+    nomadnet-app-auth skill's link-parameter convention). Forwarded to
+    browser.py's own field_data param, which NomadNet delivers to the
+    remote page as var_h etc. Real, previously-open bug fixed here: this
+    bridge used to drop LinkTarget.fieldSpec entirely, so any link
+    relying on it (this device's geomap.mu zoom links among them) just
+    re-requested the bare base page — which PageAddress equality then
+    collapsed into "no navigation happened at all" once that base page
+    was already cached, since nothing distinguished the two addresses.
 
     identify: when True, identifies this device's own RNS identity to
     the node over the fetch Link (browser.py's identify_with param,
@@ -1588,7 +1605,29 @@ def fetch_page_text(destination_hash_hex: str, path: str, identify: bool = False
         entry = _identity_store.get_for_user(_active_user_sub)
         if entry is not None:
             identify_with = _identity_store.load_rns_identity(entry["id"])
-    content, error = _browser.fetch_page(destination_hash_hex, path, identify_with=identify_with)
+
+    field_data = None
+    if field_data_json:
+        import json
+
+        try:
+            parsed = json.loads(field_data_json)
+            if isinstance(parsed, dict) and parsed:
+                # browser.py filters by prefix (field_/var_) and passes
+                # everything else through as var_ — a link-carried param
+                # like "h" is meant to arrive server-side as var_h, so
+                # bare keys get that prefix here rather than at the
+                # Kotlin call site (keeps the prefixing rule in one place).
+                field_data = {
+                    k if k.startswith(("field_", "var_")) else f"var_{k}": v
+                    for k, v in parsed.items()
+                }
+        except (ValueError, TypeError) as exc:
+            log.warning("fetch_page_text: bad field_data_json %r: %s", field_data_json, exc)
+
+    content, error = _browser.fetch_page(
+        destination_hash_hex, path, field_data=field_data, identify_with=identify_with
+    )
     if error is not None:
         raise RuntimeError(error)
     return content.decode("utf-8", errors="replace")
