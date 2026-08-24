@@ -11,6 +11,7 @@ import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.withContext
 import org.json.JSONArray
+import org.json.JSONObject
 
 /**
  * Real [BrowserRepository], backed by `nomadportal_core.orchestrator`'s
@@ -67,7 +68,21 @@ class RealBrowserRepository : BrowserRepository {
 
     override suspend fun fetchPage(address: PageAddress, identify: Boolean): String = withContext(Dispatchers.IO) {
         try {
-            orchestrator.callAttr("fetch_page_text", address.nodeHash, address.path, identify).toString()
+            // address.params -- a link's fieldSpec (e.g. a geomap zoom
+            // link's `h=8`), folded into PageAddress by BrowserScreen.kt's
+            // handleLink -- as a JSON object string, matching this bridge's
+            // established "structured data crosses as JSON" convention
+            // (fetch_page_text's own doc comment explains the real bug this
+            // fixed: dropping this used to collapse "follow a zoom link"
+            // into "no navigation at all" once the base page was cached).
+            val fieldDataJson = if (address.params.isEmpty()) null else JSONObject(address.params).toString()
+            orchestrator.callAttr(
+                "fetch_page_text",
+                address.nodeHash,
+                address.path,
+                identify,
+                fieldDataJson,
+            ).toString()
         } catch (e: PyException) {
             // Rewrapped as IOException (not left as a raw PyException) to
             // match what StubBrowserRepository already throws and what
