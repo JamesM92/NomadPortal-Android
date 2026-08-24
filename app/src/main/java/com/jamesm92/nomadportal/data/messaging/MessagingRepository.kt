@@ -103,10 +103,11 @@ interface MessagingRepository {
      * [AnnounceStatus.INTERFACE_WIFI_DISCOVERY]. */
     suspend fun setAnnounceMax(interfaceKey: String, seconds: Int)
 
-    /** 0 disables auto-announce for this interface — no separate enabled flag. */
-    suspend fun setAutoAnnounceInterval(interfaceKey: String, seconds: Int)
+    /** 0 disables auto-announce — no separate enabled flag. A single value
+     * shared across every interface, not per-interface. */
+    suspend fun setAutoAnnounceInterval(seconds: Int)
 
-    /** The single aggregate toggle on top of every interface's own auto-announce interval. */
+    /** The single aggregate toggle on top of [AnnounceStatus.autoAnnounceIntervalSeconds]. */
     suspend fun setAutoAnnounceMaster(enabled: Boolean)
 
     /** Manual "Announce now" trigger. Returns true on success. */

@@ -134,9 +134,9 @@ class RealMessagingRepository(private val settings: SettingsRepository) : Messag
         }
     }
 
-    override suspend fun setAutoAnnounceInterval(interfaceKey: String, seconds: Int) {
+    override suspend fun setAutoAnnounceInterval(seconds: Int) {
         withContext(Dispatchers.IO) {
-            orchestrator.callAttr("set_auto_announce_interval", interfaceKey, seconds)
+            orchestrator.callAttr("set_auto_announce_interval", seconds)
         }
     }
 
@@ -285,15 +285,12 @@ class RealMessagingRepository(private val settings: SettingsRepository) : Messag
             val cfg = interfacesObj.getJSONObject(key)
             InterfaceAnnounceConfig(
                 announceMaxSeconds = cfg.optInt("announce_max_seconds", AnnounceStatus.MAX_SECONDS),
-                autoAnnounceIntervalSeconds = cfg.optInt(
-                    "auto_announce_interval_seconds",
-                    AnnounceStatus.MAX_SECONDS,
-                ),
             )
         }
         return AnnounceStatus(
             interfaces = interfaces,
             autoAnnounceMasterEnabled = obj.optBoolean("auto_announce_master_enabled", true),
+            autoAnnounceIntervalSeconds = obj.optInt("auto_announce_interval_seconds", 0),
             lastAnnounceAtMillis = if (obj.isNull("last_announce_at")) {
                 null
             } else {
