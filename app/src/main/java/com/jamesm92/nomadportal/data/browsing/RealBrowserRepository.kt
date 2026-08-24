@@ -35,36 +35,53 @@ class RealBrowserRepository : BrowserRepository {
         Python.getInstance().getModule("nomadportal_core.orchestrator")
     }
 
-    // Real, live-measured fix: get_nodes_json() used to be called
-    // unconditionally on every tick, doing a full copy of every
-    // discovered node plus a json.dumps() of the whole thing — cheap
-    // with a handful of nodes, but a real, confirmed source of
-    // continuous GC pressure and multi-second frame stalls once a
-    // device has a few hundred (real on-device logcat evidence: 30+
-    // "mark compact GC freed ...MB" events and Choreographer reporting
-    // hundreds of skipped frames, all tightly correlated with opening
-    // Sites). get_nodes_version() is a trivial int with no copying —
-    // checking it first means the expensive rebuild only happens on a
-    // tick where something in browser.py's NodeBrowser actually changed
-    // (a new/updated node, or a favorite toggle — see that method's own
-    // doc comment for the full invalidation contract), not every 4s
-    // regardless. Skipping emission on an unchanged tick is intentional,
-    // not an oversight: collectAsState() just keeps showing the last
-    // value, which is correct — nothing about this data actually changed.
+    // Real, live-measured fix — two rounds. Round 1: get_nodes_json() used
+    // to be called unconditionally on every tick, doing a full copy of
+    // every discovered node plus a json.dumps() of the whole thing —
+    // cheap with a handful of nodes, but a real, confirmed source of
+    // continuous GC pressure and multi-second frame stalls once a device
+    // has a few hundred (real on-device logcat evidence: 30+ "mark
+    // compact GC freed ...MB" events and Choreographer reporting
+    // hundreds of skipped frames, tightly correlated with opening
+    // Sites). A first fix just skipped the rebuild when a cheap version
+    // counter hadn't moved — round 2's real finding: on a busy network
+    // (~1 real announce/sec measured live on one device, 2000+ nodes and
+    // climbing), the version moves on nearly every single tick, so
+    // "skip if unchanged" almost never got to skip — the full O(n)
+    // rebuild kept firing regardless. get_nodes_delta_json() is the real
+    // fix: the Python side tracks which specific node changed at which
+    // version (see NodeBrowser.get_nodes_delta's own doc comment), so
+    // each tick only pays for what actually changed (typically a
+    // handful of nodes even during a busy stretch) instead of
+    // re-copying/re-serializing/re-parsing the entire discovered-node
+    // history every time. Held in a local map across ticks and merged
+    // into, not replaced — NodeListScreen already re-sorts client-side
+    // by whichever SortOption the user picked, so the map's own
+    // (unordered) iteration order here doesn't matter.
     override fun discoveredNodes(): Flow<List<NodeInfo>> = flow {
+        val nodesByHash = LinkedHashMap<String, NodeInfo>()
         var lastVersion = -1
         while (true) {
-            val version = orchestrator.callAttr("get_nodes_version").toInt()
-            if (version != lastVersion) {
-                emit(fetchNodes())
-                lastVersion = version
+            val response = JSONObject(orchestrator.callAttr("get_nodes_delta_json", lastVersion).toString())
+            val newVersion = response.getInt("version")
+            if (newVersion != lastVersion) {
+                val changed = parseNodeInfoArray(response.getJSONArray("nodes"))
+                if (response.optBoolean("full", false)) {
+                    nodesByHash.clear()
+                }
+                for (node in changed) {
+                    nodesByHash[node.hash] = node
+                }
+                lastVersion = newVersion
+                if (changed.isNotEmpty() || response.optBoolean("full", false)) {
+                    emit(nodesByHash.values.toList())
+                }
             }
             delay(POLL_INTERVAL_MS)
         }
     }.flowOn(Dispatchers.IO)
 
-    private fun fetchNodes(): List<NodeInfo> {
-        val array = JSONArray(orchestrator.callAttr("get_nodes_json").toString())
+    private fun parseNodeInfoArray(array: JSONArray): List<NodeInfo> {
         return (0 until array.length()).map { i ->
             val obj = array.getJSONObject(i)
             val hash = obj.getString("hash")

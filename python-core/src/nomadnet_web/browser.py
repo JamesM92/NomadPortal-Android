@@ -232,18 +232,32 @@ class NodeBrowser:
         # Cheap poll-invalidation counter -- deliberately separate from
         # _nodes_dirty above (that one's about disk persistence, this one's
         # about "has anything get_nodes() would return actually changed").
-        # RealBrowserRepository.kt's discoveredNodes() poll checks this via
-        # get_nodes_version() (a trivial int, no lock contention with the
-        # real work) before paying for get_nodes_json()'s full
-        # copy-every-record-and-json.dumps() — a real, measured source of
-        # continuous GC pressure once a device has a few hundred discovered
-        # nodes, since that used to run unconditionally every poll tick
-        # regardless of whether anything changed. Bumped from every real
-        # mutation site below, plus set_favorite()'s user_sub branch
-        # (which intentionally does NOT call _mark_nodes_dirty — favorites
-        # persist through a separate path — so it needs its own bump here).
+        # Originally just a plain "skip the full rebuild if this hasn't
+        # moved since last tick" check, which was enough on a quiet
+        # network but not on a busy one (~1 real announce/sec observed
+        # live on one device — nearly every tick has *some* change, so a
+        # global-only version rarely got to skip anything). Now paired
+        # with _node_last_changed_version below for real per-node delta
+        # tracking — see get_nodes_delta()'s and _touch_node's own doc
+        # comments for the full design. Bumped from every real mutation
+        # site (via _touch_node, or _mark_nodes_dirty for the bulk/
+        # hop-cache-only cases that don't cleanly attribute to one hash).
         self._nodes_version = 0
         self._nodes_version_lock = threading.Lock()
+        # Per-hash companion to _nodes_version -- records the version at
+        # which each specific node last changed, so get_nodes_delta() can
+        # answer "which nodes changed since version N" in O(changed)
+        # instead of O(all discovered nodes). Grows in step with
+        # self.nodes (one int per known hash), same bound, negligible
+        # overhead. See _touch_node's own doc comment for the real,
+        # measured problem this closes: a busy network can bump
+        # _nodes_version on nearly every single poll tick (~1
+        # announce/sec observed live on one device), which made the
+        # plain "skip if version unchanged" check above alone
+        # insufficient -- it almost never got to skip, so the full O(n)
+        # rebuild kept firing on every tick regardless once the node
+        # count grew past a couple thousand.
+        self._node_last_changed_version: dict = {}
         self._nodes_stop_event = threading.Event()
         threading.Thread(
             target=self._nodes_persist_loop,
@@ -945,46 +959,8 @@ class NodeBrowser:
 
         needs_persist = False
         for node in nodes:
-            node["is_hosted"]  = node["hash"] == hosted
-            node["is_default"] = bool(default) and node["hash"] == default
-            if node["is_hosted"]:
-                # Locally-hosted destinations aren't in the path table, so
-                # hops_to() returns the sentinel. Pin to 0 → renders "local".
-                node["hops"] = 0
-            else:
-                live = self._hop_count(node["hash"])
-                if live is not None:
-                    node["hops"] = live
-                    # Cache last known hops so it survives restarts/path-table flushes.
-                    # Treat as FYI — the live value always wins when available.
-                    with self._lock:
-                        stored = self.nodes.get(node["hash"])
-                        if stored and stored.get("last_known_hops") != live:
-                            stored["last_known_hops"] = live
-                            needs_persist = True
-                else:
-                    node["hops"] = node.get("last_known_hops")
-            # Per-user fav_set only exists when user_sub is truthy (see
-            # above — it's built from self._favorites.get(user_sub, [])
-            # gated by `if user_sub else set()`). In anonymous/single-user
-            # mode (user_sub="" — nomadportal-android's actual usage
-            # throughout, no auth), fav_set is always empty, so this used
-            # to unconditionally clobber back to False here even right
-            # after set_favorite()'s anonymous branch (see that method's
-            # own comment: "Anonymous favorites... a debug-grade feature")
-            # had just written node["favorited"] = value directly onto
-            # this same dict — the write always succeeded, the read-back
-            # silently discarded it every time. Honor that stored value
-            # when there's no per-user set to consult instead.
-            is_favorited = (node["hash"] in fav_set) if user_sub else bool(node.get("favorited", False))
-            node["favorited"] = (
-                node["is_hosted"]
-                or node["is_default"]
-                or is_favorited
-            )
-            # Always reflect the current name for the hosted node.
-            if node["is_hosted"] and self._hosted_name:
-                node["name"] = self._hosted_name
+            if self._annotate_node(node, hosted, default, fav_set, user_sub):
+                needs_persist = True
 
         if needs_persist:
             self._mark_nodes_dirty()
@@ -996,6 +972,117 @@ class NodeBrowser:
             -n["last_seen"],
         ))
         return nodes
+
+    def _annotate_node(
+        self, node: dict, hosted: str, default: str, fav_set: set, user_sub: str,
+    ) -> bool:
+        """Mutates `node` in place with the derived fields get_nodes() has
+        always computed per-node (is_hosted/is_default/hops/favorited/
+        name) — factored out of get_nodes()'s own loop so get_nodes_delta()
+        can reuse the exact same per-node logic for just the changed
+        subset, rather than a second hand-rolled copy that could drift
+        (this project's own "don't hand-roll a second implementation"
+        convention). Returns True if last_known_hops was updated (the
+        caller's cue to mark nodes dirty for persistence).
+        """
+        node["is_hosted"]  = node["hash"] == hosted
+        node["is_default"] = bool(default) and node["hash"] == default
+        needs_persist = False
+        if node["is_hosted"]:
+            # Locally-hosted destinations aren't in the path table, so
+            # hops_to() returns the sentinel. Pin to 0 → renders "local".
+            node["hops"] = 0
+        else:
+            live = self._hop_count(node["hash"])
+            if live is not None:
+                node["hops"] = live
+                # Cache last known hops so it survives restarts/path-table flushes.
+                # Treat as FYI — the live value always wins when available.
+                with self._lock:
+                    stored = self.nodes.get(node["hash"])
+                    if stored and stored.get("last_known_hops") != live:
+                        stored["last_known_hops"] = live
+                        needs_persist = True
+            else:
+                node["hops"] = node.get("last_known_hops")
+        # Per-user fav_set only exists when user_sub is truthy (see
+        # get_nodes()'s own comment — built from
+        # self._favorites.get(user_sub, []) gated by `if user_sub else
+        # set()`). In anonymous/single-user mode (user_sub="" —
+        # nomadportal-android's actual usage throughout, no auth),
+        # fav_set is always empty, so this used to unconditionally
+        # clobber back to False here even right after set_favorite()'s
+        # anonymous branch (see that method's own comment:
+        # "Anonymous favorites... a debug-grade feature") had just
+        # written node["favorited"] = value directly onto this same
+        # dict — the write always succeeded, the read-back silently
+        # discarded it every time. Honor that stored value when there's
+        # no per-user set to consult instead.
+        is_favorited = (node["hash"] in fav_set) if user_sub else bool(node.get("favorited", False))
+        node["favorited"] = (
+            node["is_hosted"]
+            or node["is_default"]
+            or is_favorited
+        )
+        # Always reflect the current name for the hosted node.
+        if node["is_hosted"] and self._hosted_name:
+            node["name"] = self._hosted_name
+        return needs_persist
+
+    def get_nodes_delta(
+        self, since_version: int, user_sub: str = "", default_hash: str = "",
+    ) -> dict:
+        """Cheap incremental sibling of get_nodes() — RealBrowserRepository.kt's
+        poll calls this instead once it has a known baseline version, so a
+        busy network doesn't force a full O(n) rebuild (dict-copy + a
+        real RNS path-table lookup per node + json.dumps) on every single
+        tick regardless of how much actually changed. Real, live-measured
+        motivation: one device saw ~1 real announce/sec continuously —
+        at that rate a plain "skip if nothing changed" check almost never
+        gets to skip, so the fix has to be "only touch what changed",
+        not just "sometimes skip the whole thing".
+
+        Returns {"version": int, "full": bool, "nodes": [...]}. "full" is
+        True when since_version is unknown/stale (the very first poll of
+        a fresh Flow collection, or a version the server can no longer
+        make sense of) — the caller should treat "nodes" as a complete
+        replacement in that case, not a merge. Note: a hosted/default
+        node that has never actually announced (still a synthesised
+        placeholder in get_nodes(), not a real self.nodes entry) can only
+        ever appear via the full path, since there's no real hash to
+        attribute a version-bump to for something that doesn't exist yet
+        — an accepted, minor gap, not a correctness bug for any node that
+        actually has a real record.
+        """
+        current = self.get_nodes_version()
+        if since_version <= 0 or since_version > current:
+            return {"version": current, "full": True, "nodes": self.get_nodes(user_sub, default_hash)}
+
+        with self._nodes_version_lock:
+            changed_hashes = [
+                h for h, v in self._node_last_changed_version.items() if v > since_version
+            ]
+        if not changed_hashes:
+            return {"version": current, "full": False, "nodes": []}
+
+        hosted  = self._hosted_hash.lower() if self._hosted_hash else ""
+        default = (default_hash or "").lower()
+        with self._lock:
+            nodes = [dict(self.nodes[h]) for h in changed_hashes if h in self.nodes]
+            fav_set = {
+                f["hash"]
+                for f in self._favorites.get(user_sub, [])
+                if (f.get("path") or "/") == "/"
+            } if user_sub else set()
+
+        needs_persist = False
+        for node in nodes:
+            if self._annotate_node(node, hosted, default, fav_set, user_sub):
+                needs_persist = True
+        if needs_persist:
+            self._mark_nodes_dirty()
+
+        return {"version": current, "full": False, "nodes": nodes}
 
     def get_node(self, hash_hex: str) -> Optional[dict]:
         with self._lock:
@@ -1914,7 +2001,7 @@ class NodeBrowser:
             return existing
         record = self._new_node_record(hash_hex, name or (hash_hex[:16] + "…"))
         self.nodes[hash_hex] = record
-        self._mark_nodes_dirty()
+        self._touch_node(hash_hex)
         return record
 
     def seed_default_favorite(self, hash_hex: str, name: str, user_sub: str = "") -> None:
@@ -1995,13 +2082,17 @@ class NodeBrowser:
                 node["favorited"] = value
         if user_sub:
             self._persist_favorites(fav_snapshot)
-            # Doesn't touch self.nodes, so _mark_nodes_dirty() above never
-            # runs for this branch — but get_nodes()'s "favorited" field
-            # still depends on this, so the poll-invalidation counter
-            # needs its own explicit bump here too.
-            self._bump_nodes_version()
+            # Doesn't touch self.nodes, so _touch_node() isn't reached via
+            # the else branch below — but get_nodes()'s "favorited" field
+            # still depends on this, so the delta-tracking counter needs
+            # its own explicit touch here too (path may not be "/", in
+            # which case this is a harmless spurious touch — get_nodes()
+            # only surfaces path=="/" favorites on the node-list star
+            # anyway, and over-touching costs nothing but an extra
+            # version bump).
+            self._touch_node(hash_hex)
         else:
-            self._mark_nodes_dirty()
+            self._touch_node(hash_hex)
         return True
 
     def get_favorites(self, user_sub: str = "") -> list:
@@ -2136,7 +2227,7 @@ class NodeBrowser:
             hash_hex[:12], name,
             self.nodes[hash_hex].get("announce_count", 1),
         )
-        self._mark_nodes_dirty()
+        self._touch_node(hash_hex)
 
     def _record_fetch(self, hash_hex: str, rx_bytes: int, load_ms: int,
                       ok: bool = True, update_status: bool = True):
@@ -2160,7 +2251,7 @@ class NodeBrowser:
                     else int(prev * 0.7 + load_ms * 0.3)
                 )
 
-        self._mark_nodes_dirty()
+        self._touch_node(hash_hex)
 
     def _record_ping(self, hash_hex: str, ping_ms: int):
         with self._lock:
@@ -2168,7 +2259,7 @@ class NodeBrowser:
             if not node:
                 return
             node["last_ping_ms"] = ping_ms
-        self._mark_nodes_dirty()
+        self._touch_node(hash_hex)
 
     # ------------------------------------------------------------------
     # Persistence
@@ -2234,6 +2325,27 @@ class NodeBrowser:
         thread, as often as needed."""
         with self._nodes_version_lock:
             self._nodes_version += 1
+
+    def _touch_node(self, hash_hex: str) -> None:
+        """The per-node counterpart to _mark_nodes_dirty() — call this
+        (instead of, not in addition to) at any site that changes one
+        specific node's own data, so get_nodes_delta() knows exactly
+        which hash to attribute the change to. Deliberately does its own
+        dirty-flag set + version bump inline rather than composing
+        _mark_nodes_dirty()/_bump_nodes_version() — those each take and
+        release _nodes_version_lock separately, which would leave a real
+        (if narrow) race window between "bump the counter" and "record
+        which hash owns this version" where a concurrent call could bump
+        again in between, causing this hash's recorded version to lag
+        behind the actual counter and potentially get missed by a
+        client's delta query. Bumping and recording together under one
+        lock acquisition closes that window.
+        """
+        with self._nodes_dirty_lock:
+            self._nodes_dirty = True
+        with self._nodes_version_lock:
+            self._nodes_version += 1
+            self._node_last_changed_version[hash_hex] = self._nodes_version
 
     def get_nodes_version(self) -> int:
         """RealBrowserRepository.kt's poll checks this before paying for
