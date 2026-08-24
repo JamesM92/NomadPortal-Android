@@ -30,4 +30,17 @@ interface BrowserRepository {
     suspend fun fetchPage(address: PageAddress, identify: Boolean = false): String
 
     suspend fun setFavorite(nodeHash: String, favorite: Boolean)
+
+    /**
+     * Favorites [nodeHash] even if this device has never actually heard an
+     * announce from it — [setFavorite] alone can't do this (it declines
+     * the change for a node that doesn't exist yet in the discovered-node
+     * list). For [DefaultFavoriteSites] seeding only: called exactly once,
+     * right after onboarding completes, so a node this device has no real
+     * announce history for still shows up favorited from first launch.
+     * Never re-applied after that — a user who un-favorites a seeded
+     * default must stay un-favorited, which this being a one-shot call
+     * site (not something re-run on every launch) already guarantees.
+     */
+    suspend fun seedDefaultFavorite(nodeHash: String, name: String)
 }

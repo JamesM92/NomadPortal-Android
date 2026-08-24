@@ -1644,6 +1644,17 @@ def set_node_favorite(hash_hex: str, value: bool) -> bool:
     return _browser.set_favorite(hash_hex, value, user_sub=_active_user_sub)
 
 
+def seed_default_favorite(hash_hex: str, name: str) -> None:
+    """Bridges DefaultFavoriteSites.kt's one-time onboarding-complete
+    seeding to browser.py's seed_default_favorite — see that method's own
+    doc comment for why set_node_favorite alone can't do this (it requires
+    the node to have already announced) and why this must only ever be
+    called once per identity, not on every launch."""
+    if _browser is None:
+        return
+    _browser.seed_default_favorite(hash_hex, name, user_sub=_active_user_sub)
+
+
 # ---------------------------------------------------------------------------
 # Messaging bridge — backs RealMessagingRepository.kt. Same JSON-string
 # rationale as the browsing bridge above.

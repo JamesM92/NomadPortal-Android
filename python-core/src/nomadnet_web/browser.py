@@ -1862,6 +1862,44 @@ class NodeBrowser:
         self._hosted_hash = ""
         self._hosted_name = ""
 
+    def seed_default_favorite(self, hash_hex: str, name: str, user_sub: str = "") -> None:
+        """For DefaultFavoriteSites.kt's one-time onboarding-complete
+        seeding only. set_favorite() alone can't do this — it declines an
+        index-page favorite (path="/") for a node this device has never
+        actually heard announce, which every default site is, by
+        definition, on a fresh install. Creates a minimal node record
+        (same shape as _register_node's real-announce path, but
+        announce_count=0 since none has actually happened yet) only if one
+        doesn't already exist — never overwrites real announce data a
+        node might already have — then favorites it through the normal
+        set_favorite() path, so this behaves identically to the user
+        tapping the star themselves. Callers must call this at most once
+        per identity (Kotlin enforces that by only calling it from the
+        onboarding-complete hook, not on every launch); calling it
+        repeatedly would re-favorite a site the user deliberately
+        un-favorited, defeating "user can always defavorite them"."""
+        hash_hex = hash_hex.lower()
+        now = time.time()
+        with self._lock:
+            if hash_hex not in self.nodes:
+                self.nodes[hash_hex] = {
+                    "hash":           hash_hex,
+                    "name":           name,
+                    "first_seen":     now,
+                    "last_seen":      now,
+                    "announce_count": 0,
+                    "view_count":     0,
+                    "rx_bytes":       0,
+                    "last_load_ms":   None,
+                    "avg_load_ms":    None,
+                    "last_ping_ms":   None,
+                    "last_load_ok":   None,
+                    "ever_load_ok":   False,
+                    "favorited":      False,
+                }
+                self._mark_nodes_dirty()
+        self.set_favorite(hash_hex, True, user_sub=user_sub, path="/", name=name)
+
     def set_favorite(
         self,
         hash_hex: str,
