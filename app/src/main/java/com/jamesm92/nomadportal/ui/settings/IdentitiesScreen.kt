@@ -84,7 +84,8 @@ import kotlinx.coroutines.withContext
 fun IdentitiesScreen(repository: IdentityRepository, onBack: () -> Unit) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
-    val identities by repository.identities().collectAsState(initial = null)
+    val identitiesFlow = remember(repository) { repository.identities() }
+    val identities by identitiesFlow.collectAsState(initial = null)
 
     var creating by remember { mutableStateOf(false) }
     var switchTarget by remember { mutableStateOf<Identity?>(null) }

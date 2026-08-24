@@ -107,8 +107,16 @@ fun ConversationScreen(
     contact: Contact,
     onBack: () -> Unit,
 ) {
-    val messages by repository.messages(contact.lxmfHash).collectAsState(initial = emptyList())
-    val announceStatus by repository.announceStatus().collectAsState(initial = null)
+    // remember()'d -- see NodeListScreen.kt's own doc comment for why an
+    // inline repository.someFlow().collectAsState() call restarts the
+    // whole poll on every recomposition (a real, confirmed bug, not just
+    // theoretical). Keyed on contact.lxmfHash too, not just repository --
+    // this screen can be reused across different contacts, and the
+    // messages flow must actually restart when that happens.
+    val messagesFlow = remember(repository, contact.lxmfHash) { repository.messages(contact.lxmfHash) }
+    val messages by messagesFlow.collectAsState(initial = emptyList())
+    val announceStatusFlow = remember(repository) { repository.announceStatus() }
+    val announceStatus by announceStatusFlow.collectAsState(initial = null)
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
     var draft by remember { mutableStateOf("") }

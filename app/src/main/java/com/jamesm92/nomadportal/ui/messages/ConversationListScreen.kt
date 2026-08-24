@@ -138,7 +138,12 @@ fun ConversationListScreen(
     callRepository: CallRepository,
     onOpenConversation: (contactHash: String) -> Unit,
 ) {
-    val conversations by repository.conversations().collectAsState(initial = emptyList())
+    // remember()'d -- see NodeListScreen.kt's own doc comment for why an
+    // inline repository.someFlow().collectAsState() call restarts the
+    // whole poll on every recomposition (a real, confirmed bug, not just
+    // theoretical).
+    val conversationsFlow = remember(repository) { repository.conversations() }
+    val conversations by conversationsFlow.collectAsState(initial = emptyList())
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
     var searchQuery by remember { mutableStateOf("") }
@@ -568,7 +573,8 @@ fun ConversationListScreen(
                     }
                 }
             } else {
-                val callHistory by callRepository.callHistory().collectAsState(initial = emptyList())
+                val callHistoryFlow = remember(callRepository) { callRepository.callHistory() }
+                val callHistory by callHistoryFlow.collectAsState(initial = emptyList())
                 CallsTab(
                     history = callHistory,
                     onCallByAddress = { showCallByAddress = true },
@@ -673,12 +679,14 @@ fun ConversationListScreen(
  */
 @Composable
 private fun PropagationSyncDialog(repository: MessagingRepository, onDismiss: () -> Unit) {
-    val status by repository.propagationSyncStatus().collectAsState(initial = null)
+    val statusFlow = remember(repository) { repository.propagationSyncStatus() }
+    val status by statusFlow.collectAsState(initial = null)
     // Only retryViaRelay is actually used from this — see this
     // property's own doc comment. Pulling the whole AnnounceStatus flow
     // just for one boolean is the same trade-off Settings' own Privacy
     // section already accepts for the same reason.
-    val announceStatus by repository.announceStatus().collectAsState(initial = null)
+    val announceStatusFlow = remember(repository) { repository.announceStatus() }
+    val announceStatus by announceStatusFlow.collectAsState(initial = null)
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
     var syncing by remember { mutableStateOf(false) }

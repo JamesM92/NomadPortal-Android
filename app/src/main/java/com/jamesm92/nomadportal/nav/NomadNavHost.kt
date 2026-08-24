@@ -17,6 +17,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.produceState
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
@@ -139,15 +140,30 @@ fun NomadNavHost(
     // CallOverlay's own doc comment).
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
-    val callState by callRepository.callState().collectAsState(initial = CallState.IDLE)
+    // remember()'d, not called inline: a repository's flow-returning
+    // function returns a fresh flow{} instance (no equals() override) on
+    // every call, and collectAsState() restarts its whole poll whenever
+    // the flow instance it was given changes identity between
+    // recompositions. Calling it inline restarts the poll on every
+    // recomposition of this composable, not just once — and since this is
+    // the root composable, that recomposition cascades into every screen
+    // below it. Confirmed as a real, measurable bug (not just theoretical)
+    // via on-device timing on NodeListScreen/BrowserScreen's identical
+    // pattern: fetchNodes() firing 14 times in under 2 seconds after a
+    // single navigation before this fix, 1 time after — see those files'
+    // own doc comments for the full investigation.
+    val callStateFlow = remember(callRepository) { callRepository.callState() }
+    val callState by callStateFlow.collectAsState(initial = CallState.IDLE)
 
     // Powers the bottom nav's Messages/Settings badges — collected once
     // here rather than duplicated per-screen (HomeScreen/NodeListScreen
     // each used to compute their own copy of totalUnread independently
     // before the redesign).
-    val conversations by messagingRepository.conversations().collectAsState(initial = emptyList())
+    val conversationsFlow = remember(messagingRepository) { messagingRepository.conversations() }
+    val conversations by conversationsFlow.collectAsState(initial = emptyList())
     val totalUnread = conversations.sumOf { it.unreadCount }
-    val hasDownTcpConnection by interfaceController.hasDownTcpConnection().collectAsState(initial = false)
+    val hasDownTcpConnectionFlow = remember(interfaceController) { interfaceController.hasDownTcpConnection() }
+    val hasDownTcpConnection by hasDownTcpConnectionFlow.collectAsState(initial = false)
 
     val currentRoute = navController.currentBackStackEntryAsState().value?.destination?.route
 

@@ -160,7 +160,8 @@ fun BrowserScreen(
     // PageCacheStore's own doc comment) — activeIdentity stays null
     // until the active identity's actually known, same "nothing to key
     // the cache off of yet" reasoning as pageCacheEnabled below.
-    val identities by identityRepository.identities().collectAsState(initial = emptyList())
+    val identitiesFlow = remember(identityRepository) { identityRepository.identities() }
+    val identities by identitiesFlow.collectAsState(initial = emptyList())
     val activeIdentity = identities.find { it.isActive }
     // Real caching only actually happens once both the user setting is
     // on AND an active identity is known to key it by — either missing
@@ -178,7 +179,20 @@ fun BrowserScreen(
     // back to a truncated hash if this node hasn't been discovered via an
     // announce yet (e.g. navigated to directly by hash, or the announce
     // hasn't arrived since app start).
-    val nodes by repository.discoveredNodes().collectAsState(initial = emptyList())
+    //
+    // remember()'d for the same reason as NodeListScreen's identical fix:
+    // repository.discoveredNodes() returns a fresh flow{} instance (no
+    // equals() override) on every call, and collectAsState() restarts its
+    // whole poll whenever the flow instance it was given changes identity
+    // between recompositions — calling it inline restarts the poll on
+    // every recomposition of this screen, not just once. Directly measured
+    // as a real contributor (not just theoretical) to the Sites tab
+    // thrashing investigation: fixing NodeListScreen alone only halved the
+    // spurious-call rate (14 -> 7 in ~1.2s after one navigation); this
+    // screen's own unmemoized subscription — still alive/transitioning
+    // during exactly that same back-navigation — was the other half.
+    val nodesFlow = remember(repository) { repository.discoveredNodes() }
+    val nodes by nodesFlow.collectAsState(initial = emptyList())
 
     var history by remember { mutableStateOf(listOf(startAddress)) }
     var historyIndex by remember { mutableStateOf(0) }

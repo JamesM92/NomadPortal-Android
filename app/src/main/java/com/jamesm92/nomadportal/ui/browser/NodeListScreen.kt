@@ -85,7 +85,20 @@ fun NodeListScreen(
     repository: BrowserRepository,
     onOpenNode: (nodeHash: String) -> Unit,
 ) {
-    val nodes by repository.discoveredNodes().collectAsState(initial = emptyList())
+    // remember()'d, not called inline: repository.discoveredNodes() returns
+    // a fresh flow { ... } builder instance (plain Object identity, no
+    // equals() override) on every call. collectAsState()'s underlying
+    // produceState() restarts its collection whenever the flow instance it
+    // was given changes identity between recompositions -- calling
+    // discoveredNodes() directly inside collectAsState() therefore restarts
+    // the whole poll (back to the emptyList() initial value) on every
+    // single recomposition of this composable, not just once. Confirmed via
+    // real on-device timing: fetchNodes() firing 14 times in under 2
+    // seconds after a single navigation, versus the intended one call per
+    // POLL_INTERVAL_MS (4s) -- see the debugging-rigor-tracked "Sites tab
+    // shows nothing for a while after navigating back" investigation.
+    val nodesFlow = remember(repository) { repository.discoveredNodes() }
+    val nodes by nodesFlow.collectAsState(initial = emptyList())
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
     var searchQuery by remember { mutableStateOf("") }

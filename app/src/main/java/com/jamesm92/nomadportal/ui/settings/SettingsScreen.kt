@@ -207,12 +207,22 @@ fun SettingsScreen(
     // Matches SettingsRepository.themeMode's own real default (DARK, not
     // SYSTEM — see that property's own doc comment).
     val themeMode by settingsRepository.themeMode.collectAsState(initial = ThemeMode.DARK)
-    val announceStatus by messagingRepository.announceStatus().collectAsState(initial = null)
-    val conversations by messagingRepository.conversations().collectAsState(initial = emptyList())
-    val hostedNodeStatus by interfaceController.hostedNodeStatus().collectAsState(initial = null)
-    val tcpConnections by tcpConnectionsRepository.connections().collectAsState(initial = emptyList())
-    val identities by identityRepository.identities().collectAsState(initial = emptyList())
-    val rnshHistory by rnshHistoryRepository.history().collectAsState(initial = emptyList())
+    // remember()'d -- see NodeListScreen.kt's own doc comment for why an
+    // inline repository.someFlow().collectAsState() call restarts the
+    // whole poll on every recomposition (a real, confirmed bug, not just
+    // theoretical).
+    val announceStatusFlow = remember(messagingRepository) { messagingRepository.announceStatus() }
+    val announceStatus by announceStatusFlow.collectAsState(initial = null)
+    val conversationsFlow = remember(messagingRepository) { messagingRepository.conversations() }
+    val conversations by conversationsFlow.collectAsState(initial = emptyList())
+    val hostedNodeStatusFlow = remember(interfaceController) { interfaceController.hostedNodeStatus() }
+    val hostedNodeStatus by hostedNodeStatusFlow.collectAsState(initial = null)
+    val tcpConnectionsFlow = remember(tcpConnectionsRepository) { tcpConnectionsRepository.connections() }
+    val tcpConnections by tcpConnectionsFlow.collectAsState(initial = emptyList())
+    val identitiesFlow = remember(identityRepository) { identityRepository.identities() }
+    val identities by identitiesFlow.collectAsState(initial = emptyList())
+    val rnshHistoryFlow = remember(rnshHistoryRepository) { rnshHistoryRepository.history() }
+    val rnshHistory by rnshHistoryFlow.collectAsState(initial = emptyList())
 
     val tcpEnabled by interfaceController.tcpEnabled.collectAsState()
     val bluetoothMeshEnabled by interfaceController.bluetoothMeshEnabled.collectAsState()
