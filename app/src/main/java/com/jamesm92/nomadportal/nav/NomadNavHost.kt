@@ -19,6 +19,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.navigation.NavGraph.Companion.findStartDestination
 import androidx.navigation.NavHostController
 import androidx.navigation.compose.NavHost
@@ -29,6 +30,7 @@ import com.jamesm92.nomadportal.connectivity.InterfaceController
 import com.jamesm92.nomadportal.connectivity.TcpConnectionsRepository
 import com.jamesm92.nomadportal.data.SettingsRepository
 import com.jamesm92.nomadportal.data.browsing.BrowserRepository
+import com.jamesm92.nomadportal.data.browsing.DefaultFavoriteSites
 import com.jamesm92.nomadportal.data.browsing.PageAddress
 import com.jamesm92.nomadportal.data.browsing.PageCacheStore
 import com.jamesm92.nomadportal.data.calling.CallRepository
@@ -136,6 +138,7 @@ fun NomadNavHost(
     // incoming call interrupts whatever screen you're on" behavior (see
     // CallOverlay's own doc comment).
     val scope = rememberCoroutineScope()
+    val context = LocalContext.current
     val callState by callRepository.callState().collectAsState(initial = CallState.IDLE)
 
     // Powers the bottom nav's Messages/Settings badges — collected once
@@ -195,7 +198,23 @@ fun NomadNavHost(
                 messagingRepository = messagingRepository,
                 interfaceController = interfaceController,
                 onComplete = {
-                    scope.launch { settingsRepository.setOnboardingComplete(true) }
+                    scope.launch {
+                        settingsRepository.setOnboardingComplete(true)
+                        // One-shot only -- see DefaultFavoriteSites' own doc
+                        // comment for why this must never run again after
+                        // onboarding (a re-run would silently re-favorite a
+                        // site the user deliberately un-favorited later).
+                        val identityId = identityRepository.identities().first()
+                            .find { it.isActive }?.id
+                        if (identityId != null) {
+                            DefaultFavoriteSites.seedInto(
+                                context = context,
+                                browserRepository = browserRepository,
+                                pageCacheStore = pageCacheStore,
+                                identityId = identityId,
+                            )
+                        }
+                    }
                     navController.navigate(Routes.MESSAGES) {
                         popUpTo(Routes.ONBOARDING) { inclusive = true }
                     }

@@ -102,6 +102,12 @@ class RealBrowserRepository : BrowserRepository {
         }
     }
 
+    override suspend fun seedDefaultFavorite(nodeHash: String, name: String) {
+        withContext(Dispatchers.IO) {
+            orchestrator.callAttr("seed_default_favorite", nodeHash, name)
+        }
+    }
+
     private companion object {
         const val POLL_INTERVAL_MS = 4000L
     }
