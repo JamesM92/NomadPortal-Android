@@ -1,5 +1,6 @@
 package com.jamesm92.nomadportal.ui.browser
 
+import android.content.res.Configuration
 import androidx.compose.animation.animateContentSize
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.clickable
@@ -8,6 +9,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
@@ -24,18 +26,23 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.SecondaryTabRow
+import androidx.compose.material3.Tab
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.jamesm92.nomadportal.data.browsing.BrowserRepository
@@ -62,21 +69,28 @@ import kotlinx.coroutines.launch
  * Discovered-node list (porting-notes.md §4): hop count, last-fetch-ok/fail
  * indicator, favorites, time since last announce. Real RNS
  * announce-listening as of Aug 2026 — see
- * [com.jamesm92.nomadportal.data.browsing.RealBrowserRepository]. Split
- * into two sections — favorited nodes first, then everything heard on
- * the mesh (favoriting adds a copy here, it doesn't remove the node from
- * "Announces heard") — so a busy hub's announce volume doesn't bury the
- * handful of nodes someone actually cares about. Both section headers
- * live directly in the outer [Column], not inside either section's own
- * [LazyColumn] — so they're always visible above their (independently
- * scrolling) content without needing `LazyColumn.stickyHeader` at all
- * (tried first; real device testing showed it not actually staying
- * pinned once scrolled past — this sidesteps the whole mechanism rather
- * than chasing it further). Exactly one section is ever expanded at a
- * time — see [com.jamesm92.nomadportal.ui.messages.ConversationListScreen]'s
- * identical `favoritesOpen` pattern/doc comment, mirrored here per
- * explicit follow-up request once that fix landed on the Messages
- * screen first.
+ * [com.jamesm92.nomadportal.data.browsing.RealBrowserRepository]. Two real
+ * sub-tabs — **Favorites** and **Announces heard** — mirroring
+ * [com.jamesm92.nomadportal.ui.messages.ConversationListScreen]'s
+ * Chats/Calls/Users [SecondaryTabRow] pattern, per explicit follow-up
+ * request. Favoriting adds a copy to the Favorites tab; it doesn't remove
+ * the node from Announces heard (the two aren't a mutually-exclusive
+ * partition — same convention as Messages' Favorites/General split).
+ *
+ * This replaced an earlier same-screen collapsible-section design (one
+ * `favoritesOpen` boolean, both sections sharing one scroll area) — real
+ * separate tabs read more clearly as "two different lists," and match
+ * how Messages already does the identical Favorites-vs-everything-heard
+ * split for contacts via Chats vs. Users, rather than two different UI
+ * patterns for the same underlying distinction.
+ *
+ * Tab declaration order and `selectedTab` tag values are deliberately
+ * kept identical (Favorites=0, Announces=1, declared in exactly that
+ * order) — see [com.jamesm92.nomadportal.ui.messages.ConversationListScreen]'s
+ * own doc comment for the real on-device crash
+ * (`IndexOutOfBoundsException` in `TabIndicatorOffsetNode.measure`) a
+ * position/tag mismatch caused there; don't reintroduce that gap here
+ * either.
  */
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -104,6 +118,7 @@ fun NodeListScreen(
     var searchQuery by remember { mutableStateOf("") }
     var showAddByAddress by remember { mutableStateOf(false) }
     var sortOption by remember { mutableStateOf(SortOption.RECENT) }
+    var selectedTab by remember { mutableIntStateOf(0) }
 
     // Optimistic favorite toggling — same fix/rationale as
     // ConversationListScreen's identical `favoriteOverrides`: discoveredNodes()
@@ -178,34 +193,75 @@ fun NodeListScreen(
     val favorites = rememberStableOrder(sortedNodes.filter { it.isFavorite }, key = { it.hash })
     val announcesHeard = rememberStableOrder(sortedNodes, key = { it.hash })
 
-    // Exactly one of Favorites/Announces heard is ever open — see this
-    // file's own doc comment / ConversationListScreen's identical
-    // `favoritesOpen`: opening one always closes the other, closing one
-    // always opens the other. Both headers just flip this single flag.
-    var favoritesOpen by remember { mutableStateOf(true) }
+    val isLandscape = LocalConfiguration.current.orientation == Configuration.ORIENTATION_LANDSCAPE
 
     Scaffold(
         topBar = {
-            AdaptiveTopAppBar(
-                title = { Text("Sites") },
-                // No back arrow, no cross-nav icons — Nodes is now a
-                // real bottom-nav tab (NomadNavHost.kt), same as Home/
-                // Messages/Settings; switching tabs is the way back.
-                // BrowserScreen (one specific node's page) still has its
-                // own back arrow, unaffected — it's a pushed detail
-                // screen, not a top-level tab.
-                actions = {
-                    PanicWipeLogo(
-                        modifier = Modifier.padding(end = 8.dp),
-                        onTripleTap = {
-                            scope.launch {
-                                PanicWipe.perform(context)
-                                PanicWipe.restartApp(context)
-                            }
+            Column {
+                AdaptiveTopAppBar(
+                    title = { Text("Sites") },
+                    // No back arrow, no cross-nav icons — Nodes is now a
+                    // real bottom-nav tab (NomadNavHost.kt), same as Home/
+                    // Messages/Settings; switching tabs is the way back.
+                    // BrowserScreen (one specific node's page) still has
+                    // its own back arrow, unaffected — it's a pushed
+                    // detail screen, not a top-level tab.
+                    actions = {
+                        PanicWipeLogo(
+                            modifier = Modifier.padding(end = 8.dp),
+                            onTripleTap = {
+                                scope.launch {
+                                    PanicWipe.perform(context)
+                                    PanicWipe.restartApp(context)
+                                }
+                            },
+                        )
+                    },
+                )
+                // Same SecondaryTabRow shape as ConversationListScreen's
+                // Chats/Calls/Users — see this file's own top doc comment
+                // for why position and tag must always match (Favorites=0,
+                // Announces=1).
+                SecondaryTabRow(
+                    selectedTabIndex = selectedTab,
+                    modifier = Modifier.height(if (isLandscape) 28.dp else 36.dp),
+                ) {
+                    Tab(
+                        selected = selectedTab == 0,
+                        onClick = { selectedTab = 0 },
+                        text = {
+                            Text(
+                                "Favorites",
+                                style = MaterialTheme.typography.labelMedium.copy(
+                                    fontWeight = if (selectedTab == 0) FontWeight.Bold else FontWeight.Normal,
+                                ),
+                                color = if (selectedTab == 0) {
+                                    MaterialTheme.colorScheme.primary
+                                } else {
+                                    NomadTextDim
+                                },
+                            )
                         },
                     )
-                },
-            )
+                    Tab(
+                        selected = selectedTab == 1,
+                        onClick = { selectedTab = 1 },
+                        text = {
+                            Text(
+                                "Announces",
+                                style = MaterialTheme.typography.labelMedium.copy(
+                                    fontWeight = if (selectedTab == 1) FontWeight.Bold else FontWeight.Normal,
+                                ),
+                                color = if (selectedTab == 1) {
+                                    MaterialTheme.colorScheme.primary
+                                } else {
+                                    NomadTextDim
+                                },
+                            )
+                        },
+                    )
+                }
+            }
         },
     ) { innerPadding ->
         Column(
@@ -218,7 +274,7 @@ fun NodeListScreen(
                 SearchField(
                     query = searchQuery,
                     onQueryChange = { searchQuery = it },
-                    placeholder = "Search sites",
+                    placeholder = if (selectedTab == 0) "Search favorites" else "Search announces",
                     modifier = Modifier.weight(1f),
                 )
                 // Search only finds already-discovered nodes (a live
@@ -230,17 +286,18 @@ fun NodeListScreen(
                 SortDropdown(selected = sortOption, onSelect = { sortOption = it })
             }
 
-            // Header always outside any LazyColumn — always visible,
-            // always tappable. Exactly one section is ever expanded (see
-            // favoritesOpen's own doc comment above), so the expanded
-            // one always gets the full remaining space.
-            SectionHeader(
-                title = "Favorites",
-                count = favorites.size,
-                expanded = favoritesOpen,
-                onToggle = { favoritesOpen = !favoritesOpen },
-            )
-            if (favoritesOpen) {
+            // Single-section tab — nothing else competing for space, so
+            // the count header stays non-collapsible (matches
+            // ConversationListScreen's Users tab, the same "one list, one
+            // tab" shape).
+            if (selectedTab == 0) {
+                SectionHeader(
+                    title = "Favorites",
+                    count = favorites.size,
+                    expanded = true,
+                    onToggle = {},
+                    collapsible = false,
+                )
                 LazyColumn(modifier = Modifier.weight(1f)) {
                     items(favorites, key = { it.hash }) { node ->
                         NodeRow(
@@ -251,17 +308,14 @@ fun NodeListScreen(
                         HorizontalDivider()
                     }
                 }
-            }
-
-            HorizontalDivider()
-
-            SectionHeader(
-                title = "Announces heard",
-                count = announcesHeard.size,
-                expanded = !favoritesOpen,
-                onToggle = { favoritesOpen = !favoritesOpen },
-            )
-            if (!favoritesOpen) {
+            } else {
+                SectionHeader(
+                    title = "Announces heard",
+                    count = announcesHeard.size,
+                    expanded = true,
+                    onToggle = {},
+                    collapsible = false,
+                )
                 LazyColumn(modifier = Modifier.weight(1f)) {
                     items(announcesHeard, key = { it.hash }) { node ->
                         NodeRow(
@@ -297,11 +351,12 @@ fun NodeListScreen(
 }
 
 /** [collapsible] = false renders a count-only label with no chevron and
- * no click target. Not currently used by [NodeListScreen] (both its
- * sections are always tappable — see `favoritesOpen`'s doc comment) —
- * kept for parity with [com.jamesm92.nomadportal.ui.messages.ConversationListScreen]'s
- * identical `SectionHeader`, which still needs it for the Users tab's
- * single non-collapsible section. */
+ * no click target — used by both of [NodeListScreen]'s tabs now that
+ * Favorites/Announces heard are real separate tabs rather than
+ * collapsible sections sharing one screen (each tab has exactly one
+ * list, nothing to collapse). Same shape as
+ * [com.jamesm92.nomadportal.ui.messages.ConversationListScreen]'s
+ * identical `SectionHeader`/Users tab. */
 @Composable
 private fun SectionHeader(
     title: String,
