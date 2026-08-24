@@ -2526,53 +2526,52 @@ def delete_conversation(hash_hex: str) -> bool:
 # interface carries the actual announce packet* — that's always
 # "however many are active, all of them," by RNS's own design.
 _interface_announce_config: dict = {
-    # auto_announce_interval_seconds defaults to 0 (off) on every
-    # interface, per explicit direction: a freshly created account
-    # shouldn't start out proactively broadcasting its presence on a
-    # timer before the user has actually decided they want that — same
-    # "silent by default" posture node hosting's own auto_announce
-    # already has (see nomadnet_web.site_server.SiteServer's docstring).
-    # A brand-new identity still announces once regardless (this
-    # section's own module doc comment explains why that one is a
-    # protocol requirement, not a policy choice) — this only concerns
-    # the *periodic re*-announce on top of that baseline.
     # announce_max_seconds (the "Message" column — how stale the last
-    # announce may get before a send needs a fresh one first) is a
-    # separate concept and unaffected by this.
+    # announce may get before a send needs a fresh one first) stays a
+    # genuinely per-interface concept — different radios can tolerate
+    # different staleness (Bluetooth's own short-range/short-lived paths
+    # vs. TCP/RNode/WiFi's longer-lived ones). auto_announce_interval_seconds
+    # used to live here too, one independent value per interface — per
+    # explicit direction, that's now a single global value instead (see
+    # _global_auto_announce_interval_seconds below), not duplicated per
+    # interface anymore.
     "tcp": {
         "announce_max_seconds": 3 * 60 * 60,
-        "auto_announce_interval_seconds": 0,
     },
     "bluetooth_mesh": {
         "announce_max_seconds": 15 * 60,
-        "auto_announce_interval_seconds": 0,
     },
     "rnode": {
         "announce_max_seconds": 3 * 60 * 60,
-        "auto_announce_interval_seconds": 0,
     },
     "wifi_discovery": {
         "announce_max_seconds": 3 * 60 * 60,
-        "auto_announce_interval_seconds": 0,
     },
 }
-# How often the background loop wakes up to check whether any active
-# interface's auto_announce_interval_seconds has elapsed.
+# How often the background loop wakes up to check whether
+# _global_auto_announce_interval_seconds has elapsed.
 ANNOUNCE_LOOP_TICK = 30
 _announce_loop_started = False
 
 # Master auto-announce switch shown on Settings' Main tab, on top of
-# each interface's own auto_announce_interval_seconds. Off zeroes every
-# interface's interval (disabling all of them, same 0-means-disabled
-# semantics as everywhere else in this section) while remembering each
-# one's prior nonzero value in _auto_announce_last_intervals, so turning
-# it back on restores exactly what was configured before rather than
-# resetting to defaults. Defaults False, matching every per-interface
-# interval above defaulting to 0 — the UI's own toggle should honestly
-# read "off" from a fresh install, not show "on" while every interface
-# underneath it is individually at 0 auto-announce anyway.
+# _global_auto_announce_interval_seconds below. Off zeroes the interval
+# (same 0-means-disabled semantics as everywhere else in this section)
+# while remembering its prior nonzero value in
+# _last_global_auto_announce_interval_seconds, so turning it back on
+# restores exactly what was configured before rather than resetting to
+# a default. Defaults False, matching the interval below defaulting to
+# 0 — the UI's own toggle should honestly read "off" from a fresh
+# install, not show "on" while the interval underneath it is 0 anyway.
 _auto_announce_master_enabled = False
-_auto_announce_last_intervals: dict = {}
+
+# Single value shared across every interface (was one independent value
+# per interface before — per explicit direction, one shared cadence is
+# simpler to reason about and matches how the Settings UI now shows
+# exactly one control, under "Auto Announce", instead of one per
+# interface section). 0 means disabled, same convention as everywhere
+# else in this section.
+_global_auto_announce_interval_seconds = 0
+_last_global_auto_announce_interval_seconds = 0
 
 
 def _active_announce_configs() -> list:
@@ -2621,16 +2620,15 @@ def _check_send_allowed() -> tuple:
     if not stale:
         return True, None
 
-    any_auto_enabled = any(c["auto_announce_interval_seconds"] > 0 for c in configs)
-    if any_auto_enabled:
+    if _global_auto_announce_interval_seconds > 0:
         _messaging.do_announce(user_sub=_active_user_sub)
         return True, None
 
     return False, (
         "Your identity hasn't announced recently enough to reliably reach "
-        "this contact, and auto-announce is set to 0 (disabled) for every "
-        "currently active connection. Tap Announce now in Settings, or "
-        "set an auto-announce interval, then try again."
+        "this contact, and auto-announce is set to 0 (disabled). Tap "
+        "Announce now in Settings, or set an auto-announce interval, "
+        "then try again."
     )
 
 
@@ -2639,12 +2637,10 @@ def _announce_loop() -> None:
         time.sleep(ANNOUNCE_LOOP_TICK)
         if _messaging is None:
             continue
-        configs = _active_announce_configs()
-        due = [c for c in configs if c["auto_announce_interval_seconds"] > 0]
-        if not due:
+        if _global_auto_announce_interval_seconds <= 0 or not _active_announce_configs():
             continue
         since = _seconds_since_last_announce()
-        if since is None or since >= min(c["auto_announce_interval_seconds"] for c in due):
+        if since is None or since >= _global_auto_announce_interval_seconds:
             _messaging.do_announce(user_sub=_active_user_sub)
 
 
@@ -2696,11 +2692,11 @@ def start_disappearing_sweep_loop() -> None:
 
 def get_announce_status_json() -> str:
     """[AnnounceStatus] shape: interfaces (tcp/bluetooth_mesh/rnode/
-    wifi_discovery -> {announce_max_seconds,
-    auto_announce_interval_seconds} — always all four keys regardless of
-    which are currently active; auto_announce_interval_seconds == 0
-    means disabled for that interface, there's no separate enabled
-    flag), last_announce_at (unix seconds, nullable), lxmf_address
+    wifi_discovery -> {announce_max_seconds} — always all four keys
+    regardless of which are currently active), auto_announce_interval_seconds
+    (a single value shared across every interface, not per-interface —
+    0 means disabled, no separate enabled flag), last_announce_at (unix
+    seconds, nullable), lxmf_address
     (nullable — null before the delivery router exists, e.g. RNS still
     starting up), public_key (nullable, hex — this identity's real RNS
     public key; see messaging.py's own get_announce_status doc comment.
@@ -2773,7 +2769,7 @@ def get_announce_status_json() -> str:
         max_threshold = min(c["announce_max_seconds"] for c in configs)
         since = _seconds_since_last_announce()
         stale = since is None or since >= max_threshold
-        if stale and not any(c["auto_announce_interval_seconds"] > 0 for c in configs):
+        if stale and _global_auto_announce_interval_seconds <= 0:
             send_blocked = True
             send_blocked_reason = (
                 "Identity announce is stale and auto-announce is set to 0 "
@@ -2785,6 +2781,7 @@ def get_announce_status_json() -> str:
     return json.dumps({
         "interfaces": dict(_interface_announce_config),
         "auto_announce_master_enabled": _auto_announce_master_enabled,
+        "auto_announce_interval_seconds": _global_auto_announce_interval_seconds,
         "last_announce_at": last_announce_at,
         "lxmf_address": lxmf_address,
         "public_key": public_key,
@@ -3066,23 +3063,22 @@ def export_identity_file_bytes(identity_id: str):
 
 def set_auto_announce_master(enabled: bool) -> None:
     """The single aggregate toggle Settings' Main tab carries, on top of
-    each interface's own auto_announce_interval_seconds (Settings'
-    per-interface tabs). Off zeroes every interface's interval —
-    disabling all of them via the same 0-means-disabled convention used
-    everywhere else in this section — while remembering each one's
-    prior nonzero value so turning it back on restores exactly what was
-    configured before, not a reset to defaults."""
-    global _auto_announce_master_enabled
+    _global_auto_announce_interval_seconds (Settings' own Auto Announce
+    section). Off zeroes the interval — disabling it via the same
+    0-means-disabled convention used everywhere else in this section —
+    while remembering its prior nonzero value so turning it back on
+    restores exactly what was configured before, not a reset to a
+    default."""
+    global _auto_announce_master_enabled, _global_auto_announce_interval_seconds
+    global _last_global_auto_announce_interval_seconds
     _auto_announce_master_enabled = bool(enabled)
     if enabled:
-        for key, cfg in _interface_announce_config.items():
-            if cfg["auto_announce_interval_seconds"] == 0 and key in _auto_announce_last_intervals:
-                cfg["auto_announce_interval_seconds"] = _auto_announce_last_intervals[key]
+        if _global_auto_announce_interval_seconds == 0 and _last_global_auto_announce_interval_seconds:
+            _global_auto_announce_interval_seconds = _last_global_auto_announce_interval_seconds
     else:
-        for key, cfg in _interface_announce_config.items():
-            if cfg["auto_announce_interval_seconds"] > 0:
-                _auto_announce_last_intervals[key] = cfg["auto_announce_interval_seconds"]
-            cfg["auto_announce_interval_seconds"] = 0
+        if _global_auto_announce_interval_seconds > 0:
+            _last_global_auto_announce_interval_seconds = _global_auto_announce_interval_seconds
+        _global_auto_announce_interval_seconds = 0
 
 
 def set_announce_max(interface_key: str, seconds: int) -> None:
@@ -3104,15 +3100,16 @@ def set_announce_max(interface_key: str, seconds: int) -> None:
     )
 
 
-def set_auto_announce_interval(interface_key: str, seconds: int) -> None:
-    """0 means disabled for this interface — no separate enabled flag
-    (see this section's module-level doc comment). Any nonzero value is
-    clamped to [1 minute, 24 hours], same reasoning as set_announce_max."""
-    if interface_key not in _interface_announce_config:
-        log.warning("Ignoring auto_announce_interval for unknown interface '%s'", interface_key)
-        return
+def set_auto_announce_interval(seconds: int) -> None:
+    """0 means disabled — no separate enabled flag (see this section's
+    module-level doc comment). Any nonzero value is clamped to [1
+    minute, 24 hours], same reasoning as set_announce_max. A single
+    value shared across every interface — per explicit direction, this
+    used to take an interface_key and set one interface's own interval;
+    each interface now only carries its own announce_max_seconds."""
+    global _global_auto_announce_interval_seconds
     clamped = 0 if seconds <= 0 else max(60, min(24 * 60 * 60, int(seconds)))
-    _interface_announce_config[interface_key]["auto_announce_interval_seconds"] = clamped
+    _global_auto_announce_interval_seconds = clamped
 
 
 def announce_now() -> str:
