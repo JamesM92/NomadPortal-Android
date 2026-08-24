@@ -5,6 +5,7 @@ import androidx.compose.material.icons.filled.QrCodeScanner
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -107,8 +108,18 @@ fun AddByAddressDialog(
                 textStyle = TextStyle(fontFamily = NomadMono),
                 placeholder = { Text("Destination hash") },
                 trailingIcon = {
+                    // Real on-device report: this icon had no explicit
+                    // tint, so it inherited OutlinedTextField's dim
+                    // default trailing-icon color and was hard to see.
+                    // primary gives it a clearly visible, branded color,
+                    // matching NodeListScreen's own precedent for "this
+                    // icon starts an action" tinting.
                     IconButton(onClick = { scanning = true }) {
-                        Icon(Icons.Filled.QrCodeScanner, contentDescription = "Scan QR code")
+                        Icon(
+                            Icons.Filled.QrCodeScanner,
+                            contentDescription = "Scan QR code",
+                            tint = MaterialTheme.colorScheme.primary,
+                        )
                     }
                 },
             )
