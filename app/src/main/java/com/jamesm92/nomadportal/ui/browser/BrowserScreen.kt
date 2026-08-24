@@ -81,6 +81,7 @@ import com.jamesm92.micron2compose.parser.LinkRun
 import com.jamesm92.micron2compose.parser.LinkTarget
 import com.jamesm92.micron2compose.parser.MicronConverter
 import com.jamesm92.micron2compose.parser.TextRun
+import com.jamesm92.nomadportal.NomadPortalApp
 import com.jamesm92.nomadportal.data.SettingsRepository
 import com.jamesm92.nomadportal.data.browsing.BrowserRepository
 import com.jamesm92.nomadportal.data.browsing.PageAddress
@@ -310,12 +311,29 @@ fun BrowserScreen(
     // marks FAILED and leaves whatever's already showing alone.
     suspend fun refreshLive(alreadyShowingContent: Boolean) {
         val identityId = activeIdentity?.id
+        val address = currentAddress
+        val identifyNow = identified
         try {
-            val source = repository.fetchPage(currentAddress, identify = identified)
+            // Run on the Application's own long-lived scope, not this
+            // LaunchedEffect's — see NomadPortalApp.resilientAsync's own
+            // doc comment for the real on-device bug this fixes: a
+            // successfully-completed fetch getting silently discarded
+            // because the coroutine calling it had already been cancelled
+            // by the time it returned (an ordinary LaunchedEffect relaunch,
+            // or the Activity being destroyed while the process survives —
+            // e.g. closing the app mid-load). await() below still surfaces
+            // the result normally if this LaunchedEffect is still around;
+            // only a cancellation of *this* coroutine no longer aborts the
+            // fetch or its cache write.
+            val app = context.applicationContext as NomadPortalApp
+            val source = app.resilientAsync {
+                val fetched = repository.fetchPage(address, identify = identifyNow)
+                if (pageCacheEnabled && identityId != null) pageCacheStore.write(identityId, address, fetched)
+                fetched
+            }.await()
             rawSource = source
-            result = converter.convert(source, nodeHash = currentAddress.nodeHash, basePath = currentAddress.path)
+            result = converter.convert(source, nodeHash = address.nodeHash, basePath = address.path)
             fetchStatus = PageFetchStatus.LIVE
-            if (pageCacheEnabled && identityId != null) pageCacheStore.write(identityId, currentAddress, source)
         } catch (e: CancellationException) {
             // Real bug found from an on-device report ("Couldn't load
             // this page: the coroutine scope left the composition" shown
