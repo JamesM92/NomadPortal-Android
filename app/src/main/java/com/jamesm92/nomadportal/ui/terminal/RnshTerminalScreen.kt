@@ -259,10 +259,16 @@ fun RnshTerminalScreen(
     historyRepository: RnshHistoryRepository,
     onBack: () -> Unit,
 ) {
-    val status by repository.status().collectAsState(
+    // remember()'d -- see NodeListScreen.kt's own doc comment for why an
+    // inline repository.someFlow().collectAsState() call restarts the
+    // whole poll on every recomposition (a real, confirmed bug, not just
+    // theoretical).
+    val statusFlow = remember(repository) { repository.status() }
+    val status by statusFlow.collectAsState(
         initial = RnshStatus(RnshConnectionState.IDLE, null, null),
     )
-    val history by historyRepository.history().collectAsState(initial = emptyList())
+    val historyFlow = remember(historyRepository) { historyRepository.history() }
+    val history by historyFlow.collectAsState(initial = emptyList())
     val scope = rememberCoroutineScope()
     // BiometricPrompt needs a real FragmentActivity host — MainActivity was
     // widened to one specifically for this (see its own doc comment). This
