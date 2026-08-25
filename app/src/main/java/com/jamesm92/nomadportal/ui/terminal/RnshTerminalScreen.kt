@@ -1284,6 +1284,25 @@ fun RnshTerminalScreen(
                 // mechanism a chat app's own input toolbar uses) rather
                 // than letting it sit wherever it falls in the normal
                 // layout flow, which the keyboard would otherwise cover.
+                //
+                // UNVERIFIED FLAG (not yet acted on — no live rnsh
+                // listener available to test against at the time this
+                // was written): ConversationScreen.kt and
+                // SitePageEditorScreen.kt both had a real, live-confirmed
+                // bug where an *additional* `.imePadding()` here, on top
+                // of Scaffold's own `innerPadding` (which this project's
+                // current Compose Material3 BOM already folds IME into),
+                // double-counted the keyboard height and collapsed a
+                // weight(1f) sibling (this screen's own terminal-output
+                // Column uses weight(1f) too, in the same parent Column
+                // as this accessory row). This screen's structure looks
+                // analogous enough to be worth checking next time rnsh is
+                // exercised live — but it was deliberately left
+                // unchanged here rather than guessed at, since removing
+                // this without a real repro could just as easily
+                // *introduce* the opposite bug (content sitting under the
+                // keyboard) if this screen's insets turn out to behave
+                // differently. Check live before touching.
                 // NomadBg2 (a step up from the plain-black terminal area
                 // behind it, same tiering every other elevated surface
                 // in this app already uses) plus the zeroed minimum-
