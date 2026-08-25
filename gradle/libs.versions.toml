@@ -81,6 +81,15 @@ androidxWork = "2.11.2"
 # (dl.google.com/android/maven2/androidx/fragment/fragment/maven-
 # metadata.xml) — 1.9.0 is current and already ships the fix.
 androidxFragment = "1.9.0"
+# RNode-over-USB support — root-free Android USB-serial, the same real,
+# independently-maintained library Columba's own real RNode
+# implementation uses (confirmed against its build.gradle.kts this
+# session) rather than a reason to build a second one. Verified latest
+# stable directly against the project's own GitHub Releases page
+# (v3.11.0, published July 2026) — not Columba's older 3.7.0 pin,
+# matching this project's own "verify current, don't copy someone
+# else's possibly-stale pin" convention.
+usbSerialForAndroid = "3.11.0"
 
 [libraries]
 androidx-core-ktx = { group = "androidx.core", name = "core-ktx", version.ref = "coreKtx" }
@@ -117,6 +126,15 @@ zxing-core = { group = "com.google.zxing", name = "core", version.ref = "zxingCo
 androidx-biometric = { group = "androidx.biometric", name = "biometric", version.ref = "androidxBiometric" }
 androidx-work-runtime-ktx = { group = "androidx.work", name = "work-runtime-ktx", version.ref = "androidxWork" }
 androidx-fragment-ktx = { group = "androidx.fragment", name = "fragment-ktx", version.ref = "androidxFragment" }
+# Alias deliberately isn't "usb-serial-for-android" (matching the real
+# Maven artifact name) — Gradle's version-catalog accessor generation
+# turns each dash-delimited segment into a property, and "for" as a bare
+# segment collides with Kotlin's own `for` keyword in the generated
+# accessor (a real build failure hit here, not a preemptive guess):
+# `libs.usb.serial.for.android` doesn't parse. `usb-serial-android`
+# avoids the collision; the actual Maven `name` coordinate below is
+# unaffected either way.
+usb-serial-android = { group = "com.github.mik3y", name = "usb-serial-for-android", version.ref = "usbSerialForAndroid" }
 junit = { group = "junit", name = "junit", version.ref = "junit" }
 androidx-junit = { group = "androidx.test.ext", name = "junit", version.ref = "androidxJunit" }
 androidx-espresso-core = { group = "androidx.test.espresso", name = "espresso-core", version.ref = "espressoCore" }

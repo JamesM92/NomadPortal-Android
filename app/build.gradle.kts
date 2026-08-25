@@ -231,6 +231,10 @@ dependencies {
     // FragmentActivity override and ComponentActivity's ActivityResultRegistry
     // — not a version bump for its own sake).
     implementation(libs.androidx.fragment.ktx)
+    // RNode-over-USB — root-free Android USB-serial. See
+    // libs.versions.toml's own comment for why this specific library
+    // (also what Columba's own real RNode support uses).
+    implementation(libs.usb.serial.android)
 
     testImplementation(libs.junit)
 

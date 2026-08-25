@@ -1,5 +1,7 @@
 package com.jamesm92.nomadportal.connectivity
 
+import com.jamesm92.nomadportal.connectivity.rnode.RnodeConnectionState
+import com.jamesm92.nomadportal.connectivity.rnode.RnodeDeviceInfo
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.StateFlow
 
@@ -66,6 +68,31 @@ data class BluetoothMeshStatus(
 data class InterfaceByteStats(
     val rxBytes: Long,
     val txBytes: Long,
+)
+
+/**
+ * Live radio/firmware status for whichever RNode interface is currently
+ * attached — the "detected platform + firmware version once online" half
+ * of the Settings device-picker UI, separate from [RnodeConnectionState]
+ * (which only tracks the USB link/Python-attach lifecycle, not what the
+ * radio itself reported back). Read directly off `orchestrator.py`'s own
+ * `get_rnode_status_json` — see that function's own doc comment for what
+ * each field means and when it's null. All null/false when no RNode
+ * interface is currently attached, same "not fabricated" convention as
+ * [BluetoothMeshStatus].
+ */
+data class RnodeStatus(
+    val connected: Boolean,
+    val online: Boolean,
+    val platform: Int?,
+    val mcu: Int?,
+    val firmwareMajor: Int?,
+    val firmwareMinor: Int?,
+    val frequencyHz: Long?,
+    val bandwidthHz: Long?,
+    val txPowerDbm: Int?,
+    val spreadingFactor: Int?,
+    val codingRate: Int?,
 )
 
 /**
@@ -209,4 +236,45 @@ interface InterfaceController {
      * key to that rather than treating it as an error.
      */
     fun interfaceByteStats(): Flow<Map<String, InterfaceByteStats>>
+
+    /** Currently-attached USB-serial candidate devices for RNode — see
+     * [com.jamesm92.nomadportal.connectivity.rnode.RnodeUsbManager]'s own
+     * doc comment for discovery/probing details. Always empty on
+     * [NoopInterfaceController]. Not live-updating on its own beyond USB
+     * attach/detach broadcasts — call [refreshRnodeDevices] for an
+     * explicit re-scan (e.g. a Settings screen's own pull-to-refresh). */
+    fun rnodeAvailableDevices(): StateFlow<List<RnodeDeviceInfo>>
+
+    /** Live RNode-over-USB connection state — see [RnodeConnectionState].
+     * Always [RnodeConnectionState.Disconnected] on [NoopInterfaceController]. */
+    fun rnodeConnectionState(): StateFlow<RnodeConnectionState>
+
+    /** Re-enumerates currently-attached USB-serial devices. Cheap and
+     * synchronous — safe to call from a UI refresh action anytime. */
+    fun refreshRnodeDevices()
+
+    /** Connects to `device`, requesting Android's own USB permission
+     * dialog first if not already granted, then running
+     * `NomadRNodeInterface`'s real detect/configure sequence.
+     * `configJson` is the same radio-config JSON shape
+     * `rnode_interface.NomadRNodeInterface`'s constructor expects
+     * (frequency/bandwidth/txpower/spreadingfactor/codingrate/mode) —
+     * see [com.jamesm92.nomadportal.data.SettingsRepository.rNodeConfigJson].
+     * On success, persists `device` + `configJson` for a future
+     * auto-reconnect via [setRNodeEnabled]. Returns false (never throws)
+     * on permission denial or any connect/detect/configure failure —
+     * [rnodeConnectionState] carries the human-readable reason either
+     * way. Always returns false on [NoopInterfaceController]. */
+    suspend fun connectRnode(device: RnodeDeviceInfo, configJson: String): Boolean
+
+    /** Disconnects the current RNode-over-USB connection, if any, without
+     * changing [rNodeEnabled]'s own persisted master-toggle intent (a
+     * user who explicitly disconnects one device while leaving RNode
+     * "on" gets to pick a different device next, not have the toggle
+     * silently flip itself off). No-op on [NoopInterfaceController]. */
+    suspend fun disconnectRnode()
+
+    /** Live radio/firmware status — see [RnodeStatus]. Always all-null/
+     * false on [NoopInterfaceController]. */
+    fun rnodeStatus(): Flow<RnodeStatus>
 }
