@@ -57,6 +57,7 @@ import com.jamesm92.nomadportal.ui.messages.ConversationListScreen
 import com.jamesm92.nomadportal.ui.messages.ConversationScreen
 import com.jamesm92.nomadportal.ui.network.NetworkScreen
 import com.jamesm92.nomadportal.ui.onboarding.OnboardingScreen
+import com.jamesm92.nomadportal.ui.rnode.RNodeFlasherScreen
 import com.jamesm92.nomadportal.ui.settings.AboutScreen
 import com.jamesm92.nomadportal.ui.settings.IdentitiesScreen
 import com.jamesm92.nomadportal.ui.settings.SettingsScreen
@@ -106,6 +107,9 @@ private object Routes {
     // Reached from Settings' own "Privacy" section — see
     // BlockedContactsScreen's own doc comment.
     const val BLOCKED_CONTACTS = "blocked_contacts"
+    // Reached from Settings' own "RNode" section — see
+    // RNodeFlasherScreen's own doc comment.
+    const val RNODE_FLASHER = "rnode_flasher"
     // Reached from a plain row at the bottom of Settings — see
     // AboutScreen's own doc comment.
     const val ABOUT = "about"
@@ -268,7 +272,11 @@ fun NomadNavHost(
                 onOpenIdentities = { navController.navigate(Routes.IDENTITIES) },
                 onOpenBlockedContacts = { navController.navigate(Routes.BLOCKED_CONTACTS) },
                 onOpenAbout = { navController.navigate(Routes.ABOUT) },
+                onOpenRnodeFlasher = { navController.navigate(Routes.RNODE_FLASHER) },
             )
+        }
+        composable(Routes.RNODE_FLASHER) {
+            RNodeFlasherScreen(onBack = { navController.popBackStack() })
         }
         composable(Routes.IDENTITIES) {
             IdentitiesScreen(

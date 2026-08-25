@@ -41,6 +41,17 @@
     <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
     <uses-permission android:name="android.permission.BLUETOOTH_ADVERTISE" />
 
+    <!-- RNode-over-USB (connectivity/rnode/RnodeUsbManager.kt) — Android's
+         USB host API needs no dangerous-protection-level permission at
+         all (per-device access is its own separate, real-time
+         UsbManager.requestPermission() system dialog, not a manifest
+         grant); this <uses-feature> only declares the capability.
+         required="false": same "never a hard device requirement" rule
+         this app already applies to bluetooth_le above — a phone with no
+         USB-host support still installs and runs fine, RNode is just
+         another optional interface. -->
+    <uses-feature android:name="android.hardware.usb.host" android:required="false" />
+
     <!-- Voice-call audio capture (Phase 1b — CallAudioEngine.kt). A
          dangerous-protection-level runtime permission, requested from
          CallOverlay.kt the moment a call is actually being engaged

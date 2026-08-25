@@ -17,6 +17,14 @@ dependencyResolutionManagement {
     repositories {
         google()
         mavenCentral()
+        // usb-serial-for-android (RNode-over-USB support) isn't on Maven
+        // Central — confirmed via a direct search.maven.org query, not
+        // assumed — only distributed via JitPack, same as any other
+        // GitHub-hosted `com.github.<owner>:<repo>` coordinate.
+        maven {
+            url = uri("https://jitpack.io")
+            content { includeGroup("com.github.mik3y") }
+        }
     }
 }
 

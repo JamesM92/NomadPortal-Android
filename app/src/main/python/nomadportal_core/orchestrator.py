@@ -512,12 +512,135 @@ def wait_ready(timeout: float = 300.0) -> bool:
 # not restarting Reticulum() itself.
 # ---------------------------------------------------------------------------
 
-def set_rnode_enabled(enabled: bool, serial_port: str) -> None:
-    """RNodeInterface has a real, correct detach() — safe to add/remove
-    repeatedly. `serial_port` is the USB serial device path; Bluetooth-
-    connected RNode support is a separate future integration (see the
-    RNS_BLE_Wrapper sibling repo), not this function."""
-    _set_interface("rnode", enabled, lambda: _make_rnode(serial_port))
+def set_rnode_bridge(bridge, config_json: str) -> None:
+    """Attaches the RNode-over-USB interface, backed by a live
+    `RnodeUsbBridge` Kotlin object Chaquopy hands across the boundary —
+    see `RnodeUsbBridge.kt`'s own connect flow (USB device enumeration
+    and Android's own permission-grant system dialog both have to
+    happen on the Kotlin side; there's no route to either from Python).
+    Called the moment a real, already-connected bridge exists — same
+    "Kotlin connects first, then hands Python a live object" shape
+    `set_bluetooth_mesh_bridge` above already uses, for the same real
+    reason (neither USB nor BLE device access is reachable from this
+    module's own embedded CPython interpreter).
+
+    `config_json` carries the operator's radio settings (frequency/
+    bandwidth/txpower/spreadingfactor/codingrate/mode) as a JSON string
+    — this module's usual JSON-string-across-the-boundary convention
+    (see the nomadportal-android-conventions skill), not a raw dict.
+    Reuses `_set_interface`'s same attach/detach machinery under the
+    `"rnode"` key, matching `AnnounceStatus.INTERFACE_RNODE`'s own key
+    on the Kotlin side.
+
+    `NomadRNodeInterface.__init__` runs the real detect/configure
+    sequence synchronously (see that class's own doc comment) — a
+    failure there (bad radio params, an unresponsive device) raises,
+    and this function lets that exception surface to the caller rather
+    than silently reporting "attached" for an interface that never
+    actually came online, matching `set_wifi_discovery_enabled`/
+    `set_node_hosting_enabled`'s own "don't swallow a real failure"
+    stance.
+    """
+    import json
+    # nomadportal_core.-qualified, not bare `rnode_interface` — unlike
+    # rns_ble_interface (whose own Chaquopy srcDir root places it
+    # directly at the top, bare-importable), this file lives *inside*
+    # the nomadportal_core package, at the same level nomadnet_web.*'s
+    # own submodules already use this exact qualified form for (see
+    # e.g. `from nomadnet_web.browser import NodeBrowser` above). A
+    # real bug, not a style preference — a bare `from rnode_interface
+    # import ...` here raised a live, on-device ModuleNotFoundError the
+    # first time this code path actually ran.
+    from nomadportal_core.rnode_interface import NomadRNodeInterface
+    import RNS
+    config = json.loads(config_json) if config_json else {}
+    _set_interface("rnode", True, lambda: NomadRNodeInterface(RNS.Transport, config, bridge))
+
+
+def clear_rnode_bridge() -> None:
+    """Detaches the RNode interface — called from the Kotlin RNode
+    manager when the toggle turns off, the USB device is unplugged, or
+    permission is revoked. The `factory` argument to `_set_interface` is
+    never actually invoked on this path, same as
+    `clear_bluetooth_mesh_bridge` above."""
+    _set_interface("rnode", False, lambda: None)
+
+
+def get_rnode_status_json() -> str:
+    """[RnodeStatus] shape: connected (bool), online (bool — connected
+    but the radio may not have finished validating yet),
+    platform/mcu (nullable ints — KISS.PLATFORM_*/raw MCU byte, see
+    `rnode_interface.KISS`), firmware_major/firmware_minor (nullable
+    ints), frequency/bandwidth/txpower/spreading_factor/coding_rate
+    (nullable — the *reported-back* radio params once known, not just
+    what was requested). All null/false when no RNode interface is
+    currently attached — read directly off the live
+    `NomadRNodeInterface` instance in `_active_interfaces`, there is no
+    separate status-tracking object to keep in sync."""
+    import json
+    iface = _active_interfaces.get("rnode")
+    if iface is None:
+        return json.dumps({
+            "connected": False, "online": False,
+            "platform": None, "mcu": None,
+            "firmware_major": None, "firmware_minor": None,
+            "frequency": None, "bandwidth": None, "txpower": None,
+            "spreading_factor": None, "coding_rate": None,
+        })
+    return json.dumps({
+        "connected": True,
+        "online": bool(getattr(iface, "online", False)),
+        "platform": getattr(iface, "platform", None),
+        "mcu": getattr(iface, "mcu", None),
+        "firmware_major": getattr(iface, "maj_version", None) or None,
+        "firmware_minor": getattr(iface, "min_version", None) or None,
+        "frequency": getattr(iface, "r_frequency", None),
+        "bandwidth": getattr(iface, "r_bandwidth", None),
+        "txpower": getattr(iface, "r_txpower", None),
+        "spreading_factor": getattr(iface, "r_sf", None),
+        "coding_rate": getattr(iface, "r_cr", None),
+    })
+
+
+def list_rnode_firmware_releases_json(limit: int = 5) -> str:
+    """Thin wrapper — see `rnode_firmware.list_releases_json`'s own doc
+    comment for the response shape."""
+    from nomadportal_core.rnode_firmware import list_releases_json
+    return list_releases_json(limit)
+
+
+def list_supported_rnode_boards_json() -> str:
+    """The subset of board keys `flash_rnode_firmware` can actually
+    flash — see `esp32_flasher.BOARDS`'s own doc comment for why this is
+    a real subset of what a release's assets list (real newer boards not
+    yet added to this app's own table, and the nRF52-based boards this
+    flasher deliberately never supports, both show up in
+    `list_rnode_firmware_releases_json`'s own listing but not here).
+    Lets the Settings flasher screen grey out/label an unsupported board
+    without duplicating this table Kotlin-side. JSON array of strings."""
+    import json
+    from nomadportal_core.esp32_flasher import BOARDS
+    return json.dumps(sorted(BOARDS.keys()))
+
+
+def flash_rnode_firmware(bridge, tag: str, board_key: str, on_progress=None) -> str:
+    """Downloads and flashes one official RNode firmware release onto
+    an ESP32-family board — thin wrapper around
+    `rnode_firmware.download_and_flash` (see that module's, and
+    `esp32_flasher`'s, own doc comments for the real, source-verified
+    protocol/board-table/release-fetching this is built on). `bridge` is
+    a live `Esp32FlashBridge` Kotlin object (`write`/`read_byte`/
+    `set_dtr`/`set_rts`) — a distinct, exclusive-use USB session from
+    RNode's own operational `RnodeUsbBridge`; the caller is responsible
+    for making sure RNode's own interface isn't attached to the same
+    device first (a device can't serve two live USB sessions from this
+    app at once — see `RealInterfaceController`'s own flasher-entry
+    point for where that's enforced). `on_progress`, if given, is a
+    Kotlin object exposing `onProgress(current: int, total: int)`.
+    Returns the same JSON-string `{"success": bool, "message": str}`
+    shape `download_and_flash` already returns."""
+    from nomadportal_core.rnode_firmware import download_and_flash
+    return download_and_flash(bridge, tag, board_key, on_progress)
 
 
 def set_bluetooth_mesh_bridge(bridge) -> None:
@@ -1487,24 +1610,6 @@ def _make_tcp_client(host: str, port: int):
     return iface
 
 
-def _make_rnode(serial_port: str):
-    from RNS.Interfaces.RNodeInterface import RNodeInterface
-    import RNS
-    # Field names/defaults match config_gen.py's own RNode section
-    # builder (python-core/src/nomadnet_web/config_gen.py) — same
-    # defaults the original app uses for an operator-configured RNode.
-    config = {
-        "name": "RNode",
-        "port": serial_port,
-        "frequency": 867500000,
-        "bandwidth": 125000,
-        "txpower": 7,
-        "spreadingfactor": 8,
-        "codingrate": 5,
-    }
-    return RNodeInterface(RNS.Transport, config)
-
-
 def _make_auto_interface():
     from RNS.Interfaces.AutoInterface import AutoInterface
     import RNS
@@ -2143,7 +2248,7 @@ def _interface_key_for(iface) -> str:
     real class name — confirmed directly against the actual installed
     RNS/RNS_BLE_Wrapper source, not guessed:
     `TCPClientInterface`/`TCPServerInterface` -> tcp, `RnsBleInterface`
-    -> bluetooth_mesh, `RNodeInterface` -> rnode, `AutoInterface` ->
+    -> bluetooth_mesh, `NomadRNodeInterface` -> rnode, `AutoInterface` ->
     wifi_discovery. Returns None for anything this app doesn't
     recognize (a future/unexpected interface type) rather than
     guessing — see `get_announce_interfaces_json()`'s own doc comment
@@ -2153,7 +2258,7 @@ def _interface_key_for(iface) -> str:
         return "tcp"
     if name == "RnsBleInterface":
         return "bluetooth_mesh"
-    if name == "RNodeInterface":
+    if name == "NomadRNodeInterface":
         return "rnode"
     if name == "AutoInterface":
         return "wifi_discovery"
