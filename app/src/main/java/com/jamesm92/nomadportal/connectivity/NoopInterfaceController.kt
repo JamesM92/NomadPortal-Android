@@ -1,10 +1,14 @@
 package com.jamesm92.nomadportal.connectivity
 
+import com.jamesm92.nomadportal.connectivity.rnode.RnodeConnectionState
+import com.jamesm92.nomadportal.connectivity.rnode.RnodeDeviceInfo
 import com.jamesm92.nomadportal.data.SettingsRepository
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
@@ -101,4 +105,30 @@ class NoopInterfaceController(
     override fun announceInterfaces(): Flow<Map<String, String>> = flowOf(emptyMap())
 
     override fun interfaceByteStats(): Flow<Map<String, InterfaceByteStats>> = flowOf(emptyMap())
+
+    // No real USB device access here — persisted-intent-only, matching
+    // this class's own convention throughout.
+    private val _rnodeAvailableDevices = MutableStateFlow<List<RnodeDeviceInfo>>(emptyList())
+    override fun rnodeAvailableDevices(): StateFlow<List<RnodeDeviceInfo>> = _rnodeAvailableDevices.asStateFlow()
+
+    private val _rnodeConnectionState = MutableStateFlow<RnodeConnectionState>(RnodeConnectionState.Disconnected)
+    override fun rnodeConnectionState(): StateFlow<RnodeConnectionState> = _rnodeConnectionState.asStateFlow()
+
+    override fun refreshRnodeDevices() {
+        // TODO(core extraction): enumerate real USB-serial devices here.
+    }
+
+    override suspend fun connectRnode(device: RnodeDeviceInfo, configJson: String): Boolean = false
+
+    override suspend fun disconnectRnode() {
+        // TODO(core extraction): tear down the real RNode-over-USB bridge here.
+    }
+
+    override fun rnodeStatus(): Flow<RnodeStatus> = flowOf(
+        RnodeStatus(
+            connected = false, online = false, platform = null, mcu = null,
+            firmwareMajor = null, firmwareMinor = null, frequencyHz = null,
+            bandwidthHz = null, txPowerDbm = null, spreadingFactor = null, codingRate = null,
+        ),
+    )
 }

@@ -56,10 +56,12 @@ import androidx.compose.material.icons.filled.Notifications
 import androidx.compose.material.icons.filled.Palette
 import androidx.compose.material.icons.filled.PowerSettingsNew
 import androidx.compose.material.icons.filled.QrCode
+import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Router
 import androidx.compose.material.icons.filled.Security
 import androidx.compose.material.icons.filled.SettingsInputAntenna
 import androidx.compose.material.icons.filled.Tune
+import androidx.compose.material.icons.filled.Usb
 import androidx.compose.material.icons.filled.Wifi
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Badge
@@ -69,6 +71,7 @@ import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Checkbox
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.HorizontalDivider
@@ -115,6 +118,9 @@ import com.jamesm92.nomadportal.connectivity.HostedNodeStatus
 import com.jamesm92.nomadportal.connectivity.InterfaceController
 import com.jamesm92.nomadportal.connectivity.TcpConnection
 import com.jamesm92.nomadportal.connectivity.TcpConnectionsRepository
+import com.jamesm92.nomadportal.connectivity.RnodeStatus
+import com.jamesm92.nomadportal.connectivity.rnode.RnodeConnectionState
+import com.jamesm92.nomadportal.connectivity.rnode.RnodeDeviceInfo
 import com.jamesm92.nomadportal.data.SettingsRepository
 import com.jamesm92.nomadportal.data.ThemeMode
 import com.jamesm92.nomadportal.data.identity.IdentityRepository
@@ -198,6 +204,7 @@ fun SettingsScreen(
     onOpenIdentities: () -> Unit,
     onOpenBlockedContacts: () -> Unit,
     onOpenAbout: () -> Unit,
+    onOpenRnodeFlasher: () -> Unit,
 ) {
     val context = LocalContext.current
     val focusManager = LocalFocusManager.current
@@ -223,6 +230,8 @@ fun SettingsScreen(
     val identities by identitiesFlow.collectAsState(initial = emptyList())
     val rnshHistoryFlow = remember(rnshHistoryRepository) { rnshHistoryRepository.history() }
     val rnshHistory by rnshHistoryFlow.collectAsState(initial = emptyList())
+    val rnodeStatusFlow = remember(interfaceController) { interfaceController.rnodeStatus() }
+    val rnodeStatus by rnodeStatusFlow.collectAsState(initial = null)
 
     val tcpEnabled by interfaceController.tcpEnabled.collectAsState()
     val bluetoothMeshEnabled by interfaceController.bluetoothMeshEnabled.collectAsState()
@@ -487,6 +496,27 @@ fun SettingsScreen(
                             )
                         },
                     ) {
+                        val rnodeDevices by interfaceController.rnodeAvailableDevices().collectAsState()
+                        val rnodeConnectionState by interfaceController.rnodeConnectionState().collectAsState()
+                        val rnodeConfigJson by settingsRepository.rNodeConfigJson.collectAsState(initial = "{}")
+                        RnodeDevicePicker(
+                            devices = rnodeDevices,
+                            connectionState = rnodeConnectionState,
+                            status = rnodeStatus,
+                            onRefresh = { interfaceController.refreshRnodeDevices() },
+                            onConnect = { device ->
+                                scope.launch { interfaceController.connectRnode(device, rnodeConfigJson) }
+                            },
+                            onDisconnect = { scope.launch { interfaceController.disconnectRnode() } },
+                        )
+                        TextButton(
+                            onClick = onOpenRnodeFlasher,
+                            modifier = Modifier.padding(horizontal = 12.dp),
+                        ) {
+                            Icon(Icons.Filled.SettingsInputAntenna, contentDescription = null, modifier = Modifier.size(18.dp))
+                            Spacer(Modifier.width(8.dp))
+                            Text("Flash official firmware…")
+                        }
                         announceStatus?.interfaces?.get(AnnounceStatus.INTERFACE_RNODE)?.let { config ->
                             InterfaceAnnounceTab(
                                 config = config,
@@ -1952,6 +1982,124 @@ private fun InterfaceAnnounceTab(
             onCommit = onAnnounceMaxChange,
             modifier = Modifier.width(64.dp).padding(top = 4.dp),
         )
+    }
+}
+
+/**
+ * RNode-over-USB device picker + live connection status — the Settings
+ * device-picker screen the [InterfaceController.connectRnode]/
+ * [InterfaceController.disconnectRnode] doc comments refer to. Deliberately
+ * simple for this first pass: a flat list of currently-attached candidate
+ * devices (see [com.jamesm92.nomadportal.connectivity.rnode.RnodeUsbManager]
+ * for what counts as a candidate) with one Connect button each, connecting
+ * with whatever radio config is already persisted
+ * ([com.jamesm92.nomadportal.data.SettingsRepository.rNodeConfigJson] —
+ * defaults match `rnode_interface.NomadRNodeInterface`'s own constructor
+ * defaults). A real per-field frequency/bandwidth/txpower/spreadingfactor/
+ * codingrate editor is a real, deliberately-deferred follow-up, not an
+ * oversight — this first pass makes "plug in a stock-firmware RNode board,
+ * see it, connect to it" actually work end-to-end before adding a config
+ * form on top.
+ */
+@Composable
+private fun RnodeDevicePicker(
+    devices: List<RnodeDeviceInfo>,
+    connectionState: RnodeConnectionState,
+    status: RnodeStatus?,
+    onRefresh: () -> Unit,
+    onConnect: (RnodeDeviceInfo) -> Unit,
+    onDisconnect: () -> Unit,
+) {
+    val labelStyle = MaterialTheme.typography.labelMedium
+    val hintStyle = MaterialTheme.typography.labelSmall
+
+    // Re-scan once whenever this section is actually composed (i.e. the
+    // user expanded it) — USB attach/detach broadcasts already keep the
+    // list fresh after that, this just covers "plugged the board in
+    // before opening Settings at all."
+    LaunchedEffect(Unit) { onRefresh() }
+
+    Column(modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp)) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text("USB device", style = labelStyle, modifier = Modifier.weight(1f))
+            CompositionLocalProvider(LocalMinimumInteractiveComponentSize provides 0.dp) {
+                IconButton(onClick = onRefresh, modifier = Modifier.size(28.dp)) {
+                    Icon(Icons.Filled.Refresh, contentDescription = "Rescan for USB devices")
+                }
+            }
+        }
+
+        when (connectionState) {
+            is RnodeConnectionState.Connected -> {
+                Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(vertical = 4.dp)) {
+                    Icon(Icons.Filled.Usb, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
+                    Spacer(Modifier.width(8.dp))
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(connectionState.device.productName ?: connectionState.device.deviceName, style = hintStyle)
+                        // status.online false but connected true is a
+                        // real, meaningful in-between state — the USB
+                        // link/Python attach succeeded but the radio
+                        // itself hasn't finished detect+configure yet
+                        // (or failed validation) — see
+                        // NomadRNodeInterface._configure_device's own
+                        // real detect/firmware/init_radio sequence.
+                        val firmwareText = if (status?.online == true && status.firmwareMajor != null) {
+                            "Online — firmware ${status.firmwareMajor}.${status.firmwareMinor}"
+                        } else {
+                            "Configuring radio…"
+                        }
+                        Text(firmwareText, style = MaterialTheme.typography.labelSmall, color = NomadTextDim)
+                    }
+                    TextButton(onClick = onDisconnect) { Text("Disconnect") }
+                }
+            }
+            is RnodeConnectionState.Connecting -> {
+                Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(vertical = 4.dp)) {
+                    CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp)
+                    Spacer(Modifier.width(8.dp))
+                    Text("Detecting and configuring the radio…", style = hintStyle, color = NomadTextDim)
+                }
+            }
+            is RnodeConnectionState.Error -> {
+                Text(connectionState.message, style = hintStyle, color = MaterialTheme.colorScheme.error)
+            }
+            RnodeConnectionState.Disconnected -> {
+                Text("Not connected", style = hintStyle, color = NomadTextDim)
+            }
+        }
+
+        if (devices.isEmpty()) {
+            Text(
+                "No USB-serial devices detected. Plug in an RNode-compatible board " +
+                    "running the official RNode firmware.",
+                style = hintStyle,
+                color = NomadTextDim,
+                modifier = Modifier.padding(top = 4.dp),
+            )
+        } else {
+            Column(modifier = Modifier.padding(top = 4.dp)) {
+                devices.forEach { device ->
+                    val alreadyConnected = (connectionState as? RnodeConnectionState.Connected)
+                        ?.device?.deviceId == device.deviceId
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier.fillMaxWidth().padding(vertical = 2.dp),
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(device.productName ?: device.deviceName, style = hintStyle)
+                            Text(
+                                "VID ${"%04X".format(device.vendorId)} · PID ${"%04X".format(device.productId)}",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = NomadTextDim,
+                            )
+                        }
+                        if (!alreadyConnected) {
+                            TextButton(onClick = { onConnect(device) }) { Text("Connect") }
+                        }
+                    }
+                }
+            }
+        }
     }
 }
 
