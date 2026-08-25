@@ -4,6 +4,7 @@ import android.content.Context
 import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.floatPreferencesKey
+import androidx.datastore.preferences.core.intPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import kotlinx.coroutines.flow.Flow
@@ -179,6 +180,24 @@ class SettingsRepository(context: Context) {
     // both actually clear it, not just stop adding to it.
     val pageCacheEnabled: Flow<Boolean> = boolFlow(KEY_PAGE_CACHE_ENABLED, default = true)
 
+    // RNode-over-USB's own "last connected device + radio config" —
+    // separate from rNodeEnabled above (that's the master intent toggle;
+    // this is *which* device and *what settings* to reconnect with the
+    // next time intent is on and a matching device is attached). Vendor/
+    // product ID, not the raw Android `deviceId` int — a USB replug
+    // reassigns that raw ID, so VID+PID is the only part of "which
+    // physical device" that survives a reconnect (see RnodeUsbManager's
+    // own doc comment). -1 = "no device remembered yet."
+    val rNodeVendorId: Flow<Int> = intFlow(KEY_RNODE_VENDOR_ID, default = -1)
+    val rNodeProductId: Flow<Int> = intFlow(KEY_RNODE_PRODUCT_ID, default = -1)
+    // JSON string, same shape `rnode_interface.NomadRNodeInterface`'s
+    // constructor config expects (frequency/bandwidth/txpower/
+    // spreadingfactor/codingrate/mode) — stored pre-serialized so
+    // RealInterfaceController's own reconnect path can hand it straight
+    // to `orchestrator.set_rnode_bridge` without a Kotlin-side model
+    // class this settings layer would otherwise need to know about.
+    val rNodeConfigJson: Flow<String> = dataStore.data.map { it[KEY_RNODE_CONFIG] ?: DEFAULT_RNODE_CONFIG_JSON }
+
     suspend fun setTcpEnabled(enabled: Boolean) = setBool(KEY_TCP, enabled)
     suspend fun setBluetoothMeshEnabled(enabled: Boolean) = setBool(KEY_BLUETOOTH_MESH, enabled)
     suspend fun setRNodeEnabled(enabled: Boolean) = setBool(KEY_RNODE, enabled)
@@ -204,12 +223,33 @@ class SettingsRepository(context: Context) {
     suspend fun setNotificationsAlwaysOn(alwaysOn: Boolean) = setBool(KEY_NOTIFICATIONS_ALWAYS_ON, alwaysOn)
     suspend fun setPageCacheEnabled(enabled: Boolean) = setBool(KEY_PAGE_CACHE_ENABLED, enabled)
 
+    suspend fun setRNodeDevice(vendorId: Int, productId: Int) {
+        dataStore.edit {
+            it[KEY_RNODE_VENDOR_ID] = vendorId
+            it[KEY_RNODE_PRODUCT_ID] = productId
+        }
+    }
+
+    suspend fun clearRNodeDevice() {
+        dataStore.edit {
+            it.remove(KEY_RNODE_VENDOR_ID)
+            it.remove(KEY_RNODE_PRODUCT_ID)
+        }
+    }
+
+    suspend fun setRNodeConfigJson(json: String) {
+        dataStore.edit { it[KEY_RNODE_CONFIG] = json }
+    }
+
     private fun boolFlow(key: androidx.datastore.preferences.core.Preferences.Key<Boolean>, default: Boolean): Flow<Boolean> =
         dataStore.data.map { it[key] ?: default }
 
     private suspend fun setBool(key: androidx.datastore.preferences.core.Preferences.Key<Boolean>, value: Boolean) {
         dataStore.edit { it[key] = value }
     }
+
+    private fun intFlow(key: androidx.datastore.preferences.core.Preferences.Key<Int>, default: Int): Flow<Int> =
+        dataStore.data.map { it[key] ?: default }
 
     companion object {
         const val DEFAULT_TEXT_SCALE = 1.0f
@@ -232,5 +272,17 @@ class SettingsRepository(context: Context) {
         private val KEY_NOTIFICATIONS_ENABLED = booleanPreferencesKey("notifications_enabled")
         private val KEY_NOTIFICATIONS_ALWAYS_ON = booleanPreferencesKey("notifications_always_on")
         private val KEY_PAGE_CACHE_ENABLED = booleanPreferencesKey("page_cache_enabled")
+        private val KEY_RNODE_VENDOR_ID = intPreferencesKey("rnode_vendor_id")
+        private val KEY_RNODE_PRODUCT_ID = intPreferencesKey("rnode_product_id")
+        private val KEY_RNODE_CONFIG = stringPreferencesKey("rnode_config_json")
+        // Matches rnode_interface.NomadRNodeInterface's own constructor
+        // defaults (see that file) and config_gen.py's original RNode
+        // section defaults — the same 867.5MHz EU-band-ish starting point
+        // this app has used as its "reasonable default before the user
+        // configures their actual region/hardware" everywhere else RNode
+        // config has been discussed.
+        private const val DEFAULT_RNODE_CONFIG_JSON = "{\"name\":\"RNode\"," +
+            "\"frequency\":867500000,\"bandwidth\":125000,\"txpower\":7," +
+            "\"spreadingfactor\":8,\"codingrate\":5,\"mode\":\"roaming\"}"
     }
 }

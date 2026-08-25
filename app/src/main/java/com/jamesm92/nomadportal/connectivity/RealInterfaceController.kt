@@ -1,7 +1,10 @@
 package com.jamesm92.nomadportal.connectivity
 
 import android.content.Context
+import android.util.Log
 import com.chaquo.python.Python
+import com.jamesm92.nomadportal.connectivity.rnode.RnodeDeviceInfo
+import com.jamesm92.nomadportal.connectivity.rnode.RnodeUsbManager
 import com.jamesm92.nomadportal.data.SettingsRepository
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -37,7 +40,17 @@ import org.json.JSONObject
  * multi-device neighbor discovery/relay is still unverified pending 2
  * physical devices in range of each other). RNode-over-BLE/Classic is a
  * distinct, separately-unimplemented role in that same repo — not
- * covered by this integration; [setRNodeEnabled] stays as it was.
+ * covered by this integration.
+ *
+ * RNode-over-USB is real too (see [RnodeUsbManager]) — [setRNodeEnabled]
+ * only ever attempts a *reconnect* to whatever device/config was last
+ * configured via the Settings device-picker screen; it never picks a
+ * device on its own (there is no "the" device to pick without asking
+ * the user, unlike TCP/Wi-Fi-discovery which have no device selection at
+ * all). A `false` toggle-on result (no matching device attached, or
+ * nothing configured yet) is deliberately not surfaced as an error —
+ * that's the ordinary "toggled on, but nothing to connect to right now"
+ * state, not a failure.
  *
  * Node hosting (`SiteServer`) is real too (Aug 2026) — see
  * `nomadnet_web.site_server`'s own module doc comment for why it's
@@ -66,6 +79,16 @@ class RealInterfaceController(
     // convention) — this class is a long-lived app-wide singleton
     // (NomadPortalApp), never itself Activity-scoped.
     private val bluetoothMesh = BluetoothMeshManager(context.applicationContext, scope)
+
+    // Same "application context only, long-lived singleton" convention
+    // as bluetoothMesh above. RnodeUsbManager owns real device
+    // discovery and the connect lifecycle; this controller's own
+    // rnodeAvailableDevices()/rnodeConnectionState()/connectRnode()/
+    // disconnectRnode() below (the InterfaceController-interface surface
+    // a Settings device-picker screen actually calls) just delegate to
+    // it, plus [setRNodeEnabled] owns the master on/off toggle's
+    // reconnect-on-enable behavior.
+    private val rnodeUsb = RnodeUsbManager(context.applicationContext, settings, scope)
 
     override val tcpEnabled: StateFlow<Boolean> =
         settings.tcpEnabled.stateIn(scope, SharingStarted.Eagerly, true)
@@ -105,9 +128,20 @@ class RealInterfaceController(
     }
 
     override suspend fun setRNodeEnabled(enabled: Boolean) {
-        // TODO(no Android USB device picker yet): persisted intent only —
-        // orchestrator.set_rnode_enabled needs a serial port this app has
-        // no way to obtain yet.
+        if (enabled) {
+            try {
+                rnodeUsb.reconnectPersisted()
+            } catch (e: Exception) {
+                // Best-effort, same "logged, nothing further to do here"
+                // shape BluetoothMeshManager's own boot-time attach
+                // failure already uses — the master toggle itself still
+                // persists below regardless of whether a reconnect
+                // actually succeeded right now.
+                Log.w(TAG, "RNode reconnect failed: ${e.message}")
+            }
+        } else {
+            rnodeUsb.disconnect()
+        }
         settings.setRNodeEnabled(enabled)
     }
 
@@ -216,6 +250,43 @@ class RealInterfaceController(
         return result
     }
 
+    override fun rnodeAvailableDevices() = rnodeUsb.availableDevices
+
+    override fun rnodeConnectionState() = rnodeUsb.connectionState
+
+    override fun refreshRnodeDevices() = rnodeUsb.refreshDevices()
+
+    override suspend fun connectRnode(device: RnodeDeviceInfo, configJson: String): Boolean =
+        rnodeUsb.connect(device, configJson)
+
+    override suspend fun disconnectRnode() = rnodeUsb.disconnect()
+
+    override fun rnodeStatus(): Flow<RnodeStatus> = flow {
+        while (true) {
+            emit(fetchRnodeStatus())
+            delay(POLL_INTERVAL_MS)
+        }
+    }.flowOn(Dispatchers.IO)
+
+    private fun fetchRnodeStatus(): RnodeStatus {
+        val obj = JSONObject(orchestrator.callAttr("get_rnode_status_json").toString())
+        fun intOrNull(key: String): Int? = if (obj.isNull(key)) null else obj.optInt(key)
+        fun longOrNull(key: String): Long? = if (obj.isNull(key)) null else obj.optLong(key)
+        return RnodeStatus(
+            connected = obj.optBoolean("connected", false),
+            online = obj.optBoolean("online", false),
+            platform = intOrNull("platform"),
+            mcu = intOrNull("mcu"),
+            firmwareMajor = intOrNull("firmware_major"),
+            firmwareMinor = intOrNull("firmware_minor"),
+            frequencyHz = longOrNull("frequency"),
+            bandwidthHz = longOrNull("bandwidth"),
+            txPowerDbm = intOrNull("txpower"),
+            spreadingFactor = intOrNull("spreading_factor"),
+            codingRate = intOrNull("coding_rate"),
+        )
+    }
+
     private fun fetchHasDownTcpConnection(): Boolean {
         val obj = JSONObject(orchestrator.callAttr("get_tcp_connections_json").toString())
         if (!obj.optBoolean("master_enabled", true)) return false
@@ -228,6 +299,7 @@ class RealInterfaceController(
     }
 
     private companion object {
+        const val TAG = "RealInterfaceController"
         const val POLL_INTERVAL_MS = 4000L
     }
 }
