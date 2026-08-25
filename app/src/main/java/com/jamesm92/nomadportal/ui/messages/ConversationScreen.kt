@@ -11,7 +11,6 @@ import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -397,17 +396,32 @@ fun ConversationScreen(
             }
         },
     ) { innerPadding ->
-        // imePadding() — without it, edge-to-edge mode (enableEdgeToEdge()
-        // in MainActivity) leaves the compose box sitting wherever it was
-        // laid out, right underneath the soft keyboard when it opens,
-        // instead of being pushed up above it (confirmed: a real on-device
-        // send test showed the input field invisible behind the keyboard,
-        // only the suggestion bar visible above it).
-        Column(modifier = Modifier.padding(innerPadding).imePadding()) {
+        // No .imePadding() here — a real, live-observed bug (found via
+        // an on-device diagnostic pass, not source reading): this
+        // project's currently-pinned Compose Material3 BOM
+        // (2026.06.01) already folds the IME inset into Scaffold's own
+        // `innerPadding` for this Scaffold's default
+        // `contentWindowInsets`. Also calling `.imePadding()` here
+        // double-counted the keyboard's height as bottom padding —
+        // confirmed directly: with both applied, the message list
+        // (below) measured to ~0 height and the input row got squeezed
+        // into a sliver right under the top bar the moment the
+        // keyboard opened, clipping its own text. An older version of
+        // this comment recorded a real on-device failure that
+        // justified adding `.imePadding()` in the first place — that
+        // was a genuine bug at the time, but on whatever Compose
+        // version was current then, Scaffold's own insets evidently
+        // didn't yet include IME. If this regresses after a future BOM
+        // bump (content sitting under the keyboard again), that's the
+        // first thing to check before reaching for `.imePadding()`
+        // again — verify against Scaffold's actual current
+        // `contentWindowInsets` default rather than re-adding it
+        // reflexively.
+        Column(modifier = Modifier.fillMaxSize().padding(innerPadding)) {
             LazyColumn(
                 state = listState,
                 modifier = Modifier
-                    .fillMaxSize()
+                    .fillMaxWidth()
                     .weight(1f)
                     .dismissKeyboardOnTap(),
                 reverseLayout = true,

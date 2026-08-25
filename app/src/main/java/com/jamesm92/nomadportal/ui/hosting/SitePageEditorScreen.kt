@@ -2,7 +2,6 @@ package com.jamesm92.nomadportal.ui.hosting
 
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
@@ -151,7 +150,12 @@ fun SitePageEditorScreen(
             )
         },
     ) { innerPadding ->
-        Column(modifier = Modifier.fillMaxSize().padding(innerPadding).imePadding()) {
+        // No .imePadding() — same real, live-verified double-counted-IME-
+        // inset bug as ConversationScreen.kt's own matching fix (see that
+        // file's doc comment): this project's currently-pinned Compose
+        // Material3 BOM already folds the IME inset into this Scaffold's
+        // own `innerPadding`.
+        Column(modifier = Modifier.fillMaxSize().padding(innerPadding)) {
             errorText?.let {
                 Text(
                     text = it,
