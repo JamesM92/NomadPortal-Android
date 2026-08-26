@@ -90,12 +90,40 @@ jobs:
           cp app/build/outputs/apk/debug/app-debug.apk \
             "release-out/NomadPortal-Android-${GITHUB_REF_NAME}-debug.apk"
 
+      # Real per-release notes, not the same static disclaimer on every
+      # tag (found and fixed after a user asked why v0.0.3's release had
+      # no details — every prior release had shared this exact fixed
+      # string). Pulls the tag's own "## [x.y.z]" section out of
+      # CHANGELOG.md, up to the next "## [" heading. Fails loudly if the
+      # section is missing rather than silently falling back to an empty
+      # body — a missing CHANGELOG entry for a real tag is a mistake to
+      # catch here, not paper over.
+      - name: Extract this release's CHANGELOG section
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          awk -v ver="## [$version]" '
+            substr($0,1,4) == "## [" { if (found) exit; if (index($0, ver) == 1) { found=1; next } }
+            found { print }
+          ' CHANGELOG.md > release-notes.md
+          if [ ! -s release-notes.md ]; then
+            echo "::error file=CHANGELOG.md::No '## [$version]' section found for tag ${GITHUB_REF_NAME} — add a CHANGELOG.md entry for this release before tagging."
+            exit 1
+          fi
+          cat release-notes.md
+
       - name: Create GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
+          {
+            cat release-notes.md
+            echo
+            echo "---"
+            echo
+            echo "Early beta. **This is a debug build, not a signed release APK** — there's no release keystore set up yet, so Android will show this as a debuggable/untrusted-source install. Appropriate for beta testers, not general distribution. See the README for what's actually working and the security disclaimer."
+          } > release-body.md
           gh release create "${GITHUB_REF_NAME}" \
             release-out/*.apk \
             --title "NomadPortal-Android ${GITHUB_REF_NAME}" \
-            --notes "Early beta. **This is a debug build, not a signed release APK** — there's no release keystore set up yet, so Android will show this as a debuggable/untrusted-source install. Appropriate for beta testers, not general distribution. See the README for what's actually working and the security disclaimer." \
+            --notes-file release-body.md \
             --prerelease

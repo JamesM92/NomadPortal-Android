@@ -29,14 +29,12 @@ android {
         minSdk = 31
         targetSdk = 37
         versionCode = 3
-        // v0.0.3 — third real beta release tag. Substantial batch since
-        // v0.0.2: RNode-over-USB connectivity + official-firmware ESP32
-        // flasher (real hardware verification still pending — compile/
-        // emulator-verified only, see the RNode plan's own risk list),
-        // the real imePadding() double-counting fix (message/page-editor
-        // input fields), Sites' real Favorites/Announces sub-tabs split,
-        // and the switch from composite-building micron2compose to
-        // depending on its actual published v0.2.0 release.
+        // v0.0.3 — third real beta release tag. See CHANGELOG.md for what
+        // actually shipped in this release (a prior version of this
+        // comment wrongly credited the Sites Favorites/Announces
+        // sub-tabs split to v0.0.3 — that shipped in v0.0.2; corrected
+        // once the CHANGELOG was added and cross-checked against real
+        // tag ancestry, not memory).
         versionName = "0.0.3"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
