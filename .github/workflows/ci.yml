@@ -39,52 +39,38 @@ jobs:
 
   build-and-test:
     runs-on: ubuntu-latest
-    # settings.gradle.kts's includeBuild() reads these to find
-    # micron2compose/RNS_BLE_Wrapper — see its matching comment for the
-    # full story. Must be a path relative to this repo's own root (not
-    # the runner's outer work dir), since that's what Gradle's
-    # includeBuild() resolves it against.
+    # settings.gradle.kts's includeBuild() reads this to find
+    # RNS_BLE_Wrapper — see its matching comment for the full story (this
+    # used to also cover micron2compose, before that library was
+    # published — see settings.gradle.kts's own comment on why that's
+    # gone). Must be a path relative to this repo's own root (not the
+    # runner's outer work dir), since that's what Gradle's includeBuild()
+    # resolves it against.
     env:
-      MICRON2COMPOSE_DIR: micron2compose
       RNS_BLE_WRAPPER_DIR: RNS_BLE_Wrapper
     steps:
       - name: Checkout
         uses: actions/checkout@v7
 
-      # settings.gradle.kts composite-builds micron2compose (it isn't
+      # settings.gradle.kts composite-builds RNS_BLE_Wrapper (it isn't
       # published, so there's no Maven coordinate to just resolve).
-      # `path: micron2compose` lands it as a *subdirectory* of this repo's
+      # `path: RNS_BLE_Wrapper` lands it as a *subdirectory* of this repo's
       # own checkout, not a true OS-level sibling the way local dev has it
-      # — actions/checkout@v7 flatly refuses `path: ../micron2compose`
-      # (a real failure hit here: "Repository path '.../micron2compose' is
-      # not under '.../NomadPortal-Android'"), since v7 enforces that every
-      # checkout stays under $GITHUB_WORKSPACE. MICRON2COMPOSE_DIR above is
-      # what tells settings.gradle.kts to look here instead of its local-
-      # dev default.
-      # Pinned to `dev`, not `main`: `dev` is what's actually being built/
-      # tested against locally right now (micron2compose's own `main` only
-      # gets updates once it's agreed "ready" — see that repo's own
-      # workflow convention). This does couple this build's CI health to
-      # micron2compose's `dev` branch being buildable — acceptable while
-      # both repos are developed in lockstep pre-release, but revisit once
-      # micron2compose is actually published (delete this step, the env var
-      # above, and settings.gradle.kts's includeBuild block together).
-      - name: Checkout micron2compose (composite-build dependency)
-        uses: actions/checkout@v7
-        with:
-          repository: JamesM92/micron2compose
-          ref: dev
-          path: micron2compose
-
-      # Same composite-build shape as micron2compose above, for the same
-      # reason (not published anywhere yet — see settings.gradle.kts's
-      # own matching comment). Pinned to feature/nomadportal-integration-fixes,
-      # not main: that branch carries the real integration work this
-      # composite build actually depends on (including the
-      # com.jamesm92.rnsble group-ID rename settings.gradle.kts's own
-      # dependencySubstitution needs) — RNS_BLE_Android-Wrapper's own
-      # main predates all of it. Same "developed in lockstep pre-release,
-      # revisit once published" reasoning as micron2compose.
+      # — actions/checkout@v7 flatly refuses a `path` outside this repo's
+      # own checkout (a real failure hit here, on the equivalent
+      # micron2compose step this repo used to have: "Repository path
+      # '.../micron2compose' is not under '.../NomadPortal-Android'"),
+      # since v7 enforces that every checkout stays under
+      # $GITHUB_WORKSPACE. RNS_BLE_WRAPPER_DIR above is what tells
+      # settings.gradle.kts to look here instead of its local-dev default.
+      # Pinned to feature/nomadportal-integration-fixes, not main: that
+      # branch carries the real integration work this composite build
+      # actually depends on (including the com.jamesm92.rnsble group-ID
+      # rename settings.gradle.kts's own dependencySubstitution needs) —
+      # RNS_BLE_Android-Wrapper's own main predates all of it. Same
+      # "developed in lockstep pre-release, revisit once published"
+      # reasoning micron2compose's own equivalent step used to carry,
+      # before that library was published.
       - name: Checkout RNS_BLE_Wrapper (composite-build dependency)
         uses: actions/checkout@v7
         with:
@@ -142,20 +128,10 @@ jobs:
     runs-on: ubuntu-latest
     # See build-and-test's identical env var/comment for why this exists.
     env:
-      MICRON2COMPOSE_DIR: micron2compose
       RNS_BLE_WRAPPER_DIR: RNS_BLE_Wrapper
     steps:
       - name: Checkout
         uses: actions/checkout@v7
-
-      # See build-and-test's identical step for why this is needed, why
-      # `dev` is pinned, and why `path` is a subdirectory not `../...`.
-      - name: Checkout micron2compose (composite-build dependency)
-        uses: actions/checkout@v7
-        with:
-          repository: JamesM92/micron2compose
-          ref: dev
-          path: micron2compose
 
       # See build-and-test's identical step for why this is needed.
       - name: Checkout RNS_BLE_Wrapper (composite-build dependency)
