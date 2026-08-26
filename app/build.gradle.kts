@@ -28,16 +28,16 @@ android {
         // an app that otherwise supports API 24+.
         minSdk = 31
         targetSdk = 37
-        versionCode = 2
-        // v0.0.2 — second real beta release tag. v0.0.1 (versionCode 1)
-        // was cut before a substantial batch of real fixes/features
-        // landed on dev this same session (identity-import crash fix,
-        // 3-hex Micron colors, Save As, own-hosted-node browsing fix,
-        // icon categories, real incoming-call notifications, and more)
-        // — this bump exists so that work actually reaches a real,
-        // installable beta build instead of sitting merged-but-
-        // unreleased indefinitely.
-        versionName = "0.0.2"
+        versionCode = 3
+        // v0.0.3 — third real beta release tag. Substantial batch since
+        // v0.0.2: RNode-over-USB connectivity + official-firmware ESP32
+        // flasher (real hardware verification still pending — compile/
+        // emulator-verified only, see the RNode plan's own risk list),
+        // the real imePadding() double-counting fix (message/page-editor
+        // input fields), Sites' real Favorites/Announces sub-tabs split,
+        // and the switch from composite-building micron2compose to
+        // depending on its actual published v0.2.0 release.
+        versionName = "0.0.3"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
 
