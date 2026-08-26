@@ -35,7 +35,6 @@ jobs:
     runs-on: ubuntu-latest
     # See ci.yml's identical env var/comment for why this exists.
     env:
-      MICRON2COMPOSE_DIR: micron2compose
       RNS_BLE_WRAPPER_DIR: RNS_BLE_Wrapper
     steps:
       - name: Checkout
@@ -53,15 +52,6 @@ jobs:
             echo "::error::Tag ${GITHUB_REF_NAME} (commit ${GITHUB_SHA}) is not reachable from main. Releases must be cut from main, which requires the full CI/CodeQL audit to pass before anything merges in (see main's own branch protection) — dev itself is deliberately not gated. Merge this work into main via a reviewed PR first, then tag main's own tip."
             exit 1
           fi
-
-      # See ci.yml's identical step for why this is needed, why `dev` is
-      # pinned, and why `path` is a subdirectory not `../...`.
-      - name: Checkout micron2compose (composite-build dependency)
-        uses: actions/checkout@v7
-        with:
-          repository: JamesM92/micron2compose
-          ref: dev
-          path: micron2compose
 
       # See ci.yml's identical step for why this is needed and why
       # feature/nomadportal-integration-fixes, not main, is pinned.

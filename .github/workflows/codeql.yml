@@ -32,33 +32,26 @@ jobs:
         # missing, not a minor gap.
         language: [java-kotlin, python]
     # See ci.yml's identical env var/comment: actions/checkout@v7 refuses
-    # a path outside $GITHUB_WORKSPACE, so micron2compose/RNS_BLE_Wrapper
-    # land as subdirectories of this repo's own checkout instead of true
-    # siblings (matching local dev's ../micron2compose layout), and these
-    # env vars tell settings.gradle.kts's includeBuild() where to actually
-    # find them. Only needed for the java-kotlin leg's real Gradle build
-    # below, but harmless to set for both.
+    # a path outside $GITHUB_WORKSPACE, so RNS_BLE_Wrapper lands as a
+    # subdirectory of this repo's own checkout instead of a true sibling
+    # (matching local dev's ../RNS_BLE_Wrapper layout), and this env var
+    # tells settings.gradle.kts's includeBuild() where to actually find
+    # it. Only needed for the java-kotlin leg's real Gradle build below,
+    # but harmless to set for both. (This used to also cover
+    # micron2compose, before that library was published — see
+    # settings.gradle.kts's own comment on why that's gone.)
     env:
-      MICRON2COMPOSE_DIR: micron2compose
       RNS_BLE_WRAPPER_DIR: RNS_BLE_Wrapper
     steps:
       - name: Checkout
         uses: actions/checkout@v7
 
-      # See ci.yml's identical steps for why these are needed (composite-
-      # build siblings for the unpublished micron2compose/RNS_BLE_Wrapper
-      # dependencies, why non-main branches are pinned, and why `path` is
-      # a subdirectory not `../...`). Only the java-kotlin leg actually
-      # builds anything that needs these, but checking them out
-      # unconditionally is simpler than gating on matrix.language and
-      # they're inert for the python leg.
-      - name: Checkout micron2compose (composite-build dependency)
-        uses: actions/checkout@v7
-        with:
-          repository: JamesM92/micron2compose
-          ref: dev
-          path: micron2compose
-
+      # See ci.yml's identical step for why this is needed (a composite-
+      # build sibling for the unpublished RNS_BLE_Wrapper dependency, why
+      # a non-main branch is pinned, and why `path` is a subdirectory not
+      # `../...`). Only the java-kotlin leg actually builds anything that
+      # needs this, but checking it out unconditionally is simpler than
+      # gating on matrix.language and it's inert for the python leg.
       - name: Checkout RNS_BLE_Wrapper (composite-build dependency)
         uses: actions/checkout@v7
         with:
