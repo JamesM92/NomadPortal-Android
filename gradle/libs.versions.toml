@@ -4,7 +4,7 @@
 # for the check performed. Chaquopy 17.0 supports Python 3.10-3.14, AGP 7.3-9.2
 # per its published docs table, but its own current demo project builds cleanly
 # against AGP 9.3.1 / Gradle 9.5.0, which is the combo pinned here.
-agp = "9.3.1"
+agp = "9.3.2"
 kotlin = "2.4.10"
 chaquopy = "17.0.0"
 composeBom = "2026.08.00"
