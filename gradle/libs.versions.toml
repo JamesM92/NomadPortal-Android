@@ -5,7 +5,7 @@
 # per its published docs table, but its own current demo project builds cleanly
 # against AGP 9.3.1 / Gradle 9.5.0, which is the combo pinned here.
 agp = "9.3.1"
-kotlin = "2.4.10"
+kotlin = "2.4.20"
 chaquopy = "17.0.0"
 composeBom = "2026.08.00"
 coreKtx = "1.19.0"
