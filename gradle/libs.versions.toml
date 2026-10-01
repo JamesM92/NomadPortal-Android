@@ -84,7 +84,7 @@ androidxWork = "2.11.2"
 # Verified latest stable via Google Maven's own metadata
 # (dl.google.com/android/maven2/androidx/fragment/fragment/maven-
 # metadata.xml) — 1.9.0 is current and already ships the fix.
-androidxFragment = "1.9.0"
+androidxFragment = "1.9.1"
 # RNode-over-USB support — root-free Android USB-serial, the same real,
 # independently-maintained library Columba's own real RNode
 # implementation uses (confirmed against its build.gradle.kts this
