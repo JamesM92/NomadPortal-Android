@@ -56,7 +56,7 @@ androidxBiometric = "1.1.0"
 # Maven's own metadata (dl.google.com/android/maven2/androidx/work/
 # work-runtime-ktx/maven-metadata.xml), same "not the newest alpha/
 # beta/rc" pinning convention as every other dependency here.
-androidxWork = "2.11.2"
+androidxWork = "2.12.0"
 # Real, on-device-confirmed bug fix, not a preemptive bump: appcompat
 # 1.2.0 and camera-core both transitively pull androidx.fragment 1.2.5
 # (confirmed via `./gradlew :app:dependencies`), and nothing else in this
