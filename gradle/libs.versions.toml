@@ -6,7 +6,7 @@
 # against AGP 9.3.1 / Gradle 9.5.0, which is the combo pinned here.
 agp = "9.3.1"
 kotlin = "2.4.10"
-chaquopy = "17.0.0"
+chaquopy = "17.1.0"
 composeBom = "2026.08.00"
 coreKtx = "1.19.0"
 lifecycleRuntimeKtx = "2.11.0"
