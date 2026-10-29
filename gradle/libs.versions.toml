@@ -12,7 +12,7 @@ coreKtx = "1.19.0"
 lifecycleRuntimeKtx = "2.11.0"
 activityCompose = "1.13.0"
 navigationCompose = "2.9.8"
-datastorePreferences = "1.2.1"
+datastorePreferences = "1.3.0"
 # Not covered by composeBom (this artifact stopped tracking the Compose
 # release train at 1.7.8) — pinned explicitly.
 materialIconsExtended = "1.7.8"
